@@ -4,6 +4,8 @@ services:
     container_name: gsplayer20
     env_file:
       - .env
+    volumes:
+      - ./data:/data
     restart: unless-stopped
     healthcheck:
       test:
@@ -16,6 +18,18 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    networks:
+      - web
+
+  worker:
+    image: ${IMAGE_NAME:-ghcr.io/egschipp/gsplayer20}:latest
+    container_name: gsplayer20-worker
+    command: ["node", "worker.js"]
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
     networks:
       - web
 

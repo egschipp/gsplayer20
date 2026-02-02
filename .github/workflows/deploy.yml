@@ -103,12 +103,14 @@ jobs:
           AUTH_URL: ${{ secrets.AUTH_URL }}
           NEXTAUTH_SECRET: ${{ secrets.AUTH_SECRET }}
           NEXTAUTH_URL: ${{ secrets.AUTH_URL }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          DB_PATH: /data/gsplayer.sqlite
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT }}
-          envs: APP_ENCRYPTION_KEY,IMAGE_NAME,SPOTIFY_CLIENT_ID,SPOTIFY_CLIENT_SECRET,SPOTIFY_REDIRECT_URI,AUTH_SECRET,AUTH_URL,NEXTAUTH_SECRET,NEXTAUTH_URL
+          envs: APP_ENCRYPTION_KEY,IMAGE_NAME,SPOTIFY_CLIENT_ID,SPOTIFY_CLIENT_SECRET,SPOTIFY_REDIRECT_URI,AUTH_SECRET,AUTH_URL,NEXTAUTH_SECRET,NEXTAUTH_URL,TOKEN_ENCRYPTION_KEY,DB_PATH
           script: |
             set -euo pipefail
             cd "${{ secrets.DEPLOY_DIR }}"
@@ -123,6 +125,8 @@ jobs:
             AUTH_URL=$AUTH_URL
             NEXTAUTH_SECRET=$NEXTAUTH_SECRET
             NEXTAUTH_URL=$NEXTAUTH_URL
+            TOKEN_ENCRYPTION_KEY=$TOKEN_ENCRYPTION_KEY
+            DB_PATH=$DB_PATH
             EOF
             docker-compose pull
             docker-compose up -d --remove-orphans

@@ -8,6 +8,8 @@ declare module "next-auth" {
     expiresAt?: number;
     scope?: string;
     error?: string;
+    spotifyUserId?: string;
+    appUserId?: string;
   }
 }
 
@@ -18,5 +20,7 @@ declare module "next-auth/jwt" {
     accessTokenExpires?: number;
     scope?: string;
     error?: string;
+    spotifyUserId?: string;
+    appUserId?: string;
   }
 }

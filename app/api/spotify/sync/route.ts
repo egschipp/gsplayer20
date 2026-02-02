@@ -1,0 +1,75 @@
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { getAuthOptions } from "@/lib/auth/options";
+import { rateLimit } from "@/lib/rate-limit/ratelimit";
+import { getDb } from "@/lib/db/client";
+import { jobs, syncState } from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
+import { cryptoRandomId } from "@/lib/db/queries";
+
+export const runtime = "nodejs";
+
+const jobMap: Record<string, string> = {
+  tracks_initial: "SYNC_TRACKS_INITIAL",
+  tracks_incremental: "SYNC_TRACKS_INCREMENTAL",
+  playlists: "SYNC_PLAYLISTS",
+};
+
+export async function POST(req: Request) {
+  const ip = req.headers.get("x-forwarded-for") || "unknown";
+  const rl = rateLimit(`sync:${ip}`, 10, 60_000);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: "RATE_LIMIT" }, { status: 429 });
+  }
+
+  const session = await getServerSession(getAuthOptions());
+  if (!session?.appUserId) {
+    return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const type = jobMap[body?.type] ?? null;
+  if (!type) {
+    return NextResponse.json({ error: "INVALID_TYPE" }, { status: 400 });
+  }
+
+  const db = getDb();
+  const jobId = cryptoRandomId();
+  const payload = body?.payload ? JSON.stringify(body.payload) : null;
+
+  await db.insert(jobs).values({
+    id: jobId,
+    userId: session.appUserId,
+    type,
+    payload,
+    runAfter: Date.now(),
+    status: "queued",
+    attempts: 0,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  await db
+    .insert(syncState)
+    .values({
+      userId: session.appUserId,
+      resource: type === "SYNC_PLAYLISTS" ? "playlists" : "tracks",
+      status: "queued",
+      cursorOffset: null,
+      cursorLimit: null,
+      lastSuccessfulAt: null,
+      retryAfterAt: null,
+      failureCount: 0,
+      lastErrorCode: null,
+    })
+    .onConflictDoUpdate({
+      target: [syncState.userId, syncState.resource],
+      set: {
+        status: "queued",
+        retryAfterAt: null,
+        lastErrorCode: null,
+      },
+    });
+
+  return NextResponse.json({ jobId, status: "queued" });
+}

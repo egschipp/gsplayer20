@@ -3,6 +3,7 @@ import SpotifyProvider from "next-auth/providers/spotify";
 import { requireEnv } from "@/lib/env";
 import { scopeString } from "@/lib/spotify/scopes";
 import { refreshAccessToken } from "@/lib/spotify/tokens";
+import { getOrCreateUser, upsertTokens } from "@/lib/db/queries";
 
 export function getAuthOptions(): NextAuthOptions {
   return {
@@ -32,12 +33,27 @@ export function getAuthOptions(): NextAuthOptions {
               ? account.expires_at * 1000
               : Date.now() + expiresIn * 1000;
 
+          const spotifyUserId = account.providerAccountId;
+          const user = await getOrCreateUser(spotifyUserId);
+
+          if (account.refresh_token) {
+            await upsertTokens({
+              userId: user.id,
+              refreshToken: account.refresh_token,
+              accessToken: account.access_token ?? undefined,
+              accessExpiresAt: expiresAt,
+              scope: account.scope ?? undefined,
+            });
+          }
+
           return {
             ...token,
             accessToken: account.access_token,
             refreshToken: account.refresh_token,
             accessTokenExpires: expiresAt,
             scope: account.scope,
+            spotifyUserId,
+            appUserId: user.id,
           };
         }
 
@@ -61,6 +77,8 @@ export function getAuthOptions(): NextAuthOptions {
         session.expiresAt = token.accessTokenExpires as number | undefined;
         session.scope = token.scope as string | undefined;
         session.error = token.error as string | undefined;
+        session.spotifyUserId = token.spotifyUserId as string | undefined;
+        session.appUserId = token.appUserId as string | undefined;
         return session;
       },
     },

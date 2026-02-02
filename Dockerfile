@@ -2,6 +2,7 @@
 
 FROM node:20-alpine AS deps
 WORKDIR /app
+RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 
@@ -19,5 +20,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/worker.js ./worker.js
+COPY --from=builder /app/db ./db
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["sh", "-c", "node db/scripts/migrate.js && node server.js"]

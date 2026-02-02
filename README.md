@@ -9,6 +9,8 @@ Required environment variables:
 - `SPOTIFY_REDIRECT_URI` (set in Spotify dashboard)
 - `AUTH_SECRET` (or `NEXTAUTH_SECRET`)
 - `AUTH_URL` (or `NEXTAUTH_URL`)
+- `TOKEN_ENCRYPTION_KEY` (base64 32 bytes)
+- `DB_PATH` (e.g. `/data/gsplayer.sqlite`)
 
 Routes:
 - `/api/auth/login` (start OAuth)
@@ -18,3 +20,5 @@ Routes:
 - `/api/spotify/me/tracks`
 - `/api/spotify/me/playlists`
 - `/api/spotify/me/top`
+- `/api/spotify/sync` (POST: tracks_initial | tracks_incremental | playlists)
+- `/api/spotify/sync-status`

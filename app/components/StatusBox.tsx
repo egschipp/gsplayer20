@@ -10,6 +10,7 @@ type DbStatus = {
 } | null;
 
 type SyncStatus = { resources: any[]; asOf: number } | null;
+type PlaylistMap = Record<string, { name: string; spotifyUrl?: string }>;
 type WorkerHealth = {
   status: string;
   lastHeartbeat: number | null;
@@ -28,16 +29,19 @@ export default function StatusBox() {
   const [dbStatus, setDbStatus] = useState<DbStatus>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(null);
   const [workerHealth, setWorkerHealth] = useState<WorkerHealth>(null);
+  const [playlistMap, setPlaylistMap] = useState<PlaylistMap>({});
   const [syncing, setSyncing] = useState(false);
 
   async function refresh() {
     try {
-      const [appRes, userRes, dbRes, syncRes, workerRes] = await Promise.all([
+      const [appRes, userRes, dbRes, syncRes, workerRes, playlistsRes] =
+        await Promise.all([
         fetch("/api/spotify/app-status"),
         fetch("/api/spotify/user-status"),
         fetch("/api/spotify/db-status"),
         fetch("/api/spotify/sync-status"),
         fetch("/api/spotify/worker-health"),
+        fetch("/api/spotify/me/playlists?limit=200"),
       ]);
 
       if (appRes.ok) setAppStatus(await appRes.json());
@@ -45,6 +49,18 @@ export default function StatusBox() {
       if (dbRes.ok) setDbStatus(await dbRes.json());
       if (syncRes.ok) setSyncStatus(await syncRes.json());
       if (workerRes.ok) setWorkerHealth(await workerRes.json());
+      if (playlistsRes.ok) {
+        const data = await playlistsRes.json();
+        const items = Array.isArray(data.items) ? data.items : [];
+        const map: PlaylistMap = {};
+        for (const item of items) {
+          map[item.playlistId] = {
+            name: item.name,
+            spotifyUrl: `https://open.spotify.com/playlist/${item.playlistId}`,
+          };
+        }
+        setPlaylistMap(map);
+      }
     } catch {
       // ignore
     }
@@ -163,23 +179,60 @@ export default function StatusBox() {
         <div style={{ marginTop: 16, fontSize: 13 }}>
           <strong>Resources</strong>
           <div style={{ marginTop: 8 }}>
-            {syncStatus.resources.map((row: any) => (
+            {syncStatus.resources.map((row: any) => {
+              const isPlaylist = String(row.resource).startsWith("playlist_items:");
+              const playlistId = isPlaylist
+                ? String(row.resource).split(":")[1]
+                : null;
+              const displayName =
+                playlistId && playlistMap[playlistId]?.name
+                  ? playlistMap[playlistId].name
+                  : row.resource;
+              return (
               <div
                 key={row.resource}
                 className="panel"
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
+                  alignItems: "center",
                   marginBottom: 6,
                 }}
               >
-                <span>{row.resource}</span>
-                <span>
-                  {row.status}
-                  {row.lastErrorCode ? ` • ${row.lastErrorCode}` : ""}
+                <span>{displayName}</span>
+                <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span>
+                    {row.status}
+                    {row.lastErrorCode ? ` • ${row.lastErrorCode}` : ""}
+                  </span>
+                  {playlistId ? (
+                    <button
+                      className="btn btn-secondary"
+                      onClick={async () => {
+                        await fetch("/api/spotify/sync", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            type: "playlist_items",
+                            payload: {
+                              playlistId,
+                              offset: 0,
+                              limit: 50,
+                              maxPagesPerRun: 20,
+                              runId: `manual-${Date.now()}`,
+                            },
+                          }),
+                        });
+                        refresh();
+                      }}
+                    >
+                      Refresh now
+                    </button>
+                  ) : null}
                 </span>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ) : null}

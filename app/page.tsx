@@ -1,3 +1,5 @@
+import SpotifyStatus from "./components/SpotifyStatus";
+
 export default function HomePage() {
   return (
     <main style={{ padding: 24, fontFamily: "system-ui" }}>
@@ -7,9 +9,10 @@ export default function HomePage() {
         phase of development.
       </p>
       <p>
-        If you’re looking for the GSPlayer experience, head to the /gsplayer
+        If you're looking for the GSPlayer experience, head to the /gsplayer
         section.
       </p>
+      <SpotifyStatus />
     </main>
   );
 }

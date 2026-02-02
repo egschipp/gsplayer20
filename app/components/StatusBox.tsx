@@ -153,6 +153,34 @@ export default function StatusBox() {
       >
         {syncing ? "Syncing..." : "Force sync"}
       </button>
+
+      {syncStatus?.resources?.length ? (
+        <div style={{ marginTop: 16, fontSize: 13 }}>
+          <strong>Resources</strong>
+          <div style={{ marginTop: 8 }}>
+            {syncStatus.resources.map((row: any) => (
+              <div
+                key={row.resource}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  background: "#fff",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 8,
+                  padding: "6px 8px",
+                  marginBottom: 6,
+                }}
+              >
+                <span>{row.resource}</span>
+                <span>
+                  {row.status}
+                  {row.lastErrorCode ? ` • ${row.lastErrorCode}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

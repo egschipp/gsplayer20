@@ -184,7 +184,24 @@ const statements = {
        last_successful_at=excluded.last_successful_at,
        retry_after_at=excluded.retry_after_at,
        failure_count=excluded.failure_count,
-       last_error_code=excluded.last_error_code`
+      last_error_code=excluded.last_error_code`
+  ),
+  setSyncError: db.prepare(
+    `UPDATE sync_state
+     SET status='error',
+         last_error_code=?,
+         failure_count=failure_count+1,
+         updated_at=?
+     WHERE user_id=? AND resource=?`
+  ),
+  setSyncBackoff: db.prepare(
+    `UPDATE sync_state
+     SET status='backoff',
+         retry_after_at=?,
+         failure_count=failure_count+1,
+         last_error_code=?,
+         updated_at=?
+     WHERE user_id=? AND resource=?`
   ),
 };
 
@@ -565,6 +582,25 @@ async function handleJob(job) {
   throw new Error(`UnknownJob:${job.type}`);
 }
 
+function getResourceForJob(job) {
+  if (job.type === "SYNC_TRACKS_INITIAL" || job.type === "SYNC_TRACKS_INCREMENTAL") {
+    return "tracks";
+  }
+  if (job.type === "SYNC_PLAYLISTS") {
+    return "playlists";
+  }
+  if (job.type === "SYNC_PLAYLIST_ITEMS") {
+    try {
+      const payload = job.payload ? JSON.parse(job.payload) : {};
+      if (payload.playlistId) {
+        return `playlist_items:${payload.playlistId}`;
+      }
+    } catch {}
+    return "playlist_items";
+  }
+  return "unknown";
+}
+
 async function runLoop() {
   while (true) {
     const now = Date.now();
@@ -576,6 +612,20 @@ async function runLoop() {
     }
 
     try {
+      const resource = getResourceForJob(job);
+      if (resource !== "unknown") {
+        statements.upsertSyncState.run({
+          user_id: job.user_id,
+          resource,
+          status: "running",
+          cursor_offset: null,
+          cursor_limit: null,
+          last_successful_at: null,
+          retry_after_at: null,
+          failure_count: 0,
+          last_error_code: null,
+        });
+      }
       const result = await handleJob(job);
       if (result && result.done === false) {
         const nextPayload = Object.assign(
@@ -596,13 +646,34 @@ async function runLoop() {
         statements.markJobDone.run(Date.now(), job.id);
       }
     } catch (error) {
+      const resource = getResourceForJob(job);
       if (error && error.retryAfterMs) {
         const retryAt = Date.now() + error.retryAfterMs;
         statements.requeueJob.run(retryAt, Date.now(), job.id);
+        if (resource !== "unknown") {
+          statements.setSyncBackoff.run(
+            retryAt,
+            "RATE_LIMIT",
+            Date.now(),
+            job.user_id,
+            resource
+          );
+        }
       } else {
-        statements.markJobError.run(Date.now(), JSON.stringify({
-          error: String(error),
-        }), job.id);
+        const message = String(error);
+        statements.markJobError.run(
+          Date.now(),
+          JSON.stringify({ error: message }),
+          job.id
+        );
+        if (resource !== "unknown") {
+          statements.setSyncError.run(
+            message.slice(0, 2000),
+            Date.now(),
+            job.user_id,
+            resource
+          );
+        }
       }
     }
   }

@@ -235,6 +235,9 @@ const statements = {
      ORDER BY track_id ASC
      LIMIT ?`
   ),
+  countCoverJobs: db.prepare(
+    `SELECT count(*) as c FROM jobs WHERE type='SYNC_COVERS' AND status IN ('queued','running')`
+  ),
   upsertArtist: db.prepare(
     `INSERT INTO artists (artist_id, name, genres, popularity, updated_at)
      VALUES (@artist_id, @name, @genres, @popularity, @updated_at)
@@ -818,6 +821,21 @@ async function syncCovers(job) {
   return { done: false, nextCursor: lastId };
 }
 
+function enqueueCoversIfMissing(userId) {
+  const existing = statements.countCoverJobs.get();
+  if (existing && existing.c > 0) return;
+  statements.enqueueJob.run({
+    id: crypto.randomUUID(),
+    user_id: userId,
+    type: "SYNC_COVERS",
+    payload: JSON.stringify({ limit: 50, maxBatches: 30, cursor: "" }),
+    run_after: Date.now() + 2000,
+    status: "queued",
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  });
+}
+
 async function handleJob(job) {
   if (job.type === "SYNC_TRACKS_INITIAL") {
     return syncTracksInitial(job);
@@ -909,6 +927,9 @@ async function runLoop() {
         );
       } else {
         statements.markJobDone.run(Date.now(), job.id);
+        if (job.type === "SYNC_PLAYLISTS" || job.type === "SYNC_PLAYLIST_ITEMS") {
+          enqueueCoversIfMissing(job.user_id);
+        }
       }
     } catch (error) {
       const resource = getResourceForJob(job);

@@ -52,6 +52,8 @@ export default function StatusBox() {
 
   useEffect(() => {
     refresh();
+    const interval = setInterval(refresh, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   async function forceSync() {

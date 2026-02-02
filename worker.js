@@ -226,6 +226,15 @@ const statements = {
   updateTrackImage: db.prepare(
     `UPDATE tracks SET album_image_blob=?, album_image_mime=?, updated_at=? WHERE track_id=?`
   ),
+  getTracksMissingCover: db.prepare(
+    `SELECT track_id, album_image_url
+     FROM tracks
+     WHERE album_image_url IS NOT NULL
+       AND album_image_blob IS NULL
+       AND track_id > ?
+     ORDER BY track_id ASC
+     LIMIT ?`
+  ),
   upsertArtist: db.prepare(
     `INSERT INTO artists (artist_id, name, genres, popularity, updated_at)
      VALUES (@artist_id, @name, @genres, @popularity, @updated_at)
@@ -751,6 +760,64 @@ async function syncPlaylistItems(job) {
   return { done: false, nextOffset: offset, runId, playlistId, snapshotId };
 }
 
+async function syncCovers(job) {
+  const payload = job.payload ? JSON.parse(job.payload) : {};
+  const limit = payload.limit || 50;
+  const cursor = payload.cursor || "";
+  const maxBatches =
+    payload.maxBatches || Number(process.env.SYNC_COVERS_BATCHES || "20");
+
+  let batches = 0;
+  let lastId = cursor;
+
+  while (batches < maxBatches) {
+    const rows = statements.getTracksMissingCover.all(lastId, limit);
+    if (!rows.length) {
+      statements.upsertSyncState.run({
+        user_id: job.user_id,
+        resource: "covers",
+        status: "idle",
+        cursor_offset: null,
+        cursor_limit: limit,
+        last_successful_at: Date.now(),
+        retry_after_at: null,
+        failure_count: 0,
+        last_error_code: null,
+        updated_at: Date.now(),
+      });
+      return { done: true };
+    }
+
+    for (const row of rows) {
+      if (!row.album_image_url) continue;
+      try {
+        const { buffer, mime } = await downloadImage(row.album_image_url);
+        statements.updateTrackImage.run(buffer, mime, Date.now(), row.track_id);
+      } catch {
+        // skip; keep for later retry
+      }
+      lastId = row.track_id;
+    }
+
+    batches += 1;
+
+    statements.upsertSyncState.run({
+      user_id: job.user_id,
+      resource: "covers",
+      status: "running",
+      cursor_offset: null,
+      cursor_limit: limit,
+      last_successful_at: Date.now(),
+      retry_after_at: null,
+      failure_count: 0,
+      last_error_code: null,
+      updated_at: Date.now(),
+    });
+  }
+
+  return { done: false, nextCursor: lastId };
+}
+
 async function handleJob(job) {
   if (job.type === "SYNC_TRACKS_INITIAL") {
     return syncTracksInitial(job);
@@ -763,6 +830,9 @@ async function handleJob(job) {
   }
   if (job.type === "SYNC_PLAYLIST_ITEMS") {
     return syncPlaylistItems(job);
+  }
+  if (job.type === "SYNC_COVERS") {
+    return syncCovers(job);
   }
   throw new Error(`UnknownJob:${job.type}`);
 }
@@ -782,6 +852,9 @@ function getResourceForJob(job) {
       }
     } catch {}
     return "playlist_items";
+  }
+  if (job.type === "SYNC_COVERS") {
+    return "covers";
   }
   return "unknown";
 }
@@ -822,7 +895,8 @@ async function runLoop() {
         const nextPayload = Object.assign(
           {},
           job.payload ? JSON.parse(job.payload) : {},
-          result.nextOffset !== undefined ? { offset: result.nextOffset } : {}
+          result.nextOffset !== undefined ? { offset: result.nextOffset } : {},
+          result.nextCursor !== undefined ? { cursor: result.nextCursor } : {}
         );
         statements.requeueJob.run(
           Date.now() + 2000,

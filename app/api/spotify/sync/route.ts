@@ -15,6 +15,7 @@ const jobMap: Record<string, string> = {
   tracks_incremental: "SYNC_TRACKS_INCREMENTAL",
   playlists: "SYNC_PLAYLISTS",
   playlist_items: "SYNC_PLAYLIST_ITEMS",
+  covers: "SYNC_COVERS",
 };
 
 export async function POST(req: Request) {
@@ -67,6 +68,8 @@ export async function POST(req: Request) {
           ? "playlists"
           : type === "SYNC_PLAYLIST_ITEMS"
           ? "playlist_items"
+          : type === "SYNC_COVERS"
+          ? "covers"
           : "tracks",
       status: "queued",
       cursorOffset: null,

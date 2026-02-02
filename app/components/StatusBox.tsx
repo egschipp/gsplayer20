@@ -70,6 +70,11 @@ export default function StatusBox() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "playlists" }),
       });
+      await fetch("/api/spotify/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "covers" }),
+      });
     } finally {
       setSyncing(false);
       refresh();

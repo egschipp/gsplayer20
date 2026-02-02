@@ -5,6 +5,7 @@ import {
   primaryKey,
   index,
   uniqueIndex,
+  blob,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
@@ -46,6 +47,8 @@ export const tracks = sqliteTable("tracks", {
   albumId: text("album_id"),
   albumName: text("album_name"),
   albumImageUrl: text("album_image_url"),
+  albumImageBlob: blob("album_image_blob", { mode: "buffer" }),
+  albumImageMime: text("album_image_mime"),
   popularity: integer("popularity"),
   updatedAt: integer("updated_at").notNull().default(nowMs),
 });

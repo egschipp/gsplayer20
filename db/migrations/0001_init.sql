@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS tracks (
   album_id TEXT,
   album_name TEXT,
   album_image_url TEXT,
+  album_image_blob BLOB,
+  album_image_mime TEXT,
   popularity INTEGER,
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );

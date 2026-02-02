@@ -32,4 +32,12 @@ if (!hasColumn("tracks", "album_image_url")) {
   sqlite.exec("ALTER TABLE tracks ADD COLUMN album_image_url TEXT");
 }
 
+if (!hasColumn("tracks", "album_image_blob")) {
+  sqlite.exec("ALTER TABLE tracks ADD COLUMN album_image_blob BLOB");
+}
+
+if (!hasColumn("tracks", "album_image_mime")) {
+  sqlite.exec("ALTER TABLE tracks ADD COLUMN album_image_mime TEXT");
+}
+
 console.log("Migrations applied");

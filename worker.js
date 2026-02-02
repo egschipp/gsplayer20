@@ -166,6 +166,20 @@ async function spotifyGet(accessToken, url) {
   return res.json();
 }
 
+async function downloadImage(url) {
+  const res = await withLimiter(() =>
+    fetchWithTimeout(url, {}, FETCH_TIMEOUT_MS)
+  );
+  if (!res.ok) {
+    const err = new Error(`ImageFetch:${res.status}`);
+    if (res.status >= 500) err.retryable = true;
+    throw err;
+  }
+  const mime = res.headers.get("content-type") || "image/jpeg";
+  const arrayBuffer = await res.arrayBuffer();
+  return { buffer: Buffer.from(arrayBuffer), mime };
+}
+
 const statements = {
   takeJob: db.prepare(
     `UPDATE jobs
@@ -205,6 +219,12 @@ const statements = {
        album_image_url=excluded.album_image_url,
        popularity=excluded.popularity,
        updated_at=excluded.updated_at`
+  ),
+  getTrackImage: db.prepare(
+    `SELECT album_image_blob FROM tracks WHERE track_id=?`
+  ),
+  updateTrackImage: db.prepare(
+    `UPDATE tracks SET album_image_blob=?, album_image_mime=?, updated_at=? WHERE track_id=?`
   ),
   upsertArtist: db.prepare(
     `INSERT INTO artists (artist_id, name, genres, popularity, updated_at)
@@ -309,7 +329,8 @@ const writeTracksPage = db.transaction((items, userId, now) => {
       explicit: track.explicit ? 1 : 0,
       album_id: track.album?.id || null,
       album_name: track.album?.name || null,
-      album_image_url: track.album?.images?.[0]?.url || null,
+      album_image_url:
+        track.album?.images?.[track.album?.images?.length - 1]?.url || null,
       popularity: track.popularity ?? null,
       updated_at: now,
     });
@@ -336,6 +357,24 @@ const writeTracksPage = db.transaction((items, userId, now) => {
   }
 });
 
+async function backfillTrackImages(items) {
+  for (const item of items) {
+    if (!item.track) continue;
+    const track = item.track;
+    const imageUrl =
+      track.album?.images?.[track.album?.images?.length - 1]?.url || null;
+    if (!track.id || !imageUrl) continue;
+    const existing = statements.getTrackImage.get(track.id);
+    if (existing?.album_image_blob) continue;
+    try {
+      const { buffer, mime } = await downloadImage(imageUrl);
+      statements.updateTrackImage.run(buffer, mime, Date.now(), track.id);
+    } catch {
+      // skip image failures; sync should proceed
+    }
+  }
+}
+
 const writePlaylistItemsPage = db.transaction(
   (items, playlistId, snapshotId, runId, offset, now) => {
     let idx = 0;
@@ -350,7 +389,8 @@ const writePlaylistItemsPage = db.transaction(
           explicit: track.explicit ? 1 : 0,
           album_id: track.album?.id || null,
           album_name: track.album?.name || null,
-          album_image_url: track.album?.images?.[0]?.url || null,
+          album_image_url:
+            track.album?.images?.[track.album?.images?.length - 1]?.url || null,
           popularity: track.popularity ?? null,
           updated_at: now,
         });
@@ -478,6 +518,7 @@ async function syncTracksInitial(job) {
 
     const now = Date.now();
     writeTracksPage(items, job.user_id, now);
+    await backfillTrackImages(items);
 
     currentOffset += items.length;
     pages += 1;
@@ -543,6 +584,7 @@ async function syncTracksIncremental(job) {
     }
 
     writeTracksPage(items, job.user_id, now);
+    await backfillTrackImages(items);
 
     statements.upsertSyncState.run({
       user_id: job.user_id,
@@ -687,6 +729,7 @@ async function syncPlaylistItems(job) {
 
     const now = Date.now();
     writePlaylistItemsPage(items, playlistId, snapshotId, runId, offset, now);
+    await backfillTrackImages(items);
 
     offset += items.length;
     pages += 1;

@@ -51,6 +51,7 @@ export async function GET(req: Request) {
       albumId: tracks.albumId,
       albumName: tracks.albumName,
       albumImageUrl: tracks.albumImageUrl,
+      hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
       popularity: tracks.popularity,
       addedAt: userSavedTracks.addedAt,
       artists: sql<string | null>`group_concat(${artists.name}, ', ')`,
@@ -84,7 +85,10 @@ export async function GET(req: Request) {
     : null;
 
   return NextResponse.json({
-    items: rows,
+    items: rows.map((row) => ({
+      ...row,
+      coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,
+    })),
     nextCursor,
     asOf: Date.now(),
     sync: {

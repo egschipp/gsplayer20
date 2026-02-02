@@ -15,6 +15,7 @@ type TrackRow = {
   name: string | null;
   albumName?: string | null;
   albumImageUrl?: string | null;
+  coverUrl?: string | null;
   artists?: string | null;
   durationMs?: number | null;
 };
@@ -192,9 +193,9 @@ export default function PlaylistBrowser() {
             key={`${track.itemId || track.trackId || idx}`}
             className="track-row"
           >
-            {track.albumImageUrl ? (
+            {track.coverUrl || track.albumImageUrl ? (
               <img
-                src={track.albumImageUrl}
+                src={track.coverUrl || track.albumImageUrl || undefined}
                 alt={track.albumName || "Album cover"}
                 loading="lazy"
                 style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}

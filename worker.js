@@ -392,10 +392,11 @@ const writeTracksPage = db.transaction((items, userId, now) => {
     });
 
     for (const artist of track.artists || []) {
-      if (!artist?.id || !artist?.name) continue;
+      if (!artist?.id) continue;
+      const artistName = artist.name || "Unknown Artist";
       statements.upsertArtist.run({
         artist_id: artist.id,
-        name: artist.name,
+        name: artistName,
         genres: null,
         popularity: null,
         updated_at: now,
@@ -452,10 +453,11 @@ const writePlaylistItemsPage = db.transaction(
         });
 
         for (const artist of track.artists || []) {
-          if (!artist?.id || !artist?.name) continue;
+          if (!artist?.id) continue;
+          const artistName = artist.name || "Unknown Artist";
           statements.upsertArtist.run({
             artist_id: artist.id,
-            name: artist.name,
+            name: artistName,
             genres: null,
             popularity: null,
             updated_at: now,

@@ -13,7 +13,7 @@ import {
   userPlaylists,
   trackArtists,
 } from "@/lib/db/schema";
-import { sql, eq } from "drizzle-orm";
+import { sql, eq, isNotNull } from "drizzle-orm";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
 
@@ -38,6 +38,7 @@ export async function GET() {
     savedCount,
     playlistsCount,
     tracksCount,
+    coversCount,
     artistsCount,
     playlistItemsCount,
     userPlaylistsCount,
@@ -50,6 +51,11 @@ export async function GET() {
     count(userSavedTracks, db),
     count(playlists, db),
     count(tracks, db),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(tracks)
+      .where(isNotNull(tracks.albumImageBlob))
+      .get(),
     count(artists, db),
     count(playlistItems, db),
     count(userPlaylists, db),
@@ -75,6 +81,7 @@ export async function GET() {
       user_saved_tracks: savedCount?.count ?? 0,
       playlists: playlistsCount?.count ?? 0,
       tracks: tracksCount?.count ?? 0,
+      cover_images: coversCount?.count ?? 0,
       artists: artistsCount?.count ?? 0,
       playlist_items: playlistItemsCount?.count ?? 0,
       user_playlists: userPlaylistsCount?.count ?? 0,

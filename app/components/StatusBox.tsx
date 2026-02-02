@@ -138,6 +138,11 @@ export default function StatusBox() {
               await fetch("/api/spotify/sync", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ type: "track_metadata" }),
+              });
+              await fetch("/api/spotify/sync", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ type: "covers" }),
               });
             } finally {

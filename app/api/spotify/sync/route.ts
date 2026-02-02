@@ -15,6 +15,7 @@ const jobMap: Record<string, string> = {
   tracks_incremental: "SYNC_TRACKS_INCREMENTAL",
   playlists: "SYNC_PLAYLISTS",
   playlist_items: "SYNC_PLAYLIST_ITEMS",
+  track_metadata: "SYNC_TRACK_METADATA",
   covers: "SYNC_COVERS",
 };
 

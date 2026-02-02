@@ -166,6 +166,37 @@ async function spotifyGet(accessToken, url) {
   return res.json();
 }
 
+let appTokenCache = null;
+
+async function getAppAccessToken() {
+  if (appTokenCache && Date.now() < appTokenCache.expiresAt - 60_000) {
+    return appTokenCache.accessToken;
+  }
+  const auth = Buffer.from(
+    `${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`
+  ).toString("base64");
+  const res = await withLimiter(() =>
+    fetchWithTimeout("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ grant_type: "client_credentials" }),
+    })
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`AppTokenFailed:${res.status}:${text}`);
+  }
+  const json = await res.json();
+  appTokenCache = {
+    accessToken: json.access_token,
+    expiresAt: Date.now() + json.expires_in * 1000,
+  };
+  return appTokenCache.accessToken;
+}
+
 async function downloadImage(url) {
   const res = await withLimiter(() =>
     fetchWithTimeout(url, {}, FETCH_TIMEOUT_MS)
@@ -234,6 +265,19 @@ const statements = {
        AND track_id > ?
      ORDER BY track_id ASC
      LIMIT ?`
+  ),
+  getTracksMissingMeta: db.prepare(
+    `SELECT track_id
+     FROM tracks
+     WHERE (album_name IS NULL OR album_image_url IS NULL)
+       AND track_id > ?
+     ORDER BY track_id ASC
+     LIMIT ?`
+  ),
+  updateTrackMeta: db.prepare(
+    `UPDATE tracks
+     SET album_id=?, album_name=?, album_image_url=?, updated_at=?
+     WHERE track_id=?`
   ),
   countCoverJobs: db.prepare(
     `SELECT count(*) as c FROM jobs WHERE type='SYNC_COVERS' AND status IN ('queued','running')`
@@ -763,6 +807,73 @@ async function syncPlaylistItems(job) {
   return { done: false, nextOffset: offset, runId, playlistId, snapshotId };
 }
 
+async function syncTrackMetadata(job) {
+  const payload = job.payload ? JSON.parse(job.payload) : {};
+  const limit = payload.limit || 50;
+  const cursor = payload.cursor || "";
+  const maxBatches =
+    payload.maxBatches || Number(process.env.SYNC_TRACK_METADATA_BATCHES || "20");
+
+  let batches = 0;
+  let lastId = cursor;
+  const accessToken = await getAppAccessToken();
+
+  while (batches < maxBatches) {
+    const rows = statements.getTracksMissingMeta.all(lastId, limit);
+    if (!rows.length) {
+      statements.upsertSyncState.run({
+        user_id: job.user_id,
+        resource: "track_metadata",
+        status: "idle",
+        cursor_offset: null,
+        cursor_limit: limit,
+        last_successful_at: Date.now(),
+        retry_after_at: null,
+        failure_count: 0,
+        last_error_code: null,
+        updated_at: Date.now(),
+      });
+      return { done: true };
+    }
+
+    const ids = rows.map((r) => r.track_id).filter(Boolean);
+    const url = `https://api.spotify.com/v1/tracks?ids=${ids.join(",")}`;
+    const data = await spotifyGet(accessToken, url);
+    const now = Date.now();
+
+    for (const track of data.tracks || []) {
+      if (!track?.id) continue;
+      const imageUrl =
+        track.album?.images?.[track.album?.images?.length - 1]?.url || null;
+      statements.updateTrackMeta.run(
+        track.album?.id || null,
+        track.album?.name || null,
+        imageUrl,
+        now,
+        track.id
+      );
+      lastId = track.id;
+    }
+
+    batches += 1;
+
+    statements.upsertSyncState.run({
+      user_id: job.user_id,
+      resource: "track_metadata",
+      status: "running",
+      cursor_offset: null,
+      cursor_limit: limit,
+      last_successful_at: Date.now(),
+      retry_after_at: null,
+      failure_count: 0,
+      last_error_code: null,
+      updated_at: Date.now(),
+    });
+  }
+
+  return { done: false, nextCursor: lastId };
+}
+
 async function syncCovers(job) {
   const payload = job.payload ? JSON.parse(job.payload) : {};
   const limit = payload.limit || 50;
@@ -827,6 +938,16 @@ function enqueueCoversIfMissing(userId) {
   statements.enqueueJob.run({
     id: crypto.randomUUID(),
     user_id: userId,
+    type: "SYNC_TRACK_METADATA",
+    payload: JSON.stringify({ limit: 50, maxBatches: 30, cursor: "" }),
+    run_after: Date.now() + 1000,
+    status: "queued",
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  });
+  statements.enqueueJob.run({
+    id: crypto.randomUUID(),
+    user_id: userId,
     type: "SYNC_COVERS",
     payload: JSON.stringify({ limit: 50, maxBatches: 30, cursor: "" }),
     run_after: Date.now() + 2000,
@@ -849,6 +970,9 @@ async function handleJob(job) {
   if (job.type === "SYNC_PLAYLIST_ITEMS") {
     return syncPlaylistItems(job);
   }
+  if (job.type === "SYNC_TRACK_METADATA") {
+    return syncTrackMetadata(job);
+  }
   if (job.type === "SYNC_COVERS") {
     return syncCovers(job);
   }
@@ -870,6 +994,9 @@ function getResourceForJob(job) {
       }
     } catch {}
     return "playlist_items";
+  }
+  if (job.type === "SYNC_TRACK_METADATA") {
+    return "track_metadata";
   }
   if (job.type === "SYNC_COVERS") {
     return "covers";

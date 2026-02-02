@@ -65,7 +65,7 @@ export async function GET(
     .get();
 
   if (track?.blob) {
-    return new NextResponse(track.blob as Uint8Array, {
+    return new NextResponse(new Uint8Array(track.blob as Buffer), {
       status: 200,
       headers: {
         "Content-Type": track.mime || "image/jpeg",

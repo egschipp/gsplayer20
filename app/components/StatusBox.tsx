@@ -116,7 +116,7 @@ export default function StatusBox() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
           gap: 8,
           fontSize: 13,
           marginBottom: 12,

@@ -7,6 +7,11 @@ import {
   syncState,
   userSavedTracks,
   playlists,
+  tracks,
+  artists,
+  playlistItems,
+  userPlaylists,
+  trackArtists,
 } from "@/lib/db/schema";
 import { sql, eq } from "drizzle-orm";
 import { getServerSession } from "next-auth";
@@ -32,6 +37,11 @@ export async function GET() {
     syncCount,
     savedCount,
     playlistsCount,
+    tracksCount,
+    artistsCount,
+    playlistItemsCount,
+    userPlaylistsCount,
+    trackArtistsCount,
   ] = await Promise.all([
     count(users, db),
     count(oauthTokens, db),
@@ -39,6 +49,11 @@ export async function GET() {
     count(syncState, db),
     count(userSavedTracks, db),
     count(playlists, db),
+    count(tracks, db),
+    count(artists, db),
+    count(playlistItems, db),
+    count(userPlaylists, db),
+    count(trackArtists, db),
   ]);
 
   const syncRows = await db
@@ -59,6 +74,11 @@ export async function GET() {
       sync_state: syncCount?.count ?? 0,
       user_saved_tracks: savedCount?.count ?? 0,
       playlists: playlistsCount?.count ?? 0,
+      tracks: tracksCount?.count ?? 0,
+      artists: artistsCount?.count ?? 0,
+      playlist_items: playlistItemsCount?.count ?? 0,
+      user_playlists: userPlaylistsCount?.count ?? 0,
+      track_artists: trackArtistsCount?.count ?? 0,
     },
     sync: {
       running,

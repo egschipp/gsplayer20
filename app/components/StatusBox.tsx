@@ -127,9 +127,30 @@ export default function StatusBox() {
           : "DB status unavailable"}
       </div>
 
-      <button onClick={forceSync} disabled={syncing} className="btn btn-primary">
-        {syncing ? "Syncing..." : "Force sync"}
-      </button>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <button onClick={forceSync} disabled={syncing} className="btn btn-primary">
+          {syncing ? "Syncing..." : "Force sync"}
+        </button>
+        <button
+          onClick={async () => {
+            setSyncing(true);
+            try {
+              await fetch("/api/spotify/sync", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ type: "covers" }),
+              });
+            } finally {
+              setSyncing(false);
+              refresh();
+            }
+          }}
+          disabled={syncing}
+          className="btn btn-secondary"
+        >
+          Backfill covers
+        </button>
+      </div>
 
       {syncStatus?.resources?.length ? (
         <div style={{ marginTop: 16, fontSize: 13 }}>

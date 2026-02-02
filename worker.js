@@ -52,7 +52,7 @@ if (!hasColumn("sync_state", "updated_at")) {
 
 function sanitizeErrorMessage(message) {
   return String(message)
-    .replace(/Bearer\\s+[A-Za-z0-9\\-._~+/]+=*/g, "Bearer [redacted]")
+    .replace(/Bearer\\s+[^\\s]+/g, "Bearer [redacted]")
     .slice(0, 500);
 }
 

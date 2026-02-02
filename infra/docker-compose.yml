@@ -1,8 +1,7 @@
 services:
   web:
-    image: ${IMAGE_NAME:-ghcr.io/example/gsplayer}:latest
-    ports:
-      - "3000:3000"
+    image: ${IMAGE_NAME:-ghcr.io/egschipp/gsplayer20}:latest
+    container_name: gsplayer20
     env_file:
       - .env
     restart: unless-stopped
@@ -12,8 +11,14 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+          "fetch('http://localhost:3000/gsplayer/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
         ]
       interval: 10s
       timeout: 3s
       retries: 5
+    networks:
+      - web
+
+networks:
+  web:
+    external: true

@@ -46,7 +46,7 @@ export default function StatusBox() {
       if (dbRes.ok) setDbStatus(await dbRes.json());
       if (syncRes.ok) setSyncStatus(await syncRes.json());
       if (workerRes.ok) setWorkerHealth(await workerRes.json());
-      if (playlistsRes.ok && !loadingPlaylists && Object.keys(playlistMap).length === 0) {
+      if (!loadingPlaylists && Object.keys(playlistMap).length === 0) {
         setLoadingPlaylists(true);
         const map: PlaylistMap = {};
         let cursor: string | null = null;

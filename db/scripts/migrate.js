@@ -18,8 +18,9 @@ function hasColumn(table, column) {
 }
 
 if (!hasColumn("sync_state", "updated_at")) {
+  sqlite.exec("ALTER TABLE sync_state ADD COLUMN updated_at INTEGER");
   sqlite.exec(
-    "ALTER TABLE sync_state ADD COLUMN updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)"
+    "UPDATE sync_state SET updated_at=(unixepoch() * 1000) WHERE updated_at IS NULL"
   );
 }
 

@@ -24,8 +24,9 @@ db.exec(
 );
 
 if (!hasColumn("sync_state", "updated_at")) {
+  db.exec("ALTER TABLE sync_state ADD COLUMN updated_at INTEGER");
   db.exec(
-    "ALTER TABLE sync_state ADD COLUMN updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)"
+    "UPDATE sync_state SET updated_at=(unixepoch() * 1000) WHERE updated_at IS NULL"
   );
 }
 

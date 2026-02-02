@@ -1,4 +1,5 @@
 import SpotifyStatus from "./components/SpotifyStatus";
+import StatusBox from "./components/StatusBox";
 
 export default function HomePage() {
   return (
@@ -18,6 +19,7 @@ export default function HomePage() {
         section.
       </p>
       <SpotifyStatus />
+      <StatusBox />
     </main>
   );
 }

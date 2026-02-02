@@ -14,6 +14,21 @@ const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
+function hasColumn(table, column) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all();
+  return rows.some((r) => r.name === column);
+}
+
+db.exec(
+  "CREATE TABLE IF NOT EXISTS worker_heartbeat (id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000))"
+);
+
+if (!hasColumn("sync_state", "updated_at")) {
+  db.exec(
+    "ALTER TABLE sync_state ADD COLUMN updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)"
+  );
+}
+
 function decryptToken(payload) {
   if (!TOKEN_ENCRYPTION_KEY) {
     throw new Error("Missing TOKEN_ENCRYPTION_KEY");
@@ -175,8 +190,8 @@ const statements = {
      VALUES (@id, @user_id, @type, @payload, @run_after, @status, 0, @created_at, @updated_at)`
   ),
   upsertSyncState: db.prepare(
-    `INSERT INTO sync_state (user_id, resource, status, cursor_offset, cursor_limit, last_successful_at, retry_after_at, failure_count, last_error_code)
-     VALUES (@user_id, @resource, @status, @cursor_offset, @cursor_limit, @last_successful_at, @retry_after_at, @failure_count, @last_error_code)
+    `INSERT INTO sync_state (user_id, resource, status, cursor_offset, cursor_limit, last_successful_at, retry_after_at, failure_count, last_error_code, updated_at)
+     VALUES (@user_id, @resource, @status, @cursor_offset, @cursor_limit, @last_successful_at, @retry_after_at, @failure_count, @last_error_code, @updated_at)
      ON CONFLICT(user_id, resource) DO UPDATE SET
        status=excluded.status,
        cursor_offset=excluded.cursor_offset,
@@ -184,7 +199,13 @@ const statements = {
        last_successful_at=excluded.last_successful_at,
        retry_after_at=excluded.retry_after_at,
        failure_count=excluded.failure_count,
-      last_error_code=excluded.last_error_code`
+       last_error_code=excluded.last_error_code,
+       updated_at=excluded.updated_at`
+  ),
+  upsertHeartbeat: db.prepare(
+    `INSERT INTO worker_heartbeat (id, updated_at)
+     VALUES ('worker', ?)
+     ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at`
   ),
   setSyncError: db.prepare(
     `UPDATE sync_state
@@ -239,6 +260,7 @@ async function syncTracksInitial(job) {
         retry_after_at: null,
         failure_count: 0,
         last_error_code: null,
+        updated_at: Date.now(),
       });
       return { done: true };
     }
@@ -290,6 +312,7 @@ async function syncTracksInitial(job) {
       retry_after_at: null,
       failure_count: 0,
       last_error_code: null,
+      updated_at: Date.now(),
     });
   }
 
@@ -397,6 +420,7 @@ async function syncPlaylists(job) {
         retry_after_at: null,
         failure_count: 0,
         last_error_code: null,
+        updated_at: Date.now(),
       });
       return { done: true };
     }
@@ -451,6 +475,7 @@ async function syncPlaylists(job) {
       retry_after_at: null,
       failure_count: 0,
       last_error_code: null,
+      updated_at: Date.now(),
     });
   }
 
@@ -491,6 +516,7 @@ async function syncPlaylistItems(job) {
         retry_after_at: null,
         failure_count: 0,
         last_error_code: null,
+        updated_at: Date.now(),
       });
       statements.deletePlaylistItemsNotRun.run(playlistId, runId);
       return { done: true };
@@ -560,6 +586,7 @@ async function syncPlaylistItems(job) {
       retry_after_at: null,
       failure_count: 0,
       last_error_code: null,
+      updated_at: Date.now(),
     });
   }
 
@@ -602,8 +629,13 @@ function getResourceForJob(job) {
 }
 
 async function runLoop() {
+  let lastHeartbeatAt = 0;
   while (true) {
     const now = Date.now();
+    if (now - lastHeartbeatAt > 10000) {
+      statements.upsertHeartbeat.run(now);
+      lastHeartbeatAt = now;
+    }
     const job = statements.takeJob.get(now, now);
 
     if (!job) {
@@ -624,6 +656,7 @@ async function runLoop() {
           retry_after_at: null,
           failure_count: 0,
           last_error_code: null,
+          updated_at: Date.now(),
         });
       }
       const result = await handleJob(job);

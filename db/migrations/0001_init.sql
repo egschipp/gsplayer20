@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
   retry_after_at INTEGER,
   failure_count INTEGER NOT NULL DEFAULT 0,
   last_error_code TEXT,
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   PRIMARY KEY (user_id, resource),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -127,3 +128,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS jobs_status_run_after_idx
   ON jobs(status, run_after);
+
+CREATE TABLE IF NOT EXISTS worker_heartbeat (
+  id TEXT PRIMARY KEY,
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+);

@@ -11,4 +11,16 @@ const migrationPath = path.join(__dirname, "..", "migrations", "0001_init.sql");
 const sql = fs.readFileSync(migrationPath, "utf8");
 sqlite.exec(sql);
 
+// idempotent column additions
+function hasColumn(table, column) {
+  const rows = sqlite.prepare(`PRAGMA table_info(${table})`).all();
+  return rows.some((r) => r.name === column);
+}
+
+if (!hasColumn("sync_state", "updated_at")) {
+  sqlite.exec(
+    "ALTER TABLE sync_state ADD COLUMN updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)"
+  );
+}
+
 console.log("Migrations applied");

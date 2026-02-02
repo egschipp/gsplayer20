@@ -10,6 +10,12 @@ type DbStatus = {
 } | null;
 
 type SyncStatus = { resources: any[]; asOf: number } | null;
+type WorkerHealth = {
+  status: string;
+  lastHeartbeat: number | null;
+  staleAfterMs: number;
+  now: number;
+} | null;
 
 function Badge({ label, tone }: { label: string; tone?: string }) {
   const bg = tone === "ok" ? "#166534" : tone === "warn" ? "#9a3412" : "#0f172a";
@@ -35,21 +41,24 @@ export default function StatusBox() {
   const [userStatus, setUserStatus] = useState<UserStatus>(null);
   const [dbStatus, setDbStatus] = useState<DbStatus>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(null);
+  const [workerHealth, setWorkerHealth] = useState<WorkerHealth>(null);
   const [syncing, setSyncing] = useState(false);
 
   async function refresh() {
     try {
-      const [appRes, userRes, dbRes, syncRes] = await Promise.all([
+      const [appRes, userRes, dbRes, syncRes, workerRes] = await Promise.all([
         fetch("/api/spotify/app-status"),
         fetch("/api/spotify/user-status"),
         fetch("/api/spotify/db-status"),
         fetch("/api/spotify/sync-status"),
+        fetch("/api/spotify/worker-health"),
       ]);
 
       if (appRes.ok) setAppStatus(await appRes.json());
       if (userRes.ok) setUserStatus(await userRes.json());
       if (dbRes.ok) setDbStatus(await dbRes.json());
       if (syncRes.ok) setSyncStatus(await syncRes.json());
+      if (workerRes.ok) setWorkerHealth(await workerRes.json());
     } catch {
       // ignore
     }
@@ -85,6 +94,10 @@ export default function StatusBox() {
   const lastSync = dbStatus?.sync?.lastSuccessfulAt
     ? new Date(dbStatus.sync.lastSuccessfulAt).toLocaleString()
     : "n/a";
+  const workerStatus = workerHealth?.status ?? "CHECKING";
+  const workerLast = workerHealth?.lastHeartbeat
+    ? new Date(workerHealth.lastHeartbeat).toLocaleString()
+    : "n/a";
 
   return (
     <section
@@ -107,10 +120,15 @@ export default function StatusBox() {
           tone={userStatus?.status === "OK" ? "ok" : "warn"}
         />
         <Badge label={`Sync: ${running}`} tone={running === "RUNNING" ? "warn" : "ok"} />
+        <Badge
+          label={`Worker: ${workerStatus}`}
+          tone={workerStatus === "OK" ? "ok" : "warn"}
+        />
       </div>
 
       <div style={{ fontSize: 13, marginBottom: 12 }}>
         Last sync: {lastSync}
+        <div>Worker heartbeat: {workerLast}</div>
       </div>
 
       <div

@@ -163,6 +163,7 @@ export const syncState = sqliteTable(
     retryAfterAt: integer("retry_after_at"),
     failureCount: integer("failure_count").notNull().default(0),
     lastErrorCode: text("last_error_code"),
+    updatedAt: integer("updated_at").notNull().default(nowMs),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.userId, table.resource] }),
@@ -191,3 +192,8 @@ export const jobs = sqliteTable(
     ),
   })
 );
+
+export const workerHeartbeat = sqliteTable("worker_heartbeat", {
+  id: text("id").primaryKey(),
+  updatedAt: integer("updated_at").notNull().default(nowMs),
+});

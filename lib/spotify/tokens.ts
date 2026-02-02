@@ -1,6 +1,9 @@
 import { requireEnv } from "@/lib/env";
 
 const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
+const FETCH_TIMEOUT_MS = Number(
+  process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000"
+);
 
 let appTokenCache: {
   accessToken: string;
@@ -15,12 +18,22 @@ function basicAuthHeader() {
   return `Basic ${encoded}`;
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function getAppAccessToken() {
   if (appTokenCache && Date.now() < appTokenCache.expiresAt - 60_000) {
     return appTokenCache.accessToken;
   }
 
-  const res = await fetch(SPOTIFY_TOKEN_URL, {
+  const res = await fetchWithTimeout(SPOTIFY_TOKEN_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -61,7 +74,7 @@ export async function refreshAccessToken(token: {
       return { ...token, error: "MissingRefreshToken" } as const;
     }
 
-    const res = await fetch(SPOTIFY_TOKEN_URL, {
+    const res = await fetchWithTimeout(SPOTIFY_TOKEN_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",

@@ -1,17 +1,17 @@
 import { NextResponse } from "next/server";
+import { rateLimit } from "@/lib/rate-limit/ratelimit";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
 import { getDb } from "@/lib/db/client";
-import { rateLimit } from "@/lib/rate-limit/ratelimit";
-import { tracks, playlistItems, syncState, userPlaylists } from "@/lib/db/schema";
+import { playlistItems, tracks, userPlaylists, syncState } from "@/lib/db/schema";
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
 
 export const runtime = "nodejs";
 
-export async function GET(req: Request) {
+export async function GET(req: Request, ctx: { params: { playlistId: string } }) {
   const ip = req.headers.get("x-forwarded-for") || "unknown";
-  const rl = rateLimit(`library:${ip}`, 60, 60_000);
+  const rl = rateLimit(`playlist-items:${ip}`, 60, 60_000);
   if (!rl.allowed) {
     return NextResponse.json({ error: "RATE_LIMIT" }, { status: 429 });
   }
@@ -19,6 +19,11 @@ export async function GET(req: Request) {
   const session = await getServerSession(getAuthOptions());
   if (!session?.appUserId) {
     return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+  }
+
+  const playlistId = ctx.params.playlistId;
+  if (!playlistId) {
+    return NextResponse.json({ error: "MISSING_PLAYLIST" }, { status: 400 });
   }
 
   const { searchParams } = new URL(req.url);
@@ -31,6 +36,7 @@ export async function GET(req: Request) {
         const decoded = decodeCursor(cursor);
         return and(
           eq(userPlaylists.userId, session.appUserId as string),
+          eq(playlistItems.playlistId, playlistId),
           or(
             lt(playlistItems.position, decoded.addedAt),
             and(
@@ -40,7 +46,10 @@ export async function GET(req: Request) {
           )
         );
       })()
-    : eq(userPlaylists.userId, session.appUserId as string);
+    : and(
+        eq(userPlaylists.userId, session.appUserId as string),
+        eq(playlistItems.playlistId, playlistId)
+      );
 
   const rows = await db
     .select({
@@ -69,12 +78,27 @@ export async function GET(req: Request) {
   const sync = await db
     .select()
     .from(syncState)
-    .where(eq(syncState.userId, session.appUserId as string));
+    .where(
+      and(
+        eq(syncState.userId, session.appUserId as string),
+        eq(syncState.resource, `playlist_items:${playlistId}`)
+      )
+    )
+    .get();
+
+  const lastSuccessfulAt = sync?.lastSuccessfulAt ?? null;
+  const lagSec = lastSuccessfulAt
+    ? Math.floor((Date.now() - lastSuccessfulAt) / 1000)
+    : null;
 
   return NextResponse.json({
     items: rows,
     nextCursor,
     asOf: Date.now(),
-    sync,
+    sync: {
+      status: sync?.status ?? "idle",
+      lastSuccessfulAt,
+      lagSec,
+    },
   });
 }

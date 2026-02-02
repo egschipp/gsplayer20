@@ -3,7 +3,7 @@ import SpotifyProvider from "next-auth/providers/spotify";
 import { requireEnv } from "@/lib/env";
 import { scopeString } from "@/lib/spotify/scopes";
 import { refreshAccessToken } from "@/lib/spotify/tokens";
-import { getOrCreateUser, upsertTokens } from "@/lib/db/queries";
+import { getOrCreateUser, getRefreshToken, upsertTokens } from "@/lib/db/queries";
 
 export function getAuthOptions(): NextAuthOptions {
   return {
@@ -50,7 +50,6 @@ export function getAuthOptions(): NextAuthOptions {
           return {
             ...token,
             accessToken: account.access_token,
-            refreshToken: account.refresh_token,
             accessTokenExpires: expiresAt,
             scope: account.scope,
             spotifyUserId,
@@ -65,16 +64,39 @@ export function getAuthOptions(): NextAuthOptions {
           return token;
         }
 
-        return await refreshAccessToken(token as {
-          accessToken?: string;
-          refreshToken?: string;
-          accessTokenExpires?: number;
-          scope?: string;
+        if (!token.appUserId) {
+          return { ...token, error: "MissingUserId" };
+        }
+
+        const storedRefresh = await getRefreshToken(token.appUserId as string);
+        const refreshed = await refreshAccessToken({
+          accessToken: token.accessToken as string | undefined,
+          refreshToken: storedRefresh ?? undefined,
+          accessTokenExpires: token.accessTokenExpires as number | undefined,
+          scope: token.scope as string | undefined,
         });
+
+        if ("error" in refreshed) {
+          return { ...token, error: refreshed.error };
+        }
+
+        if (refreshed.refreshToken) {
+          await upsertTokens({
+            userId: token.appUserId as string,
+            refreshToken: refreshed.refreshToken,
+            accessToken: refreshed.accessToken,
+            accessExpiresAt: refreshed.accessTokenExpires,
+            scope: refreshed.scope,
+          });
+        }
+
+        const { refreshToken, ...rest } = refreshed as {
+          refreshToken?: string;
+        } & typeof refreshed;
+        return rest;
       },
       async session({ session, token }) {
         session.accessToken = token.accessToken as string | undefined;
-        session.refreshToken = token.refreshToken as string | undefined;
         session.expiresAt = token.accessTokenExpires as number | undefined;
         session.scope = token.scope as string | undefined;
         session.error = token.error as string | undefined;

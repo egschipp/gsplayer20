@@ -5,6 +5,9 @@ const DB_PATH = process.env.DB_PATH || "/data/gsplayer.sqlite";
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 const TOKEN_ENCRYPTION_KEY = process.env.TOKEN_ENCRYPTION_KEY;
+const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000");
+const MAX_CONCURRENCY = Number(process.env.SPOTIFY_MAX_CONCURRENCY || "3");
+const MAX_RETRY_DELAY_MS = 60_000;
 
 if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
   console.error("Missing SPOTIFY_CLIENT_ID/SECRET");
@@ -13,6 +16,23 @@ if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
+
+let inFlight = 0;
+const queue = [];
+
+async function withLimiter(fn) {
+  if (inFlight >= MAX_CONCURRENCY) {
+    await new Promise((resolve) => queue.push(resolve));
+  }
+  inFlight += 1;
+  try {
+    return await fn();
+  } finally {
+    inFlight -= 1;
+    const next = queue.shift();
+    if (next) next();
+  }
+}
 
 function hasColumn(table, column) {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all();
@@ -28,6 +48,29 @@ if (!hasColumn("sync_state", "updated_at")) {
   db.exec(
     "UPDATE sync_state SET updated_at=(unixepoch() * 1000) WHERE updated_at IS NULL"
   );
+}
+
+function sanitizeErrorMessage(message) {
+  return String(message)
+    .replace(/Bearer\\s+[A-Za-z0-9\\-._~+/]+=*/g, "Bearer [redacted]")
+    .slice(0, 500);
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      const err = new Error("Timeout");
+      err.retryable = true;
+      throw err;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function decryptToken(payload) {
@@ -48,22 +91,39 @@ function decryptToken(payload) {
   return decrypted.toString("utf8");
 }
 
+function encryptToken(value) {
+  if (!TOKEN_ENCRYPTION_KEY) {
+    throw new Error("Missing TOKEN_ENCRYPTION_KEY");
+  }
+  const key = Buffer.from(TOKEN_ENCRYPTION_KEY, "base64");
+  if (key.length !== 32) {
+    throw new Error("TOKEN_ENCRYPTION_KEY must decode to 32 bytes");
+  }
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, encrypted]).toString("base64");
+}
+
 async function refreshAccessToken(refreshToken) {
   const auth = Buffer.from(
     `${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`
   ).toString("base64");
 
-  const res = await fetch("https://accounts.spotify.com/api/token", {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${auth}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-    }),
-  });
+  const res = await withLimiter(() =>
+    fetchWithTimeout("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+    })
+  );
 
   if (res.status === 429) {
     const retryAfter = Number(res.headers.get("retry-after") || "5");
@@ -74,16 +134,20 @@ async function refreshAccessToken(refreshToken) {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`RefreshFailed:${res.status}:${text}`);
+    const err = new Error(`RefreshFailed:${res.status}:${text}`);
+    if (res.status >= 500) err.retryable = true;
+    throw err;
   }
 
   return res.json();
 }
 
 async function spotifyGet(accessToken, url) {
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const res = await withLimiter(() =>
+    fetchWithTimeout(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+  );
 
   if (res.status === 429) {
     const retryAfter = Number(res.headers.get("retry-after") || "5");
@@ -94,7 +158,9 @@ async function spotifyGet(accessToken, url) {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`SpotifyError:${res.status}:${text}`);
+    const err = new Error(`SpotifyError:${res.status}:${text}`);
+    if (res.status >= 500) err.retryable = true;
+    throw err;
   }
 
   return res.json();
@@ -123,6 +189,9 @@ const statements = {
   ),
   getRefreshToken: db.prepare(
     `SELECT refresh_token_enc FROM oauth_tokens WHERE user_id=?`
+  ),
+  updateRefreshToken: db.prepare(
+    `UPDATE oauth_tokens SET refresh_token_enc=?, updated_at=? WHERE user_id=?`
   ),
   upsertTrack: db.prepare(
     `INSERT INTO tracks (track_id, name, duration_ms, explicit, album_id, popularity, updated_at)
@@ -227,303 +296,43 @@ const statements = {
   ),
 };
 
-async function getAccessTokenForUser(userId) {
-  const row = statements.getRefreshToken.get(userId);
-  if (!row) throw new Error("NoRefreshToken");
-  const refreshToken = decryptToken(row.refresh_token_enc);
-  const tokens = await refreshAccessToken(refreshToken);
-  return tokens.access_token;
-}
+const writeTracksPage = db.transaction((items, userId, now) => {
+  for (const item of items) {
+    if (!item.track) continue;
+    const track = item.track;
+    statements.upsertTrack.run({
+      track_id: track.id,
+      name: track.name,
+      duration_ms: track.duration_ms,
+      explicit: track.explicit ? 1 : 0,
+      album_id: track.album?.id || null,
+      popularity: track.popularity ?? null,
+      updated_at: now,
+    });
 
-async function syncTracksInitial(job) {
-  const payload = job.payload ? JSON.parse(job.payload) : {};
-  const offset = payload.offset || 0;
-  const limit = payload.limit || 50;
-  const maxPagesPerRun = payload.maxPagesPerRun || 5;
-
-  const accessToken = await getAccessTokenForUser(job.user_id);
-
-  let currentOffset = offset;
-  let pages = 0;
-  while (pages < maxPagesPerRun) {
-    const url = `https://api.spotify.com/v1/me/tracks?limit=${limit}&offset=${currentOffset}`;
-    const data = await spotifyGet(accessToken, url);
-    const items = data.items || [];
-
-    if (items.length === 0) {
-      statements.upsertSyncState.run({
-        user_id: job.user_id,
-        resource: "tracks",
-        status: "idle",
-        cursor_offset: currentOffset,
-        cursor_limit: limit,
-        last_successful_at: Date.now(),
-        retry_after_at: null,
-        failure_count: 0,
-        last_error_code: null,
-        updated_at: Date.now(),
-      });
-      return { done: true };
-    }
-
-    const now = Date.now();
-    for (const item of items) {
-      if (!item.track) continue;
-      const track = item.track;
-      statements.upsertTrack.run({
-        track_id: track.id,
-        name: track.name,
-        duration_ms: track.duration_ms,
-        explicit: track.explicit ? 1 : 0,
-        album_id: track.album?.id || null,
-        popularity: track.popularity ?? null,
+    for (const artist of track.artists || []) {
+      statements.upsertArtist.run({
+        artist_id: artist.id,
+        name: artist.name,
+        genres: null,
+        popularity: null,
         updated_at: now,
       });
-
-      for (const artist of track.artists || []) {
-        statements.upsertArtist.run({
-          artist_id: artist.id,
-          name: artist.name,
-          genres: null,
-          popularity: null,
-          updated_at: now,
-        });
-        statements.upsertTrackArtist.run(track.id, artist.id);
-      }
-
-      const addedAt = item.added_at ? Date.parse(item.added_at) : now;
-      statements.upsertUserSavedTrack.run({
-        user_id: job.user_id,
-        track_id: track.id,
-        added_at: addedAt,
-        last_seen_at: now,
-      });
+      statements.upsertTrackArtist.run(track.id, artist.id);
     }
 
-    currentOffset += items.length;
-    pages += 1;
-
-    statements.upsertSyncState.run({
-      user_id: job.user_id,
-      resource: "tracks",
-      status: "running",
-      cursor_offset: currentOffset,
-      cursor_limit: limit,
-      last_successful_at: Date.now(),
-      retry_after_at: null,
-      failure_count: 0,
-      last_error_code: null,
-      updated_at: Date.now(),
+    const addedAt = item.added_at ? Date.parse(item.added_at) : now;
+    statements.upsertUserSavedTrack.run({
+      user_id: userId,
+      track_id: track.id,
+      added_at: addedAt,
+      last_seen_at: now,
     });
   }
+});
 
-  return { done: false, nextOffset: currentOffset };
-}
-
-async function syncTracksIncremental(job) {
-  const payload = job.payload ? JSON.parse(job.payload) : {};
-  const limit = payload.limit || 50;
-  const maxPagesPerRun = payload.maxPagesPerRun || 5;
-
-  const accessToken = await getAccessTokenForUser(job.user_id);
-  const maxAddedRow = statements.getMaxAddedAt.get(job.user_id);
-  const maxAddedAt = maxAddedRow ? maxAddedRow.added_at : 0;
-
-  let offset = 0;
-  let pages = 0;
-  let overlapPages = 0;
-
-  while (pages < maxPagesPerRun) {
-    const url = `https://api.spotify.com/v1/me/tracks?limit=${limit}&offset=${offset}`;
-    const data = await spotifyGet(accessToken, url);
-    const items = data.items || [];
-
-    if (items.length === 0) return { done: true };
-
-    const now = Date.now();
-    let pageHasNew = false;
-
-    for (const item of items) {
-      if (!item.track) continue;
-      const track = item.track;
-      statements.upsertTrack.run({
-        track_id: track.id,
-        name: track.name,
-        duration_ms: track.duration_ms,
-        explicit: track.explicit ? 1 : 0,
-        album_id: track.album?.id || null,
-        popularity: track.popularity ?? null,
-        updated_at: now,
-      });
-
-      for (const artist of track.artists || []) {
-        statements.upsertArtist.run({
-          artist_id: artist.id,
-          name: artist.name,
-          genres: null,
-          popularity: null,
-          updated_at: now,
-        });
-        statements.upsertTrackArtist.run(track.id, artist.id);
-      }
-
-      const addedAt = item.added_at ? Date.parse(item.added_at) : now;
-      if (addedAt > maxAddedAt) pageHasNew = true;
-      statements.upsertUserSavedTrack.run({
-        user_id: job.user_id,
-        track_id: track.id,
-        added_at: addedAt,
-        last_seen_at: now,
-      });
-    }
-
-    if (!pageHasNew) {
-      overlapPages += 1;
-    } else {
-      overlapPages = 0;
-    }
-
-    if (overlapPages >= 1) {
-      return { done: true };
-    }
-
-    offset += items.length;
-    pages += 1;
-  }
-
-  return { done: false };
-}
-
-async function syncPlaylists(job) {
-  const payload = job.payload ? JSON.parse(job.payload) : {};
-  const limit = payload.limit || 50;
-  const maxPagesPerRun = payload.maxPagesPerRun || 5;
-  const offsetStart = payload.offset || 0;
-
-  const accessToken = await getAccessTokenForUser(job.user_id);
-
-  let offset = offsetStart;
-  let pages = 0;
-
-  while (pages < maxPagesPerRun) {
-    const url = `https://api.spotify.com/v1/me/playlists?limit=${limit}&offset=${offset}`;
-    const data = await spotifyGet(accessToken, url);
-    const items = data.items || [];
-
-    if (items.length === 0) {
-      statements.upsertSyncState.run({
-        user_id: job.user_id,
-        resource: "playlists",
-        status: "idle",
-        cursor_offset: offset,
-        cursor_limit: limit,
-        last_successful_at: Date.now(),
-        retry_after_at: null,
-        failure_count: 0,
-        last_error_code: null,
-        updated_at: Date.now(),
-      });
-      return { done: true };
-    }
-
-    const now = Date.now();
-    for (const item of items) {
-      const existing = statements.getPlaylistSnapshot.get(item.id);
-      statements.upsertPlaylist.run({
-        playlist_id: item.id,
-        name: item.name,
-        owner_spotify_user_id: item.owner?.id || "",
-        is_public: item.public === null ? null : item.public ? 1 : 0,
-        collaborative: item.collaborative ? 1 : 0,
-        snapshot_id: item.snapshot_id || null,
-        tracks_total: item.tracks?.total ?? null,
-        updated_at: now,
-      });
-      statements.upsertUserPlaylist.run(job.user_id, item.id, now);
-
-      if (!existing || existing.snapshot_id !== item.snapshot_id) {
-        const payload = JSON.stringify({
-          playlistId: item.id,
-          snapshotId: item.snapshot_id || null,
-          offset: 0,
-          limit: 50,
-          maxPagesPerRun: 5,
-          runId: crypto.randomUUID(),
-        });
-        statements.enqueueJob.run({
-          id: crypto.randomUUID(),
-          user_id: job.user_id,
-          type: "SYNC_PLAYLIST_ITEMS",
-          payload,
-          run_after: Date.now(),
-          status: "queued",
-          created_at: Date.now(),
-          updated_at: Date.now(),
-        });
-      }
-    }
-
-    offset += items.length;
-    pages += 1;
-
-    statements.upsertSyncState.run({
-      user_id: job.user_id,
-      resource: "playlists",
-      status: "running",
-      cursor_offset: offset,
-      cursor_limit: limit,
-      last_successful_at: Date.now(),
-      retry_after_at: null,
-      failure_count: 0,
-      last_error_code: null,
-      updated_at: Date.now(),
-    });
-  }
-
-  return { done: false, nextOffset: offset };
-}
-
-async function syncPlaylistItems(job) {
-  const payload = job.payload ? JSON.parse(job.payload) : {};
-  const playlistId = payload.playlistId;
-  const snapshotId = payload.snapshotId || null;
-  const limit = payload.limit || 50;
-  const offsetStart = payload.offset || 0;
-  const maxPagesPerRun = payload.maxPagesPerRun || 5;
-  const runId = payload.runId || crypto.randomUUID();
-
-  if (!playlistId) {
-    throw new Error("MissingPlaylistId");
-  }
-
-  const accessToken = await getAccessTokenForUser(job.user_id);
-
-  let offset = offsetStart;
-  let pages = 0;
-
-  while (pages < maxPagesPerRun) {
-    const url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=${limit}&offset=${offset}`;
-    const data = await spotifyGet(accessToken, url);
-    const items = data.items || [];
-
-    if (items.length === 0) {
-      statements.upsertSyncState.run({
-        user_id: job.user_id,
-        resource: `playlist_items:${playlistId}`,
-        status: "idle",
-        cursor_offset: offset,
-        cursor_limit: limit,
-        last_successful_at: Date.now(),
-        retry_after_at: null,
-        failure_count: 0,
-        last_error_code: null,
-        updated_at: Date.now(),
-      });
-      statements.deletePlaylistItemsNotRun.run(playlistId, runId);
-      return { done: true };
-    }
-
-    const now = Date.now();
+const writePlaylistItemsPage = db.transaction(
+  (items, playlistId, snapshotId, runId, offset, now) => {
     let idx = 0;
     for (const item of items) {
       const track = item.track;
@@ -573,6 +382,303 @@ async function syncPlaylistItems(job) {
 
       idx += 1;
     }
+  }
+);
+
+const writePlaylistsPage = db.transaction((items, userId, now) => {
+  for (const item of items) {
+    const existing = statements.getPlaylistSnapshot.get(item.id);
+    statements.upsertPlaylist.run({
+      playlist_id: item.id,
+      name: item.name,
+      owner_spotify_user_id: item.owner?.id || "",
+      is_public: item.public === null ? null : item.public ? 1 : 0,
+      collaborative: item.collaborative ? 1 : 0,
+      snapshot_id: item.snapshot_id || null,
+      tracks_total: item.tracks?.total ?? null,
+      updated_at: now,
+    });
+    statements.upsertUserPlaylist.run(userId, item.id, now);
+
+    if (!existing || existing.snapshot_id !== item.snapshot_id) {
+      const payload = JSON.stringify({
+        playlistId: item.id,
+        snapshotId: item.snapshot_id || null,
+        offset: 0,
+        limit: 50,
+        maxPagesPerRun: Number(process.env.SYNC_PLAYLIST_ITEMS_PAGES || "5"),
+        runId: crypto.randomUUID(),
+      });
+      statements.enqueueJob.run({
+        id: crypto.randomUUID(),
+        user_id: userId,
+        type: "SYNC_PLAYLIST_ITEMS",
+        payload,
+        run_after: Date.now(),
+        status: "queued",
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+    }
+  }
+});
+
+async function getAccessTokenForUser(userId) {
+  const row = statements.getRefreshToken.get(userId);
+  if (!row) throw new Error("NoRefreshToken");
+  const refreshToken = decryptToken(row.refresh_token_enc);
+  const tokens = await refreshAccessToken(refreshToken);
+  if (tokens.refresh_token) {
+    const encrypted = encryptToken(tokens.refresh_token);
+    statements.updateRefreshToken.run(encrypted, Date.now(), userId);
+  }
+  return tokens.access_token;
+}
+
+async function syncTracksInitial(job) {
+  const payload = job.payload ? JSON.parse(job.payload) : {};
+  const offset = payload.offset || 0;
+  const limit = payload.limit || 50;
+  const maxPagesPerRun =
+    payload.maxPagesPerRun ||
+    Number(process.env.SYNC_TRACKS_INITIAL_PAGES || "50");
+
+  const accessToken = await getAccessTokenForUser(job.user_id);
+
+  let currentOffset = offset;
+  let pages = 0;
+  while (pages < maxPagesPerRun) {
+    const url = `https://api.spotify.com/v1/me/tracks?limit=${limit}&offset=${currentOffset}`;
+    const data = await spotifyGet(accessToken, url);
+    const items = data.items || [];
+
+    if (items.length === 0) {
+      statements.upsertSyncState.run({
+        user_id: job.user_id,
+        resource: "tracks",
+        status: "idle",
+        cursor_offset: currentOffset,
+        cursor_limit: limit,
+        last_successful_at: Date.now(),
+        retry_after_at: null,
+        failure_count: 0,
+        last_error_code: null,
+        updated_at: Date.now(),
+      });
+      return { done: true };
+    }
+
+    const now = Date.now();
+    writeTracksPage(items, job.user_id, now);
+
+    currentOffset += items.length;
+    pages += 1;
+
+    statements.upsertSyncState.run({
+      user_id: job.user_id,
+      resource: "tracks",
+      status: "running",
+      cursor_offset: currentOffset,
+      cursor_limit: limit,
+      last_successful_at: Date.now(),
+      retry_after_at: null,
+      failure_count: 0,
+      last_error_code: null,
+      updated_at: Date.now(),
+    });
+  }
+
+  return { done: false, nextOffset: currentOffset };
+}
+
+async function syncTracksIncremental(job) {
+  const payload = job.payload ? JSON.parse(job.payload) : {};
+  const limit = payload.limit || 50;
+  const maxPagesPerRun =
+    payload.maxPagesPerRun ||
+    Number(process.env.SYNC_TRACKS_INCREMENTAL_PAGES || "5");
+
+  const accessToken = await getAccessTokenForUser(job.user_id);
+  const maxAddedRow = statements.getMaxAddedAt.get(job.user_id);
+  const maxAddedAt = maxAddedRow ? maxAddedRow.added_at : 0;
+
+  let offset = 0;
+  let pages = 0;
+  let overlapPages = 0;
+
+  while (pages < maxPagesPerRun) {
+    const url = `https://api.spotify.com/v1/me/tracks?limit=${limit}&offset=${offset}`;
+    const data = await spotifyGet(accessToken, url);
+    const items = data.items || [];
+
+    if (items.length === 0) {
+      statements.upsertSyncState.run({
+        user_id: job.user_id,
+        resource: "tracks",
+        status: "idle",
+        cursor_offset: offset,
+        cursor_limit: limit,
+        last_successful_at: Date.now(),
+        retry_after_at: null,
+        failure_count: 0,
+        last_error_code: null,
+        updated_at: Date.now(),
+      });
+      return { done: true };
+    }
+
+    const now = Date.now();
+    let pageHasNew = false;
+    for (const item of items) {
+      const addedAt = item.added_at ? Date.parse(item.added_at) : now;
+      if (addedAt > maxAddedAt) pageHasNew = true;
+    }
+
+    writeTracksPage(items, job.user_id, now);
+
+    statements.upsertSyncState.run({
+      user_id: job.user_id,
+      resource: "tracks",
+      status: "running",
+      cursor_offset: offset,
+      cursor_limit: limit,
+      last_successful_at: Date.now(),
+      retry_after_at: null,
+      failure_count: 0,
+      last_error_code: null,
+      updated_at: Date.now(),
+    });
+
+    if (!pageHasNew) {
+      overlapPages += 1;
+    } else {
+      overlapPages = 0;
+    }
+
+    if (overlapPages >= 1) {
+      statements.upsertSyncState.run({
+        user_id: job.user_id,
+        resource: "tracks",
+        status: "idle",
+        cursor_offset: offset,
+        cursor_limit: limit,
+        last_successful_at: Date.now(),
+        retry_after_at: null,
+        failure_count: 0,
+        last_error_code: null,
+        updated_at: Date.now(),
+      });
+      return { done: true };
+    }
+
+    offset += items.length;
+    pages += 1;
+  }
+
+  return { done: false };
+}
+
+async function syncPlaylists(job) {
+  const payload = job.payload ? JSON.parse(job.payload) : {};
+  const limit = payload.limit || 50;
+  const maxPagesPerRun =
+    payload.maxPagesPerRun ||
+    Number(process.env.SYNC_PLAYLISTS_PAGES || "10");
+  const offsetStart = payload.offset || 0;
+
+  const accessToken = await getAccessTokenForUser(job.user_id);
+
+  let offset = offsetStart;
+  let pages = 0;
+
+  while (pages < maxPagesPerRun) {
+    const url = `https://api.spotify.com/v1/me/playlists?limit=${limit}&offset=${offset}`;
+    const data = await spotifyGet(accessToken, url);
+    const items = data.items || [];
+
+    if (items.length === 0) {
+      statements.upsertSyncState.run({
+        user_id: job.user_id,
+        resource: "playlists",
+        status: "idle",
+        cursor_offset: offset,
+        cursor_limit: limit,
+        last_successful_at: Date.now(),
+        retry_after_at: null,
+        failure_count: 0,
+        last_error_code: null,
+        updated_at: Date.now(),
+      });
+      return { done: true };
+    }
+
+    const now = Date.now();
+    writePlaylistsPage(items, job.user_id, now);
+
+    offset += items.length;
+    pages += 1;
+
+    statements.upsertSyncState.run({
+      user_id: job.user_id,
+      resource: "playlists",
+      status: "running",
+      cursor_offset: offset,
+      cursor_limit: limit,
+      last_successful_at: Date.now(),
+      retry_after_at: null,
+      failure_count: 0,
+      last_error_code: null,
+      updated_at: Date.now(),
+    });
+  }
+
+  return { done: false, nextOffset: offset };
+}
+
+async function syncPlaylistItems(job) {
+  const payload = job.payload ? JSON.parse(job.payload) : {};
+  const playlistId = payload.playlistId;
+  const snapshotId = payload.snapshotId || null;
+  const limit = payload.limit || 50;
+  const offsetStart = payload.offset || 0;
+  const maxPagesPerRun =
+    payload.maxPagesPerRun ||
+    Number(process.env.SYNC_PLAYLIST_ITEMS_PAGES || "5");
+  const runId = payload.runId || crypto.randomUUID();
+
+  if (!playlistId) {
+    throw new Error("MissingPlaylistId");
+  }
+
+  const accessToken = await getAccessTokenForUser(job.user_id);
+
+  let offset = offsetStart;
+  let pages = 0;
+
+  while (pages < maxPagesPerRun) {
+    const url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=${limit}&offset=${offset}`;
+    const data = await spotifyGet(accessToken, url);
+    const items = data.items || [];
+
+    if (items.length === 0) {
+      statements.upsertSyncState.run({
+        user_id: job.user_id,
+        resource: `playlist_items:${playlistId}`,
+        status: "idle",
+        cursor_offset: offset,
+        cursor_limit: limit,
+        last_successful_at: Date.now(),
+        retry_after_at: null,
+        failure_count: 0,
+        last_error_code: null,
+        updated_at: Date.now(),
+      });
+      statements.deletePlaylistItemsNotRun.run(playlistId, runId);
+      return { done: true };
+    }
+
+    const now = Date.now();
+    writePlaylistItemsPage(items, playlistId, snapshotId, runId, offset, now);
 
     offset += items.length;
     pages += 1;
@@ -682,7 +788,8 @@ async function runLoop() {
     } catch (error) {
       const resource = getResourceForJob(job);
       if (error && error.retryAfterMs) {
-        const retryAt = Date.now() + error.retryAfterMs;
+        const jitter = Math.floor(Math.random() * 2000);
+        const retryAt = Date.now() + error.retryAfterMs + jitter;
         statements.requeueJob.run(retryAt, Date.now(), job.id);
         if (resource !== "unknown") {
           statements.setSyncBackoff.run(
@@ -693,8 +800,26 @@ async function runLoop() {
             resource
           );
         }
+      } else if (error && error.retryable) {
+        const attempt = Math.max(1, Number(job.attempts || 1));
+        const backoff = Math.min(
+          MAX_RETRY_DELAY_MS,
+          1000 * Math.pow(2, Math.min(attempt, 6))
+        );
+        const jitter = Math.floor(Math.random() * 1000);
+        const retryAt = Date.now() + backoff + jitter;
+        statements.requeueJob.run(retryAt, Date.now(), job.id);
+        if (resource !== "unknown") {
+          statements.setSyncBackoff.run(
+            retryAt,
+            "RETRYABLE_ERROR",
+            Date.now(),
+            job.user_id,
+            resource
+          );
+        }
       } else {
-        const message = String(error);
+        const message = sanitizeErrorMessage(error);
         statements.markJobError.run(
           Date.now(),
           JSON.stringify({ error: message }),

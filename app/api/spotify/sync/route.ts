@@ -6,6 +6,7 @@ import { getDb } from "@/lib/db/client";
 import { jobs, syncState } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { cryptoRandomId } from "@/lib/db/queries";
+import { getBaseUrl } from "@/lib/env";
 
 export const runtime = "nodejs";
 
@@ -21,6 +22,13 @@ export async function POST(req: Request) {
   const rl = rateLimit(`sync:${ip}`, 10, 60_000);
   if (!rl.allowed) {
     return NextResponse.json({ error: "RATE_LIMIT" }, { status: 429 });
+  }
+
+  const baseUrl = getBaseUrl() || new URL(req.url).origin;
+  const expectedOrigin = new URL(baseUrl).origin;
+  const origin = req.headers.get("origin") || req.headers.get("referer") || "";
+  if (origin && !origin.startsWith(expectedOrigin)) {
+    return NextResponse.json({ error: "INVALID_ORIGIN" }, { status: 403 });
   }
 
   const session = await getServerSession(getAuthOptions());
@@ -67,6 +75,7 @@ export async function POST(req: Request) {
       retryAfterAt: null,
       failureCount: 0,
       lastErrorCode: null,
+      updatedAt: Date.now(),
     })
     .onConflictDoUpdate({
       target: [syncState.userId, syncState.resource],

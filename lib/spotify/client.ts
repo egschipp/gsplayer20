@@ -1,6 +1,11 @@
 import { getAppAccessToken, refreshAccessToken } from "@/lib/spotify/tokens";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
+import { getRefreshToken, upsertTokens } from "@/lib/db/queries";
+
+const FETCH_TIMEOUT_MS = Number(
+  process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000"
+);
 
 export async function spotifyFetch<T>(args: {
   url: string;
@@ -30,15 +35,30 @@ export async function spotifyFetch<T>(args: {
     }
   }
 
+  if (!session?.appUserId) {
+    throw new Error("UserNotAuthenticated");
+  }
+
+  const storedRefresh = await getRefreshToken(session.appUserId as string);
   const refreshed = await refreshAccessToken({
     accessToken: accessToken,
-    refreshToken: session?.refreshToken as string | undefined,
+    refreshToken: storedRefresh ?? undefined,
     accessTokenExpires: session?.expiresAt as number | undefined,
     scope: session?.scope as string | undefined,
   });
 
   if ("error" in refreshed) {
     throw new Error("RefreshFailed");
+  }
+
+  if (refreshed.refreshToken) {
+    await upsertTokens({
+      userId: session.appUserId as string,
+      refreshToken: refreshed.refreshToken,
+      accessToken: refreshed.accessToken,
+      accessExpiresAt: refreshed.accessTokenExpires,
+      scope: refreshed.scope,
+    });
   }
 
   return await doFetch<T>(url, method, body, refreshed.accessToken as string);
@@ -50,6 +70,8 @@ async function doFetch<T>(
   body: unknown,
   accessToken: string
 ) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   const res = await fetch(url, {
     method,
     headers: {
@@ -57,7 +79,9 @@ async function doFetch<T>(
       "Content-Type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: controller.signal,
   });
+  clearTimeout(timeout);
 
   if (!res.ok) {
     const text = await res.text();

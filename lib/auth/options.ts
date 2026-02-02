@@ -16,6 +16,7 @@ export function getAuthOptions(): NextAuthOptions {
         authorization: {
           params: {
             scope: scopeString(),
+            show_dialog: "true",
           },
         },
         checks: ["pkce", "state"],

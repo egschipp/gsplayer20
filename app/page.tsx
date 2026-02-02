@@ -4,7 +4,7 @@ export default function HomePage() {
   return (
     <main style={{ padding: 24, fontFamily: "system-ui" }}>
       <img
-        src="/georgies-spotify.png"
+        src="/georgies-spotify.jpg"
         alt="Georgies Spotify logo"
         style={{ maxWidth: 520, width: "100%", height: "auto", marginBottom: 16 }}
       />

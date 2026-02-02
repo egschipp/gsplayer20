@@ -1,6 +1,6 @@
 import { getAppAccessToken, refreshAccessToken } from "@/lib/spotify/tokens";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth/options";
+import { getAuthOptions } from "@/lib/auth/options";
 
 export async function spotifyFetch<T>(args: {
   url: string;
@@ -15,7 +15,7 @@ export async function spotifyFetch<T>(args: {
     return await doFetch<T>(url, method, body, appToken);
   }
 
-  const session = await getServerSession(authOptions);
+  const session = await getServerSession(getAuthOptions());
   const accessToken = session?.accessToken as string | undefined;
 
   if (!accessToken) {

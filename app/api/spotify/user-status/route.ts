@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth/options";
+import { getAuthOptions } from "@/lib/auth/options";
 import { rateLimit } from "@/lib/rate-limit/ratelimit";
 import { hasAllScopes } from "@/lib/spotify/scopes";
 
@@ -16,7 +16,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const session = await getServerSession(authOptions);
+  const session = await getServerSession(getAuthOptions());
   if (!session?.accessToken) {
     return NextResponse.json({ status: "LOGGED_OUT" }, { status: 401 });
   }

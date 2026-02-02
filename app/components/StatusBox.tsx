@@ -17,6 +17,7 @@ type WorkerHealth = {
   staleAfterMs: number;
   now: number;
 } | null;
+type VersionInfo = { name: string; version: string } | null;
 
 function Badge({ label, tone }: { label: string; tone?: "ok" | "warn" }) {
   const cls = tone === "ok" ? "pill pill-success" : "pill pill-warn";
@@ -30,37 +31,62 @@ export default function StatusBox() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(null);
   const [workerHealth, setWorkerHealth] = useState<WorkerHealth>(null);
   const [playlistMap, setPlaylistMap] = useState<PlaylistMap>({});
+  const [versionInfo, setVersionInfo] = useState<VersionInfo>(null);
   const [syncing, setSyncing] = useState(false);
+  const [loadingPlaylists, setLoadingPlaylists] = useState(false);
 
   async function refresh() {
     try {
-      const [appRes, userRes, dbRes, syncRes, workerRes, playlistsRes] =
-        await Promise.all([
-        fetch("/api/spotify/app-status"),
-        fetch("/api/spotify/user-status"),
+      const [dbRes, syncRes, workerRes] = await Promise.all([
         fetch("/api/spotify/db-status"),
         fetch("/api/spotify/sync-status"),
         fetch("/api/spotify/worker-health"),
-        fetch("/api/spotify/me/playlists?limit=200"),
+      ]);
+
+      if (dbRes.ok) setDbStatus(await dbRes.json());
+      if (syncRes.ok) setSyncStatus(await syncRes.json());
+      if (workerRes.ok) setWorkerHealth(await workerRes.json());
+      if (playlistsRes.ok && !loadingPlaylists && Object.keys(playlistMap).length === 0) {
+        setLoadingPlaylists(true);
+        const map: PlaylistMap = {};
+        let cursor: string | null = null;
+        let safety = 0;
+        do {
+          const url = new URL("/api/spotify/me/playlists", window.location.origin);
+          url.searchParams.set("limit", "50");
+          if (cursor) url.searchParams.set("cursor", cursor);
+          const res = await fetch(url.toString());
+          if (!res.ok) break;
+          const data = await res.json();
+          const items = Array.isArray(data.items) ? data.items : [];
+          for (const item of items) {
+            map[item.playlistId] = {
+              name: item.name,
+              spotifyUrl: `https://open.spotify.com/playlist/${item.playlistId}`,
+            };
+          }
+          cursor = data.nextCursor ?? null;
+          safety += 1;
+        } while (cursor && safety < 20);
+        setPlaylistMap(map);
+        setLoadingPlaylists(false);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function refreshAuthStatus() {
+    try {
+      const [appRes, userRes, versionRes] = await Promise.all([
+        fetch("/api/spotify/app-status"),
+        fetch("/api/spotify/user-status"),
+        fetch("/api/version"),
       ]);
 
       if (appRes.ok) setAppStatus(await appRes.json());
       if (userRes.ok) setUserStatus(await userRes.json());
-      if (dbRes.ok) setDbStatus(await dbRes.json());
-      if (syncRes.ok) setSyncStatus(await syncRes.json());
-      if (workerRes.ok) setWorkerHealth(await workerRes.json());
-      if (playlistsRes.ok) {
-        const data = await playlistsRes.json();
-        const items = Array.isArray(data.items) ? data.items : [];
-        const map: PlaylistMap = {};
-        for (const item of items) {
-          map[item.playlistId] = {
-            name: item.name,
-            spotifyUrl: `https://open.spotify.com/playlist/${item.playlistId}`,
-          };
-        }
-        setPlaylistMap(map);
-      }
+      if (versionRes.ok) setVersionInfo(await versionRes.json());
     } catch {
       // ignore
     }
@@ -68,8 +94,13 @@ export default function StatusBox() {
 
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 2000);
-    return () => clearInterval(interval);
+    refreshAuthStatus();
+    const fast = setInterval(refresh, 2000);
+    const slow = setInterval(refreshAuthStatus, 15000);
+    return () => {
+      clearInterval(fast);
+      clearInterval(slow);
+    };
   }, []);
 
   async function forceSync() {
@@ -130,6 +161,7 @@ export default function StatusBox() {
       <div className="text-body" style={{ marginBottom: 12 }}>
         <div>Last sync: {lastSync}</div>
         <div>Worker heartbeat: {workerLast}</div>
+        <div>Version: {versionInfo?.version ?? "n/a"}</div>
       </div>
 
       <div className="status-grid" style={{ fontSize: 13, marginBottom: 12 }}>

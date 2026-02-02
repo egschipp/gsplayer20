@@ -1,4 +1,16 @@
 import type { Metadata } from "next";
+import { Space_Grotesk, Manrope } from "next/font/google";
+import "./globals.css";
+
+const displayFont = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-display",
+});
+
+const bodyFont = Manrope({
+  subsets: ["latin"],
+  variable: "--font-body",
+});
 
 export const metadata: Metadata = {
   title: "GSPlayer20",
@@ -11,20 +23,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="nl">
-      <body style={{ margin: 0 }}>
+    <html lang="nl" className={`${displayFont.variable} ${bodyFont.variable}`}>
+      <body>
         <header
-          style={{
-            padding: "12px 24px",
-            borderBottom: "1px solid #e2e8f0",
-            fontFamily: "system-ui",
-          }}
+          className="panel"
+          style={{ margin: "0 1rem", marginTop: "1.25rem" }}
         >
-          <nav style={{ display: "flex", gap: 16 }}>
-            <a href="/" style={{ color: "#0f172a", textDecoration: "none" }}>
+          <nav className="nav">
+            <a href="/" className="nav-link">
               GSPlayer
             </a>
-            <a href="/status" style={{ color: "#0f172a" }}>
+            <a href="/status" className="nav-link secondary">
               Status
             </a>
           </nav>

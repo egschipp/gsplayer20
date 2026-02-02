@@ -17,23 +17,9 @@ type WorkerHealth = {
   now: number;
 } | null;
 
-function Badge({ label, tone }: { label: string; tone?: string }) {
-  const bg = tone === "ok" ? "#166534" : tone === "warn" ? "#9a3412" : "#0f172a";
-  return (
-    <span
-      style={{
-        display: "inline-block",
-        padding: "4px 10px",
-        borderRadius: 999,
-        background: bg,
-        color: "white",
-        fontSize: 12,
-        marginRight: 8,
-      }}
-    >
-      {label}
-    </span>
-  );
+function Badge({ label, tone }: { label: string; tone?: "ok" | "warn" }) {
+  const cls = tone === "ok" ? "pill pill-success" : "pill pill-warn";
+  return <span className={cls}>{label}</span>;
 }
 
 export default function StatusBox() {
@@ -100,17 +86,9 @@ export default function StatusBox() {
     : "n/a";
 
   return (
-    <section
-      style={{
-        marginTop: 24,
-        border: "1px solid #e2e8f0",
-        borderRadius: 12,
-        padding: 16,
-        background: "#f8fafc",
-      }}
-    >
-      <h2 style={{ marginBottom: 12 }}>Status</h2>
-      <div style={{ marginBottom: 12 }}>
+    <section className="card" style={{ marginTop: 24 }}>
+      <h2 className="heading-2">Status</h2>
+      <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Badge
           label={`App: ${appStatus?.status ?? "CHECKING"}`}
           tone={appStatus?.status === "OK" ? "ok" : "warn"}
@@ -126,30 +104,17 @@ export default function StatusBox() {
         />
       </div>
 
-      <div style={{ fontSize: 13, marginBottom: 12 }}>
-        Last sync: {lastSync}
+      <div className="text-body" style={{ marginBottom: 12 }}>
+        <div>Last sync: {lastSync}</div>
         <div>Worker heartbeat: {workerLast}</div>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: 8,
-          fontSize: 13,
-          marginBottom: 12,
-        }}
-      >
+      <div className="status-grid" style={{ fontSize: 13, marginBottom: 12 }}>
         {dbStatus?.counts
           ? Object.entries(dbStatus.counts).map(([key, value]) => (
               <div
                 key={key}
-                style={{
-                  background: "white",
-                  border: "1px solid #e2e8f0",
-                  borderRadius: 8,
-                  padding: 8,
-                }}
+                className="panel"
               >
                 <strong>{key}</strong>: {value}
               </div>
@@ -157,18 +122,7 @@ export default function StatusBox() {
           : "DB status unavailable"}
       </div>
 
-      <button
-        onClick={forceSync}
-        disabled={syncing}
-        style={{
-          padding: "10px 14px",
-          borderRadius: 8,
-          background: syncing ? "#94a3b8" : "#0f172a",
-          color: "white",
-          border: 0,
-          cursor: syncing ? "not-allowed" : "pointer",
-        }}
-      >
+      <button onClick={forceSync} disabled={syncing} className="btn btn-primary">
         {syncing ? "Syncing..." : "Force sync"}
       </button>
 
@@ -179,13 +133,10 @@ export default function StatusBox() {
             {syncStatus.resources.map((row: any) => (
               <div
                 key={row.resource}
+                className="panel"
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  background: "#fff",
-                  border: "1px solid #e2e8f0",
-                  borderRadius: 8,
-                  padding: "6px 8px",
                   marginBottom: 6,
                 }}
               >

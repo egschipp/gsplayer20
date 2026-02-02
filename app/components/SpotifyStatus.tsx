@@ -13,22 +13,9 @@ type UserStatus = {
   profile?: { display_name?: string; email?: string };
 };
 
-function Badge({ label }: { label: string }) {
-  return (
-    <span
-      style={{
-        display: "inline-block",
-        padding: "4px 10px",
-        borderRadius: 999,
-        background: "#0f172a",
-        color: "white",
-        fontSize: 12,
-        marginRight: 8,
-      }}
-    >
-      {label}
-    </span>
-  );
+function Badge({ label, tone }: { label: string; tone?: "ok" | "warn" }) {
+  const cls = tone === "ok" ? "pill pill-success" : "pill pill-warn";
+  return <span className={cls}>{label}</span>;
 }
 
 export default function SpotifyStatus() {
@@ -49,27 +36,22 @@ export default function SpotifyStatus() {
 
   return (
     <section style={{ marginTop: 24 }}>
-      <h2>Spotify Connection</h2>
-      <div style={{ marginTop: 12 }}>
-        <Badge label={`App: ${appStatus?.status ?? "CHECKING"}`} />
-        <Badge label={`User: ${userStatus?.status ?? "CHECKING"}`} />
+      <h2 className="heading-2">Spotify Connection</h2>
+      <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Badge
+          label={`App: ${appStatus?.status ?? "CHECKING"}`}
+          tone={appStatus?.status === "OK" ? "ok" : "warn"}
+        />
+        <Badge
+          label={`User: ${userStatus?.status ?? "CHECKING"}`}
+          tone={userStatus?.status === "OK" ? "ok" : "warn"}
+        />
       </div>
-      <div style={{ marginTop: 16 }}>
-        <a
-          href="/api/auth/login"
-          style={{
-            display: "inline-block",
-            padding: "10px 16px",
-            background: "#1db954",
-            color: "white",
-            borderRadius: 8,
-            textDecoration: "none",
-            marginRight: 12,
-          }}
-        >
+      <div style={{ marginTop: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <a href="/api/auth/login" className="btn btn-primary">
           Connect Spotify
         </a>
-        <a href="/api/auth/logout" style={{ color: "#0f172a" }}>
+        <a href="/api/auth/logout" className="btn btn-ghost">
           Sign out
         </a>
       </div>

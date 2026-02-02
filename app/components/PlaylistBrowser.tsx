@@ -159,12 +159,13 @@ export default function PlaylistBrowser() {
 
   return (
     <section style={{ marginTop: 24 }}>
-      <h2>Playlists</h2>
+      <h2 className="heading-2">Playlists</h2>
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <select
           value={selectedId}
           onChange={(e) => setSelectedId(e.target.value)}
-          style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0" }}
+          className="input"
+          aria-label="Select playlist"
           disabled={loadingPlaylists}
         >
           {options.map((opt) => (
@@ -173,60 +174,51 @@ export default function PlaylistBrowser() {
             </option>
           ))}
         </select>
-        <a href={selected.spotifyUrl} target="_blank" rel="noreferrer">
+        <a href={selected.spotifyUrl} target="_blank" rel="noreferrer" className="btn btn-secondary">
           Open in Spotify
         </a>
       </div>
 
       {loadingPlaylists ? (
-        <p>Loading playlists...</p>
+        <p className="text-body">Loading playlists...</p>
       ) : null}
       {error ? (
-        <p style={{ color: "#b91c1c" }}>{error}</p>
+        <p style={{ color: "#fca5a5" }}>{error}</p>
       ) : null}
 
-      <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
+      <div className="track-list" style={{ marginTop: 16 }}>
         {tracks.map((track, idx) => (
           <div
             key={`${track.itemId || track.trackId || idx}`}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "56px 1fr auto",
-              gap: 12,
-              alignItems: "center",
-              padding: 10,
-              border: "1px solid #e2e8f0",
-              borderRadius: 10,
-              background: "white",
-            }}
+            className="track-row"
           >
             {track.albumImageUrl ? (
               <img
                 src={track.albumImageUrl}
                 alt={track.albumName || "Album cover"}
                 loading="lazy"
-                style={{ width: 56, height: 56, borderRadius: 6, objectFit: "cover" }}
+                style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}
               />
             ) : (
               <div
                 style={{
                   width: 56,
                   height: 56,
-                  borderRadius: 6,
-                  background: "#e2e8f0",
+                  borderRadius: 12,
+                  background: "#2a2a2a",
                 }}
               />
             )}
             <div>
               <div style={{ fontWeight: 600 }}>{track.name || "Unknown"}</div>
-              <div style={{ fontSize: 13, color: "#475569" }}>
+              <div className="text-body">
                 {track.artists || "Unknown artist"}
               </div>
               {track.albumName ? (
-                <div style={{ fontSize: 12, color: "#64748b" }}>{track.albumName}</div>
+                <div className="text-subtle">{track.albumName}</div>
               ) : null}
             </div>
-            <div style={{ fontSize: 12, color: "#475569" }}>
+            <div className="text-subtle">
               {formatDuration(track.durationMs)}
             </div>
           </div>
@@ -234,19 +226,12 @@ export default function PlaylistBrowser() {
       </div>
 
       <div style={{ marginTop: 12 }}>
-        {loadingTracks ? <span>Loading tracks...</span> : null}
+        {loadingTracks ? <span className="text-body">Loading tracks...</span> : null}
         {!loadingTracks && nextCursor ? (
           <button
             onClick={loadMore}
-            style={{
-              marginLeft: 12,
-              padding: "8px 12px",
-              borderRadius: 8,
-              border: "1px solid #e2e8f0",
-              background: "#0f172a",
-              color: "white",
-              cursor: "pointer",
-            }}
+            className="btn btn-primary"
+            style={{ marginLeft: 12 }}
           >
             Load more
           </button>

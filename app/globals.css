@@ -1,0 +1,228 @@
+:root {
+  color-scheme: dark;
+  --ink: #0b0b0b;
+  --clay: #121212;
+  --mist: #1c1c1c;
+  --steel: #2a2a2a;
+  --tide: #1db954;
+  --pulse: #1ed760;
+  --text-primary: #ffffff;
+  --text-muted: rgba(255, 255, 255, 0.72);
+  --text-subtle: rgba(255, 255, 255, 0.5);
+  --shadow-glow: 0 0 24px rgba(29, 185, 84, 0.4);
+  --shadow-card: 0 20px 40px rgba(0, 0, 0, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text-primary);
+  font-family: var(--font-body), system-ui, sans-serif;
+  background:
+    radial-gradient(circle at 10% 10%, rgba(29, 185, 84, 0.15), transparent 45%),
+    radial-gradient(circle at 90% 0%, rgba(30, 215, 96, 0.12), transparent 40%),
+    linear-gradient(180deg, #0b0b0b 0%, #121212 40%, #0b0b0b 100%);
+  background-attachment: fixed;
+}
+
+a {
+  color: var(--pulse);
+  text-decoration: none;
+}
+
+a:hover {
+  color: #ffffff;
+}
+
+.page {
+  padding: 2rem 1rem;
+  max-width: 72rem;
+  margin: 0 auto;
+}
+
+@media (min-width: 768px) {
+  .page {
+    padding: 3rem 2.5rem;
+  }
+}
+
+.heading-1 {
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: 1.875rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.heading-2 {
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 0.75rem;
+}
+
+.label {
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+
+.text-body {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.card {
+  background: var(--mist);
+  border-radius: 1.5rem;
+  padding: 1.5rem;
+  box-shadow: var(--shadow-card);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.panel {
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.75rem 1rem;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.pill-success {
+  border: 1px solid rgba(29, 185, 84, 0.3);
+  background: rgba(29, 185, 84, 0.1);
+  color: var(--tide);
+}
+
+.pill-warn {
+  border: 1px solid rgba(251, 146, 60, 0.4);
+  background: rgba(251, 146, 60, 0.1);
+  color: #fbbf24;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid transparent;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-primary {
+  background: var(--tide);
+  color: #0b0b0b;
+  box-shadow: var(--shadow-glow);
+}
+
+.btn-primary:hover {
+  background: var(--pulse);
+}
+
+.btn-secondary {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  background: transparent;
+}
+
+.btn-ghost {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.input {
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1rem;
+  padding: 0.6rem 0.8rem;
+  color: #ffffff;
+}
+
+.input:focus-visible,
+.btn:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--tide);
+  outline-offset: 2px;
+}
+
+.nav {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.nav-link {
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid rgba(29, 185, 84, 0.3);
+  background: rgba(29, 185, 84, 0.12);
+  color: #ffffff;
+  font-size: 0.8rem;
+}
+
+.nav-link.secondary {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.track-list {
+  display: grid;
+  gap: 10px;
+}
+
+.track-row {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.table-header {
+  background: rgba(42, 42, 42, 0.8);
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font-size: 0.7rem;
+}
+
+.text-subtle {
+  color: var(--text-subtle);
+  font-size: 0.75rem;
+}
+
+.text-muted {
+  color: var(--text-muted);
+}

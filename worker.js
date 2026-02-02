@@ -152,12 +152,27 @@ const statements = {
        collaborative=excluded.collaborative,
        snapshot_id=excluded.snapshot_id,
        tracks_total=excluded.tracks_total,
-       updated_at=excluded.updated_at`
+      updated_at=excluded.updated_at`
+  ),
+  getPlaylistSnapshot: db.prepare(
+    `SELECT snapshot_id FROM playlists WHERE playlist_id=?`
   ),
   upsertUserPlaylist: db.prepare(
     `INSERT INTO user_playlists (user_id, playlist_id, last_seen_at)
      VALUES (?, ?, ?)
      ON CONFLICT(user_id, playlist_id) DO UPDATE SET last_seen_at=excluded.last_seen_at`
+  ),
+  insertPlaylistItem: db.prepare(
+    `INSERT OR REPLACE INTO playlist_items
+     (playlist_id, item_id, track_id, added_at, added_by_spotify_user_id, position, snapshot_id_at_sync, sync_run_id)
+     VALUES (@playlist_id, @item_id, @track_id, @added_at, @added_by_spotify_user_id, @position, @snapshot_id_at_sync, @sync_run_id)`
+  ),
+  deletePlaylistItemsNotRun: db.prepare(
+    `DELETE FROM playlist_items WHERE playlist_id=? AND sync_run_id != ?`
+  ),
+  enqueueJob: db.prepare(
+    `INSERT INTO jobs (id, user_id, type, payload, run_after, status, attempts, created_at, updated_at)
+     VALUES (@id, @user_id, @type, @payload, @run_after, @status, 0, @created_at, @updated_at)`
   ),
   upsertSyncState: db.prepare(
     `INSERT INTO sync_state (user_id, resource, status, cursor_offset, cursor_limit, last_successful_at, retry_after_at, failure_count, last_error_code)
@@ -371,6 +386,7 @@ async function syncPlaylists(job) {
 
     const now = Date.now();
     for (const item of items) {
+      const existing = statements.getPlaylistSnapshot.get(item.id);
       statements.upsertPlaylist.run({
         playlist_id: item.id,
         name: item.name,
@@ -382,6 +398,27 @@ async function syncPlaylists(job) {
         updated_at: now,
       });
       statements.upsertUserPlaylist.run(job.user_id, item.id, now);
+
+      if (!existing || existing.snapshot_id !== item.snapshot_id) {
+        const payload = JSON.stringify({
+          playlistId: item.id,
+          snapshotId: item.snapshot_id || null,
+          offset: 0,
+          limit: 50,
+          maxPagesPerRun: 5,
+          runId: crypto.randomUUID(),
+        });
+        statements.enqueueJob.run({
+          id: crypto.randomUUID(),
+          user_id: job.user_id,
+          type: "SYNC_PLAYLIST_ITEMS",
+          payload,
+          run_after: Date.now(),
+          status: "queued",
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        });
+      }
     }
 
     offset += items.length;
@@ -403,6 +440,115 @@ async function syncPlaylists(job) {
   return { done: false, nextOffset: offset };
 }
 
+async function syncPlaylistItems(job) {
+  const payload = job.payload ? JSON.parse(job.payload) : {};
+  const playlistId = payload.playlistId;
+  const snapshotId = payload.snapshotId || null;
+  const limit = payload.limit || 50;
+  const offsetStart = payload.offset || 0;
+  const maxPagesPerRun = payload.maxPagesPerRun || 5;
+  const runId = payload.runId || crypto.randomUUID();
+
+  if (!playlistId) {
+    throw new Error("MissingPlaylistId");
+  }
+
+  const accessToken = await getAccessTokenForUser(job.user_id);
+
+  let offset = offsetStart;
+  let pages = 0;
+
+  while (pages < maxPagesPerRun) {
+    const url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=${limit}&offset=${offset}`;
+    const data = await spotifyGet(accessToken, url);
+    const items = data.items || [];
+
+    if (items.length === 0) {
+      statements.upsertSyncState.run({
+        user_id: job.user_id,
+        resource: `playlist_items:${playlistId}`,
+        status: "idle",
+        cursor_offset: offset,
+        cursor_limit: limit,
+        last_successful_at: Date.now(),
+        retry_after_at: null,
+        failure_count: 0,
+        last_error_code: null,
+      });
+      statements.deletePlaylistItemsNotRun.run(playlistId, runId);
+      return { done: true };
+    }
+
+    const now = Date.now();
+    let idx = 0;
+    for (const item of items) {
+      const track = item.track;
+      const trackId = track ? track.id : null;
+      if (track) {
+        statements.upsertTrack.run({
+          track_id: track.id,
+          name: track.name,
+          duration_ms: track.duration_ms,
+          explicit: track.explicit ? 1 : 0,
+          album_id: track.album?.id || null,
+          popularity: track.popularity ?? null,
+          updated_at: now,
+        });
+
+        for (const artist of track.artists || []) {
+          statements.upsertArtist.run({
+            artist_id: artist.id,
+            name: artist.name,
+            genres: null,
+            popularity: null,
+            updated_at: now,
+          });
+          statements.upsertTrackArtist.run(track.id, artist.id);
+        }
+      }
+
+      const addedAt = item.added_at ? Date.parse(item.added_at) : null;
+      const addedBy = item.added_by?.id || null;
+      const itemId = crypto
+        .createHash("sha1")
+        .update(
+          `${playlistId}:${trackId || "null"}:${addedAt || 0}:${addedBy || ""}:${offset + idx}:${snapshotId || ""}`
+        )
+        .digest("hex");
+
+      statements.insertPlaylistItem.run({
+        playlist_id: playlistId,
+        item_id: itemId,
+        track_id: trackId,
+        added_at: addedAt,
+        added_by_spotify_user_id: addedBy,
+        position: offset + idx,
+        snapshot_id_at_sync: snapshotId,
+        sync_run_id: runId,
+      });
+
+      idx += 1;
+    }
+
+    offset += items.length;
+    pages += 1;
+
+    statements.upsertSyncState.run({
+      user_id: job.user_id,
+      resource: `playlist_items:${playlistId}`,
+      status: "running",
+      cursor_offset: offset,
+      cursor_limit: limit,
+      last_successful_at: Date.now(),
+      retry_after_at: null,
+      failure_count: 0,
+      last_error_code: null,
+    });
+  }
+
+  return { done: false, nextOffset: offset, runId, playlistId, snapshotId };
+}
+
 async function handleJob(job) {
   if (job.type === "SYNC_TRACKS_INITIAL") {
     return syncTracksInitial(job);
@@ -412,6 +558,9 @@ async function handleJob(job) {
   }
   if (job.type === "SYNC_PLAYLISTS") {
     return syncPlaylists(job);
+  }
+  if (job.type === "SYNC_PLAYLIST_ITEMS") {
+    return syncPlaylistItems(job);
   }
   throw new Error(`UnknownJob:${job.type}`);
 }

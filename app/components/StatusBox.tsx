@@ -70,6 +70,11 @@ export default function StatusBox() {
           payload: { offset: 0, limit: 50, maxPagesPerRun: 50 },
         }),
       });
+      await fetch("/api/spotify/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "playlists" }),
+      });
     } finally {
       setSyncing(false);
       refresh();

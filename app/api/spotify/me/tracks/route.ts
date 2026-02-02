@@ -3,8 +3,8 @@ import { rateLimit } from "@/lib/rate-limit/ratelimit";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
 import { getDb } from "@/lib/db/client";
-import { userSavedTracks, tracks, syncState } from "@/lib/db/schema";
-import { and, desc, eq, lt, or } from "drizzle-orm";
+import { userSavedTracks, tracks, syncState, trackArtists, artists } from "@/lib/db/schema";
+import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
 
 export const runtime = "nodejs";
@@ -49,12 +49,18 @@ export async function GET(req: Request) {
       durationMs: tracks.durationMs,
       explicit: tracks.explicit,
       albumId: tracks.albumId,
+      albumName: tracks.albumName,
+      albumImageUrl: tracks.albumImageUrl,
       popularity: tracks.popularity,
       addedAt: userSavedTracks.addedAt,
+      artists: sql<string | null>`group_concat(${artists.name}, ', ')`,
     })
     .from(userSavedTracks)
     .innerJoin(tracks, eq(tracks.trackId, userSavedTracks.trackId))
+    .leftJoin(trackArtists, eq(trackArtists.trackId, tracks.trackId))
+    .leftJoin(artists, eq(artists.artistId, trackArtists.artistId))
     .where(whereClause)
+    .groupBy(tracks.trackId, userSavedTracks.addedAt, userSavedTracks.trackId)
     .orderBy(desc(userSavedTracks.addedAt), desc(userSavedTracks.trackId))
     .limit(limit);
 

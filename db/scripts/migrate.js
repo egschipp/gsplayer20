@@ -24,4 +24,12 @@ if (!hasColumn("sync_state", "updated_at")) {
   );
 }
 
+if (!hasColumn("tracks", "album_name")) {
+  sqlite.exec("ALTER TABLE tracks ADD COLUMN album_name TEXT");
+}
+
+if (!hasColumn("tracks", "album_image_url")) {
+  sqlite.exec("ALTER TABLE tracks ADD COLUMN album_image_url TEXT");
+}
+
 console.log("Migrations applied");

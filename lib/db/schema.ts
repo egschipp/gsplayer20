@@ -44,6 +44,8 @@ export const tracks = sqliteTable("tracks", {
   durationMs: integer("duration_ms").notNull(),
   explicit: integer("explicit").notNull(),
   albumId: text("album_id"),
+  albumName: text("album_name"),
+  albumImageUrl: text("album_image_url"),
   popularity: integer("popularity"),
   updatedAt: integer("updated_at").notNull().default(nowMs),
 });

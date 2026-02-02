@@ -194,13 +194,15 @@ const statements = {
     `UPDATE oauth_tokens SET refresh_token_enc=?, updated_at=? WHERE user_id=?`
   ),
   upsertTrack: db.prepare(
-    `INSERT INTO tracks (track_id, name, duration_ms, explicit, album_id, popularity, updated_at)
-     VALUES (@track_id, @name, @duration_ms, @explicit, @album_id, @popularity, @updated_at)
+    `INSERT INTO tracks (track_id, name, duration_ms, explicit, album_id, album_name, album_image_url, popularity, updated_at)
+     VALUES (@track_id, @name, @duration_ms, @explicit, @album_id, @album_name, @album_image_url, @popularity, @updated_at)
      ON CONFLICT(track_id) DO UPDATE SET
        name=excluded.name,
        duration_ms=excluded.duration_ms,
        explicit=excluded.explicit,
        album_id=excluded.album_id,
+       album_name=excluded.album_name,
+       album_image_url=excluded.album_image_url,
        popularity=excluded.popularity,
        updated_at=excluded.updated_at`
   ),
@@ -306,6 +308,8 @@ const writeTracksPage = db.transaction((items, userId, now) => {
       duration_ms: track.duration_ms,
       explicit: track.explicit ? 1 : 0,
       album_id: track.album?.id || null,
+      album_name: track.album?.name || null,
+      album_image_url: track.album?.images?.[0]?.url || null,
       popularity: track.popularity ?? null,
       updated_at: now,
     });
@@ -344,6 +348,8 @@ const writePlaylistItemsPage = db.transaction(
           duration_ms: track.duration_ms,
           explicit: track.explicit ? 1 : 0,
           album_id: track.album?.id || null,
+          album_name: track.album?.name || null,
+          album_image_url: track.album?.images?.[0]?.url || null,
           popularity: track.popularity ?? null,
           updated_at: now,
         });

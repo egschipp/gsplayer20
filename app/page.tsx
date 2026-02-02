@@ -1,3 +1,5 @@
+import PlaylistBrowser from "./components/PlaylistBrowser";
+
 export default function HomePage() {
   return (
     <main style={{ padding: 24, fontFamily: "system-ui" }}>
@@ -20,6 +22,7 @@ export default function HomePage() {
         Status and sync details are available on the <a href="/status">/status</a>{" "}
         page.
       </p>
+      <PlaylistBrowser />
     </main>
   );
 }

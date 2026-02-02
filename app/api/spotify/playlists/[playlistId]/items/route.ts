@@ -3,8 +3,15 @@ import { rateLimit } from "@/lib/rate-limit/ratelimit";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
 import { getDb } from "@/lib/db/client";
-import { playlistItems, tracks, userPlaylists, syncState } from "@/lib/db/schema";
-import { and, desc, eq, lt, or } from "drizzle-orm";
+import {
+  playlistItems,
+  tracks,
+  userPlaylists,
+  syncState,
+  trackArtists,
+  artists,
+} from "@/lib/db/schema";
+import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
 
 export const runtime = "nodejs";
@@ -60,6 +67,10 @@ export async function GET(
       playlistId: playlistItems.playlistId,
       trackId: tracks.trackId,
       name: tracks.name,
+      albumName: tracks.albumName,
+      albumImageUrl: tracks.albumImageUrl,
+      durationMs: tracks.durationMs,
+      artists: sql<string | null>`group_concat(${artists.name}, ', ')`,
       addedAt: playlistItems.addedAt,
       position: playlistItems.position,
     })
@@ -69,7 +80,16 @@ export async function GET(
       eq(userPlaylists.playlistId, playlistItems.playlistId)
     )
     .leftJoin(tracks, eq(tracks.trackId, playlistItems.trackId))
+    .leftJoin(trackArtists, eq(trackArtists.trackId, tracks.trackId))
+    .leftJoin(artists, eq(artists.artistId, trackArtists.artistId))
     .where(whereClause)
+    .groupBy(
+      playlistItems.itemId,
+      playlistItems.playlistId,
+      playlistItems.addedAt,
+      playlistItems.position,
+      tracks.trackId
+    )
     .orderBy(desc(playlistItems.position), desc(playlistItems.itemId))
     .limit(limit);
 

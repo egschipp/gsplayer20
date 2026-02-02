@@ -7,7 +7,7 @@ export function requireEnv(name: string): string {
 }
 
 export function getBaseUrl(): string {
-  return process.env.AUTH_URL || process.env.NEXTAUTH_URL || "";
+  return process.env.NEXTAUTH_URL || process.env.AUTH_URL || "";
 }
 
 export function assertSpotifyEnv() {

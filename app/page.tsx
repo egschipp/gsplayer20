@@ -1,6 +1,3 @@
-import SpotifyStatus from "./components/SpotifyStatus";
-import StatusBox from "./components/StatusBox";
-
 export default function HomePage() {
   return (
     <main style={{ padding: 24, fontFamily: "system-ui" }}>
@@ -19,8 +16,10 @@ export default function HomePage() {
         If you're looking for the GSPlayer experience, head to the /gsplayer
         section.
       </p>
-      <SpotifyStatus />
-      <StatusBox />
+      <p>
+        Status and sync details are available on the <a href="/status">/status</a>{" "}
+        page.
+      </p>
     </main>
   );
 }

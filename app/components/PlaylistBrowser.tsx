@@ -171,7 +171,7 @@ export default function PlaylistBrowser() {
             <option key={opt.id} value={opt.id}>
               {opt.name}
             </option>
-          ))
+          ))}
         </select>
         <a href={selected.spotifyUrl} target="_blank" rel="noreferrer">
           Open in Spotify

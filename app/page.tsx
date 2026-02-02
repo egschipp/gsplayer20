@@ -7,6 +7,7 @@ export default function HomePage() {
       <img
         src="/georgies-spotify.jpg"
         alt="Georgies Spotify logo"
+        loading="lazy"
         style={{ maxWidth: 520, width: "100%", height: "auto", marginBottom: 16 }}
       />
       <h1>Welcome to GSPlayer20</h1>

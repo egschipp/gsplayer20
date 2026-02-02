@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { rateLimit } from "@/lib/rate-limit/ratelimit";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
@@ -9,7 +9,10 @@ import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
 
 export const runtime = "nodejs";
 
-export async function GET(req: Request, ctx: { params: { playlistId: string } }) {
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ playlistId: string }> }
+) {
   const ip = req.headers.get("x-forwarded-for") || "unknown";
   const rl = rateLimit(`playlist-items:${ip}`, 60, 60_000);
   if (!rl.allowed) {
@@ -21,7 +24,7 @@ export async function GET(req: Request, ctx: { params: { playlistId: string } })
     return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   }
 
-  const playlistId = ctx.params.playlistId;
+  const { playlistId } = await ctx.params;
   if (!playlistId) {
     return NextResponse.json({ error: "MISSING_PLAYLIST" }, { status: 400 });
   }

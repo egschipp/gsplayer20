@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+.next
+coverage
+logs
+*.log
+npm-debug.log*
+.env
+.env.*
+.vscode
+docs

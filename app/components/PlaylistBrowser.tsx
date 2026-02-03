@@ -38,6 +38,8 @@ function formatDuration(ms?: number | null) {
 export default function PlaylistBrowser() {
   const [options, setOptions] = useState<PlaylistOption[]>([LIKED_OPTION]);
   const [selectedId, setSelectedId] = useState<string>(LIKED_OPTION.id);
+  const [query, setQuery] = useState<string>(LIKED_OPTION.name);
+  const [open, setOpen] = useState(false);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingPlaylists, setLoadingPlaylists] = useState(true);
@@ -66,14 +68,15 @@ export default function PlaylistBrowser() {
         }
         const data = await res.json();
         const items = Array.isArray(data.items) ? data.items : [];
-        const list: PlaylistOption[] = [LIKED_OPTION].concat(
-          items.map((p: any) => ({
+        const playlistOptions = items
+          .map((p: any) => ({
             id: p.playlistId,
             name: p.name,
             type: "playlist" as const,
             spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
           }))
-        );
+          .sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+        const list: PlaylistOption[] = [LIKED_OPTION].concat(playlistOptions);
         if (!cancelled) {
           setOptions(list);
         }
@@ -93,6 +96,16 @@ export default function PlaylistBrowser() {
     () => options.find((opt) => opt.id === selectedId) || LIKED_OPTION,
     [options, selectedId]
   );
+
+  const filteredOptions = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (!term) return options;
+    return options.filter((opt) => opt.name.toLowerCase().includes(term));
+  }, [options, query]);
+
+  useEffect(() => {
+    setQuery(selected.name);
+  }, [selected.name]);
 
   useEffect(() => {
     let cancelled = false;
@@ -167,19 +180,53 @@ export default function PlaylistBrowser() {
     <section style={{ marginTop: 24 }}>
       <h2 className="heading-2">Playlists</h2>
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <select
-          value={selectedId}
-          onChange={(e) => setSelectedId(e.target.value)}
-          className="input"
-          aria-label="Select playlist"
-          disabled={loadingPlaylists}
-        >
-          {options.map((opt) => (
-            <option key={opt.id} value={opt.id}>
-              {opt.name}
-            </option>
-          ))}
-        </select>
+        <div className="combo" style={{ minWidth: 260 }}>
+          <label className="sr-only" htmlFor="playlist-search">
+            Select playlist
+          </label>
+          <input
+            id="playlist-search"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+            onBlur={() => {
+              setTimeout(() => setOpen(false), 100);
+            }}
+            className="combo-input"
+            aria-label="Select playlist"
+            aria-autocomplete="list"
+            aria-expanded={open}
+            aria-controls="playlist-options"
+            placeholder="Search playlists..."
+            disabled={loadingPlaylists}
+          />
+          {open ? (
+            <div className="combo-list" role="listbox" id="playlist-options">
+              {filteredOptions.length === 0 ? (
+                <div className="combo-empty">No matches.</div>
+              ) : (
+                filteredOptions.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    role="option"
+                    aria-selected={opt.id === selectedId}
+                    className={`combo-item${opt.id === selectedId ? " active" : ""}`}
+                    onMouseDown={() => {
+                      setSelectedId(opt.id);
+                      setOpen(false);
+                    }}
+                  >
+                    {opt.name}
+                  </button>
+                ))
+              )}
+            </div>
+          ) : null}
+        </div>
         <a href={selected.spotifyUrl} target="_blank" rel="noreferrer" className="btn btn-secondary">
           Open in Spotify
         </a>

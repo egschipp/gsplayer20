@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Mode = "playlists" | "artists" | "tracks";
 
@@ -80,6 +80,7 @@ export default function PlaylistBrowser() {
   const [loadingTracks, setLoadingTracks] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
+  const suppressCloseRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -289,6 +290,14 @@ export default function PlaylistBrowser() {
       ? selectedArtist
       : selectedTrack;
 
+  const selectedTrackCover = useMemo(() => {
+    if (!selectedTrackName) return null;
+    const match = trackOptions.find(
+      (opt) => opt.name === selectedTrackName && opt.coverUrl
+    );
+    return match?.coverUrl ?? null;
+  }, [trackOptions, selectedTrackName]);
+
   const filteredOptions = useMemo(() => {
     const term = query.trim().toLowerCase();
     const list =
@@ -300,10 +309,6 @@ export default function PlaylistBrowser() {
     if (!term) return list;
     return list.filter((opt) => opt.name.toLowerCase().includes(term));
   }, [playlistOptions, artistOptions, trackOptions, query, mode]);
-
-  useEffect(() => {
-    if (selectedOption?.name) setQuery(selectedOption.name);
-  }, [selectedOption?.name]);
 
   useEffect(() => {
     setOpen(false);
@@ -459,7 +464,10 @@ export default function PlaylistBrowser() {
             }}
             onFocus={() => setOpen(true)}
             onBlur={() => {
-              setTimeout(() => setOpen(false), 100);
+              setTimeout(() => {
+                if (!suppressCloseRef.current) setOpen(false);
+                suppressCloseRef.current = false;
+              }, 100);
             }}
             className="combo-input"
             aria-label="Select option"
@@ -487,8 +495,9 @@ export default function PlaylistBrowser() {
               className="combo-clear"
               aria-label="Clear selection"
               onMouseDown={() => {
+                suppressCloseRef.current = true;
                 setQuery("");
-                setOpen(false);
+                setOpen(true);
                 if (mode === "playlists") setSelectedPlaylistId("");
                 if (mode === "artists") setSelectedArtistId("");
                 if (mode === "tracks") {
@@ -525,10 +534,12 @@ export default function PlaylistBrowser() {
                         : ""
                     }`}
                     onMouseDown={() => {
+                      suppressCloseRef.current = true;
                       if (mode === "playlists") setSelectedPlaylistId(opt.id);
                       if (mode === "artists") setSelectedArtistId(opt.id);
                       if (mode === "tracks") setSelectedTrackName(opt.name);
-                      setOpen(false);
+                      setQuery("");
+                      setOpen(true);
                     }}
                   >
                     {opt.name}
@@ -613,9 +624,9 @@ export default function PlaylistBrowser() {
         <div className="track-list" style={{ marginTop: 16 }}>
           {selectedTrack ? (
             <div className="track-row">
-              {selectedTrack.coverUrl ? (
+              {selectedTrackCover ? (
                 <img
-                  src={selectedTrack.coverUrl || undefined}
+                  src={selectedTrackCover || undefined}
                   alt={selectedTrack.name || "Track cover"}
                   loading="lazy"
                   style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}

@@ -790,11 +790,15 @@ export default function PlaylistBrowser() {
           ) : null}
           {tracks.length ? (
             <div
-              className={`track-header${mode === "artists" ? " columns-4" : ""}`}
+              className={`track-header${
+                mode === "artists" || mode === "playlists" ? " columns-4" : ""
+              }`}
             >
               <div />
               <div>Track</div>
-              {mode === "artists" ? <div>Playlists</div> : null}
+              {mode === "artists" || mode === "playlists" ? (
+                <div>Playlists</div>
+              ) : null}
               <div>Duration / Actions</div>
             </div>
           ) : null}
@@ -803,7 +807,7 @@ export default function PlaylistBrowser() {
               key={`${track.itemId || track.trackId || idx}`}
               className="track-row"
               style={
-                mode === "artists"
+                mode === "artists" || mode === "playlists"
                   ? { gridTemplateColumns: "56px 1fr 1fr auto" }
                   : undefined
               }
@@ -834,7 +838,7 @@ export default function PlaylistBrowser() {
                   <div className="text-subtle">{track.albumName}</div>
                 ) : null}
               </div>
-              {mode === "artists" ? (
+              {mode === "artists" || mode === "playlists" ? (
                 <div>{renderPlaylistChips(track.playlists)}</div>
               ) : null}
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>

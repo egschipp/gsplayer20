@@ -64,6 +64,7 @@ export async function GET(
       albumImageUrl: tracks.albumImageUrl,
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
       artists: sql<string | null>`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,
+      saved: sql<number>`max(${userSavedTracks.trackId} IS NOT NULL)`,
     })
     .from(tracks)
     .leftJoin(trackArtists, eq(trackArtists.trackId, tracks.trackId))
@@ -131,10 +132,21 @@ export async function GET(
     items: rows.map((row) => ({
       ...row,
       coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,
-      playlists: (playlistsByTrack.get(row.trackId) ?? []).map((pl) => ({
-        ...pl,
-        spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
-      })),
+      playlists: [
+        ...(row.saved
+          ? [
+              {
+                id: "liked",
+                name: "Liked Songs",
+                spotifyUrl: "https://open.spotify.com/collection/tracks",
+              },
+            ]
+          : []),
+        ...(playlistsByTrack.get(row.trackId) ?? []).map((pl) => ({
+          ...pl,
+          spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
+        })),
+      ],
     })),
     nextCursor,
     asOf: Date.now(),

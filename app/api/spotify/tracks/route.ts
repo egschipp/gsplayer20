@@ -50,6 +50,7 @@ export async function GET(req: Request) {
       albumName: tracks.albumName,
       albumImageUrl: tracks.albumImageUrl,
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
+      saved: sql<number>`max(${userSavedTracks.trackId} IS NOT NULL)`,
     })
     .from(tracks)
     .leftJoin(
@@ -135,10 +136,21 @@ export async function GET(req: Request) {
         trackId: row.trackId,
         name: row.name,
         artists: artistsByTrack.get(row.trackId) ?? [],
-        playlists: (playlistsByTrack.get(row.trackId) ?? []).map((pl) => ({
-          ...pl,
-          spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
-        })),
+        playlists: [
+          ...(row.saved
+            ? [
+                {
+                  id: "liked",
+                  name: "Liked Songs",
+                  spotifyUrl: "https://open.spotify.com/collection/tracks",
+                },
+              ]
+            : []),
+          ...(playlistsByTrack.get(row.trackId) ?? []).map((pl) => ({
+            ...pl,
+            spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
+          })),
+        ],
         album: {
           id: row.albumId ?? null,
           name: row.albumName ?? null,

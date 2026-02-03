@@ -7,11 +7,13 @@ import {
   playlistItems,
   tracks,
   userPlaylists,
+  userSavedTracks,
   syncState,
   trackArtists,
   artists,
+  playlists,
 } from "@/lib/db/schema";
-import { and, desc, eq, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
 
 export const runtime = "nodejs";
@@ -75,6 +77,7 @@ export async function GET(
       popularity: tracks.popularity,
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
       artists: sql<string | null>`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,
+      saved: sql<number>`max(${userSavedTracks.trackId} IS NOT NULL)`,
       addedAt: playlistItems.addedAt,
       addedBySpotifyUserId: playlistItems.addedBySpotifyUserId,
       position: playlistItems.position,
@@ -89,6 +92,13 @@ export async function GET(
     .leftJoin(tracks, eq(tracks.trackId, playlistItems.trackId))
     .leftJoin(trackArtists, eq(trackArtists.trackId, tracks.trackId))
     .leftJoin(artists, eq(artists.artistId, trackArtists.artistId))
+    .leftJoin(
+      userSavedTracks,
+      and(
+        eq(userSavedTracks.trackId, tracks.trackId),
+        eq(userSavedTracks.userId, session.appUserId as string)
+      )
+    )
     .where(whereClause)
     .groupBy(
       playlistItems.itemId,
@@ -99,6 +109,36 @@ export async function GET(
     )
     .orderBy(desc(playlistItems.position), desc(playlistItems.itemId))
     .limit(limit);
+
+  const trackIds = rows.map((row) => row.trackId).filter(Boolean);
+  const playlistRows = trackIds.length
+    ? await db
+        .select({
+          trackId: playlistItems.trackId,
+          playlistId: playlists.playlistId,
+          playlistName: playlists.name,
+        })
+        .from(playlistItems)
+        .innerJoin(playlists, eq(playlists.playlistId, playlistItems.playlistId))
+        .innerJoin(
+          userPlaylists,
+          and(
+            eq(userPlaylists.playlistId, playlists.playlistId),
+            eq(userPlaylists.userId, session.appUserId as string)
+          )
+        )
+        .where(inArray(playlistItems.trackId, trackIds))
+    : [];
+
+  const playlistsByTrack = new Map<string, { id: string; name: string }[]>();
+  for (const row of playlistRows) {
+    if (!row.trackId || !row.playlistId) continue;
+    const list = playlistsByTrack.get(row.trackId) ?? [];
+    if (!list.find((item) => item.id === row.playlistId)) {
+      list.push({ id: row.playlistId, name: row.playlistName ?? "" });
+      playlistsByTrack.set(row.trackId, list);
+    }
+  }
 
   const last = rows[rows.length - 1];
   const nextCursor = last
@@ -125,6 +165,21 @@ export async function GET(
     items: rows.map((row) => ({
       ...row,
       coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,
+      playlists: [
+        ...(row.saved
+          ? [
+              {
+                id: "liked",
+                name: "Liked Songs",
+                spotifyUrl: "https://open.spotify.com/collection/tracks",
+              },
+            ]
+          : []),
+        ...(playlistsByTrack.get(row.trackId) ?? []).map((pl) => ({
+          ...pl,
+          spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
+        })),
+      ],
     })),
     nextCursor,
     asOf: Date.now(),

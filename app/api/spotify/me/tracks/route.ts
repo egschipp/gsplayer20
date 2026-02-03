@@ -88,6 +88,13 @@ export async function GET(req: Request) {
     items: rows.map((row) => ({
       ...row,
       coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,
+      playlists: [
+        {
+          id: "liked",
+          name: "Liked Songs",
+          spotifyUrl: "https://open.spotify.com/collection/tracks",
+        },
+      ],
     })),
     nextCursor,
     asOf: Date.now(),

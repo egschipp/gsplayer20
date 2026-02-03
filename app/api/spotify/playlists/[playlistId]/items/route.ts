@@ -110,7 +110,9 @@ export async function GET(
     .orderBy(desc(playlistItems.position), desc(playlistItems.itemId))
     .limit(limit);
 
-  const trackIds = rows.map((row) => row.trackId).filter(Boolean);
+  const trackIds = rows
+    .map((row) => row.trackId)
+    .filter((id): id is string => Boolean(id));
   const playlistRows = trackIds.length
     ? await db
         .select({

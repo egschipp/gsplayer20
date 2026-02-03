@@ -7,7 +7,7 @@ export default function HomePage() {
         src="/georgies-spotify.png"
         alt="Georgies Spotify logo"
         loading="lazy"
-        style={{ maxWidth: "520px", width: "100%", height: "auto", marginBottom: 16 }}
+        style={{ maxWidth: "390px", width: "100%", height: "auto", marginBottom: 16 }}
       />
       <PlaylistBrowser />
     </main>

@@ -618,7 +618,6 @@ export default function PlaylistBrowser() {
 
   return (
     <section style={{ marginTop: 24 }}>
-      <h2 className="heading-2">Library</h2>
       <SpotifyPlayer
         onReady={(api) => {
           playerApiRef.current = api;

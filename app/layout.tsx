@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Space_Grotesk, Manrope } from "next/font/google";
 import "./globals.css";
 import AuthSessionProvider from "./components/SessionProvider";
+import MainNav from "./components/MainNav";
 
 const displayFont = Space_Grotesk({
   subsets: ["latin"],
@@ -31,14 +32,7 @@ export default function RootLayout({
             className="panel"
             style={{ margin: "0 1rem", marginTop: "1.25rem" }}
           >
-            <nav className="nav">
-              <a href="/" className="nav-link">
-                GSPlayer
-              </a>
-              <a href="/status" className="nav-link secondary">
-                Status
-              </a>
-            </nav>
+            <MainNav />
           </header>
           {children}
         </AuthSessionProvider>

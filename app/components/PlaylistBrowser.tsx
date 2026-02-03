@@ -538,8 +538,8 @@ export default function PlaylistBrowser() {
                       if (mode === "playlists") setSelectedPlaylistId(opt.id);
                       if (mode === "artists") setSelectedArtistId(opt.id);
                       if (mode === "tracks") setSelectedTrackName(opt.name);
-                      setQuery("");
-                      setOpen(true);
+                      setQuery(opt.name);
+                      setOpen(false);
                     }}
                   >
                     {opt.name}

@@ -247,6 +247,28 @@ a:hover {
   color: #ffffff;
 }
 
+.combo-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.combo-track-cover {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.combo-track-cover.placeholder {
+  display: inline-block;
+}
+
+.combo-track-name {
+  font-size: 0.85rem;
+}
+
 .combo-empty {
   padding: 0.6rem 0.8rem;
   color: var(--text-subtle);

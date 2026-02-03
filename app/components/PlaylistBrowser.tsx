@@ -22,6 +22,7 @@ type TrackOption = {
   name: string;
   spotifyUrl: string;
   coverUrl?: string | null;
+  trackId?: string | null;
 };
 
 type TrackRow = {
@@ -233,6 +234,7 @@ export default function PlaylistBrowser() {
                 name: track.name,
                 spotifyUrl: `https://open.spotify.com/track/${track.trackId}`,
                 coverUrl: track.coverUrl ?? track.albumImageUrl ?? null,
+                trackId: track.trackId ?? null,
               })
             )
           );
@@ -312,6 +314,13 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     setOpen(false);
+    setQuery("");
+    if (mode === "playlists") setSelectedPlaylistId("");
+    if (mode === "artists") setSelectedArtistId("");
+    if (mode === "tracks") {
+      setSelectedTrackName("");
+      setTrackArtists([]);
+    }
   }, [mode]);
 
   useEffect(() => {
@@ -542,7 +551,23 @@ export default function PlaylistBrowser() {
                       setOpen(false);
                     }}
                   >
-                    {opt.name}
+                    {mode === "tracks" ? (
+                      <span className="combo-track">
+                        {opt.coverUrl ? (
+                          <img
+                            src={opt.coverUrl || undefined}
+                            alt=""
+                            loading="lazy"
+                            className="combo-track-cover"
+                          />
+                        ) : (
+                          <span className="combo-track-cover placeholder" />
+                        )}
+                        <span className="combo-track-name">{opt.name}</span>
+                      </span>
+                    ) : (
+                      opt.name
+                    )}
                   </button>
                 ))
               )}

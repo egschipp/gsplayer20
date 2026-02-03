@@ -22,6 +22,10 @@ on:
       - "next.config.js"
       - "tsconfig.json"
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     if: github.event_name == 'pull_request' && github.actor != 'release-please[bot]'

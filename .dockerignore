@@ -5,6 +5,10 @@ node_modules
 coverage
 logs
 *.log
+*.md
+.DS_Store
+.idea
+.turbo
 npm-debug.log*
 .env
 .env.*

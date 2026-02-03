@@ -88,6 +88,7 @@ export default function PlaylistBrowser() {
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const suppressCloseRef = useRef(false);
+  const MAX_PLAYLIST_CHIPS = 2;
 
   useEffect(() => {
     let cancelled = false;
@@ -341,6 +342,30 @@ export default function PlaylistBrowser() {
     if (!selectedTrackName) return [];
     return trackItems.filter((track) => track.name === selectedTrackName);
   }, [trackItems, selectedTrackName]);
+
+  function renderPlaylistChips(playlists: PlaylistLink[] | undefined) {
+    if (!playlists || playlists.length === 0) return <span className="text-subtle">—</span>;
+    const visible = playlists.slice(0, MAX_PLAYLIST_CHIPS);
+    const remaining = playlists.length - visible.length;
+    return (
+      <>
+        {visible.map((pl) => (
+          <a
+            key={pl.id}
+            href={pl.spotifyUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="playlist-chip"
+          >
+            {pl.name || "Untitled playlist"}
+          </a>
+        ))}
+        {remaining > 0 ? (
+          <span className="playlist-more">+{remaining} more</span>
+        ) : null}
+      </>
+    );
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -596,10 +621,40 @@ export default function PlaylistBrowser() {
       {mode !== "tracks" ? (
         <div className="track-list" style={{ marginTop: 16 }}>
           {mode === "playlists" && !selectedPlaylist?.id ? (
-            <p className="text-body">Select a playlist.</p>
+            <div className="empty-state">
+              <div style={{ fontWeight: 600 }}>Select a playlist</div>
+              <div className="text-body">
+                Choose a playlist to see its tracks.
+              </div>
+            </div>
           ) : null}
           {mode === "artists" && !selectedArtist?.id ? (
-            <p className="text-body">Select an artist.</p>
+            <div className="empty-state">
+              <div style={{ fontWeight: 600 }}>Select an artist</div>
+              <div className="text-body">
+                Pick an artist to see their tracks and playlists.
+              </div>
+            </div>
+          ) : null}
+          {mode === "playlists" && selectedPlaylist?.name ? (
+            <div className="text-body" style={{ marginBottom: 6 }}>
+              Showing tracks for: <strong>{selectedPlaylist.name}</strong>
+            </div>
+          ) : null}
+          {mode === "artists" && selectedArtist?.name ? (
+            <div className="text-body" style={{ marginBottom: 6 }}>
+              Showing tracks for: <strong>{selectedArtist.name}</strong>
+            </div>
+          ) : null}
+          {tracks.length ? (
+            <div
+              className={`track-header${mode === "artists" ? " columns-4" : ""}`}
+            >
+              <div />
+              <div>Track</div>
+              {mode === "artists" ? <div>Playlists</div> : null}
+              <div>{mode === "artists" ? "Duration" : "Duration"}</div>
+            </div>
           ) : null}
           {tracks.map((track, idx) => (
             <div
@@ -638,25 +693,7 @@ export default function PlaylistBrowser() {
                 ) : null}
               </div>
               {mode === "artists" ? (
-                <div className="text-subtle">
-                  {Array.isArray(track.playlists) && track.playlists.length ? (
-                    track.playlists.map((pl, index) => (
-                      <span key={pl.id}>
-                        <a
-                          href={pl.spotifyUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{ color: "var(--text-primary)" }}
-                        >
-                          {pl.name || "Untitled playlist"}
-                        </a>
-                        {index < track.playlists!.length - 1 ? ", " : ""}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-subtle">—</span>
-                  )}
-                </div>
+                <div>{renderPlaylistChips(track.playlists)}</div>
               ) : null}
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div className="text-subtle">
@@ -682,12 +719,28 @@ export default function PlaylistBrowser() {
                     </svg>
                   </a>
                 ) : null}
+                {track.trackId ? (
+                  <span className="text-subtle">Spotify</span>
+                ) : null}
               </div>
             </div>
           ))}
         </div>
       ) : (
         <div className="track-list" style={{ marginTop: 16 }}>
+          {selectedTrackName ? (
+            <div className="text-body" style={{ marginBottom: 6 }}>
+              Tracks named: <strong>{selectedTrackName}</strong>
+            </div>
+          ) : null}
+          {filteredTrackItems.length ? (
+            <div className="track-header columns-4">
+              <div />
+              <div>Track</div>
+              <div>Playlists</div>
+              <div>Open</div>
+            </div>
+          ) : null}
           {filteredTrackItems.map((track) => {
             const coverUrl = track.album?.images?.[0]?.url ?? null;
             const artistNames = track.artists
@@ -726,25 +779,7 @@ export default function PlaylistBrowser() {
                     <div className="text-subtle">{track.album.name}</div>
                   ) : null}
                 </div>
-                <div className="text-subtle">
-                  {track.playlists.length ? (
-                    track.playlists.map((pl, index) => (
-                      <span key={pl.id}>
-                        <a
-                          href={pl.spotifyUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{ color: "var(--text-primary)" }}
-                        >
-                          {pl.name || "Untitled playlist"}
-                        </a>
-                        {index < track.playlists.length - 1 ? ", " : ""}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-subtle">—</span>
-                  )}
-                </div>
+                <div>{renderPlaylistChips(track.playlists)}</div>
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   <a
                     href={`https://open.spotify.com/track/${track.id}`}
@@ -764,6 +799,9 @@ export default function PlaylistBrowser() {
                       <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm4.6 14.52c-.18.3-.57.4-.87.22-2.4-1.46-5.42-1.8-8.97-1.02-.34.08-.68-.13-.76-.47-.08-.34.13-.68.47-.76 3.86-.86 7.2-.47 9.9 1.18.3.18.4.57.22.87Zm1.24-2.76c-.22.36-.7.48-1.06.26-2.74-1.68-6.92-2.17-10.17-1.18-.41.12-.85-.11-.97-.52-.12-.41.11-.85.52-.97 3.71-1.12 8.33-.57 11.47 1.36.36.22.48.7.26 1.05Zm.11-2.87c-3.28-1.95-8.69-2.13-11.82-1.18-.49.15-1.02-.13-1.17-.62-.15-.49.13-1.02.62-1.17 3.59-1.09 9.56-.88 13.33 1.36.44.26.58.83.32 1.27-.26.44-.83.58-1.27.32Z" />
                     </svg>
                   </a>
+                  <span className="text-subtle" style={{ marginLeft: 6 }}>
+                    Spotify
+                  </span>
                 </div>
               </div>
             );

@@ -245,6 +245,7 @@ a:hover {
 .combo-item.active {
   background: rgba(29, 185, 84, 0.18);
   color: #ffffff;
+  font-weight: 600;
 }
 
 .combo-track {
@@ -313,6 +314,55 @@ a:focus-visible {
 .track-list {
   display: grid;
   gap: 10px;
+}
+
+.track-header {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(42, 42, 42, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.65rem;
+  color: var(--text-subtle);
+}
+
+.track-header.columns-4 {
+  grid-template-columns: 56px 1fr 1fr auto;
+}
+
+.empty-state {
+  padding: 16px 18px;
+  border-radius: 1rem;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.playlist-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin: 0 6px 6px 0;
+  white-space: nowrap;
+}
+
+.playlist-more {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(29, 185, 84, 0.3);
+  font-size: 0.7rem;
+  color: var(--tide);
+  margin: 0 6px 6px 0;
 }
 
 .segmented {

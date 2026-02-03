@@ -6,6 +6,7 @@ import {
   tracks,
   trackArtists,
   artists,
+  playlists,
   userSavedTracks,
   playlistItems,
   userPlaylists,
@@ -90,6 +91,36 @@ export async function GET(
     .orderBy(desc(tracks.trackId))
     .limit(limit);
 
+  const trackIds = rows.map((row) => row.trackId).filter(Boolean);
+  const playlistRows = trackIds.length
+    ? await db
+        .select({
+          trackId: playlistItems.trackId,
+          playlistId: playlists.playlistId,
+          playlistName: playlists.name,
+        })
+        .from(playlistItems)
+        .innerJoin(playlists, eq(playlists.playlistId, playlistItems.playlistId))
+        .innerJoin(
+          userPlaylists,
+          and(
+            eq(userPlaylists.playlistId, playlists.playlistId),
+            eq(userPlaylists.userId, session.appUserId as string)
+          )
+        )
+        .where(inArray(playlistItems.trackId, trackIds))
+    : [];
+
+  const playlistsByTrack = new Map<string, { id: string; name: string }[]>();
+  for (const row of playlistRows) {
+    if (!row.trackId || !row.playlistId) continue;
+    const list = playlistsByTrack.get(row.trackId) ?? [];
+    if (!list.find((item) => item.id === row.playlistId)) {
+      list.push({ id: row.playlistId, name: row.playlistName ?? "" });
+      playlistsByTrack.set(row.trackId, list);
+    }
+  }
+
   const last = rows[rows.length - 1];
   const nextCursor = last ? encodeCursor(0, last.trackId) : null;
 
@@ -97,6 +128,10 @@ export async function GET(
     items: rows.map((row) => ({
       ...row,
       coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,
+      playlists: (playlistsByTrack.get(row.trackId) ?? []).map((pl) => ({
+        ...pl,
+        spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
+      })),
     })),
     nextCursor,
     asOf: Date.now(),

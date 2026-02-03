@@ -26,12 +26,15 @@ type TrackOption = {
   artistNames?: string | null;
 };
 
+type PlaylistLink = { id: string; name: string; spotifyUrl: string };
+
 type TrackItem = {
   id: string;
   trackId?: string | null;
   name: string;
   artists: { id: string; name: string }[];
   album: { id: string | null; name: string | null; images: { url: string }[] };
+  playlists: PlaylistLink[];
 };
 
 type TrackRow = {
@@ -43,6 +46,7 @@ type TrackRow = {
   coverUrl?: string | null;
   artists?: string | null;
   durationMs?: number | null;
+  playlists?: PlaylistLink[];
 };
 
 const LIKED_OPTION: PlaylistOption = {
@@ -237,6 +241,7 @@ export default function PlaylistBrowser() {
                 name: String(track.name ?? ""),
                 artists: Array.isArray(track.artists) ? track.artists : [],
                 album: track.album ?? { id: null, name: null, images: [] },
+                playlists: Array.isArray(track.playlists) ? track.playlists : [],
               })
             )
           );
@@ -590,10 +595,21 @@ export default function PlaylistBrowser() {
 
       {mode !== "tracks" ? (
         <div className="track-list" style={{ marginTop: 16 }}>
+          {mode === "playlists" && !selectedPlaylist?.id ? (
+            <p className="text-body">Select a playlist.</p>
+          ) : null}
+          {mode === "artists" && !selectedArtist?.id ? (
+            <p className="text-body">Select an artist.</p>
+          ) : null}
           {tracks.map((track, idx) => (
             <div
               key={`${track.itemId || track.trackId || idx}`}
               className="track-row"
+              style={
+                mode === "artists"
+                  ? { gridTemplateColumns: "56px 1fr 1fr auto" }
+                  : undefined
+              }
             >
               {track.coverUrl || track.albumImageUrl ? (
                 <img
@@ -621,6 +637,27 @@ export default function PlaylistBrowser() {
                   <div className="text-subtle">{track.albumName}</div>
                 ) : null}
               </div>
+              {mode === "artists" ? (
+                <div className="text-subtle">
+                  {Array.isArray(track.playlists) && track.playlists.length ? (
+                    track.playlists.map((pl, index) => (
+                      <span key={pl.id}>
+                        <a
+                          href={pl.spotifyUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: "var(--text-primary)" }}
+                        >
+                          {pl.name || "Untitled playlist"}
+                        </a>
+                        {index < track.playlists!.length - 1 ? ", " : ""}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-subtle">—</span>
+                  )}
+                </div>
+              ) : null}
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div className="text-subtle">
                   {formatDuration(track.durationMs)}
@@ -658,7 +695,11 @@ export default function PlaylistBrowser() {
               .filter(Boolean)
               .join(", ");
             return (
-              <div key={track.id} className="track-row">
+              <div
+                key={track.id}
+                className="track-row"
+                style={{ gridTemplateColumns: "56px 1fr 1fr auto" }}
+              >
                 {coverUrl ? (
                   <img
                     src={coverUrl || undefined}
@@ -684,6 +725,25 @@ export default function PlaylistBrowser() {
                   {track.album?.name ? (
                     <div className="text-subtle">{track.album.name}</div>
                   ) : null}
+                </div>
+                <div className="text-subtle">
+                  {track.playlists.length ? (
+                    track.playlists.map((pl, index) => (
+                      <span key={pl.id}>
+                        <a
+                          href={pl.spotifyUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: "var(--text-primary)" }}
+                        >
+                          {pl.name || "Untitled playlist"}
+                        </a>
+                        {index < track.playlists.length - 1 ? ", " : ""}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-subtle">—</span>
+                  )}
                 </div>
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   <a

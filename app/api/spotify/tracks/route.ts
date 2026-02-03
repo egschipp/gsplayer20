@@ -4,6 +4,7 @@ import { getAuthOptions } from "@/lib/auth/options";
 import { getDb } from "@/lib/db/client";
 import {
   artists,
+  playlists,
   trackArtists,
   tracks,
   userSavedTracks,
@@ -89,6 +90,35 @@ export async function GET(req: Request) {
     artistsByTrack.set(row.trackId, list);
   }
 
+  const playlistRows = trackIds.length
+    ? await db
+        .select({
+          trackId: playlistItems.trackId,
+          playlistId: playlists.playlistId,
+          playlistName: playlists.name,
+        })
+        .from(playlistItems)
+        .innerJoin(playlists, eq(playlists.playlistId, playlistItems.playlistId))
+        .innerJoin(
+          userPlaylists,
+          and(
+            eq(userPlaylists.playlistId, playlists.playlistId),
+            eq(userPlaylists.userId, session.appUserId as string)
+          )
+        )
+        .where(inArray(playlistItems.trackId, trackIds))
+    : [];
+
+  const playlistsByTrack = new Map<string, { id: string; name: string }[]>();
+  for (const row of playlistRows) {
+    if (!row.trackId || !row.playlistId) continue;
+    const list = playlistsByTrack.get(row.trackId) ?? [];
+    if (!list.find((item) => item.id === row.playlistId)) {
+      list.push({ id: row.playlistId, name: row.playlistName ?? "" });
+      playlistsByTrack.set(row.trackId, list);
+    }
+  }
+
   const last = rows[rows.length - 1];
   const nextCursor = last ? encodeCursor(0, last.trackId) : null;
 
@@ -102,6 +132,10 @@ export async function GET(req: Request) {
         trackId: row.trackId,
         name: row.name,
         artists: artistsByTrack.get(row.trackId) ?? [],
+        playlists: (playlistsByTrack.get(row.trackId) ?? []).map((pl) => ({
+          ...pl,
+          spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
+        })),
         album: {
           id: row.albumId ?? null,
           name: row.albumName ?? null,

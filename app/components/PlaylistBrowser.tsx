@@ -1047,112 +1047,87 @@ export default function PlaylistBrowser() {
                   </a>
                 ) : null}
               </div>
-              <div className="track-detail-grid">
-                <div className="track-detail-field">
-                  <div className="text-subtle">Track ID</div>
-                  <div>{selectedTrackDetail.trackId || "—"}</div>
-                </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Item ID</div>
-                  <div>{selectedTrackDetail.itemId || "—"}</div>
-                </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Playlist ID</div>
-                  <div>{selectedTrackDetail.playlistId || "—"}</div>
-                </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Album ID</div>
-                  <div>{selectedTrackDetail.albumId || "—"}</div>
-                </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Duration</div>
-                  <div>{formatDuration(selectedTrackDetail.durationMs)}</div>
-                </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Explicit</div>
-                  <div>{formatExplicit(selectedTrackDetail.explicit)}</div>
-                </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Popularity</div>
-                  <div>
-                    {selectedTrackDetail.popularity === null ||
-                    selectedTrackDetail.popularity === undefined
-                      ? "—"
-                      : selectedTrackDetail.popularity}
+              <div className="track-detail-content">
+                <div className="track-detail-section">
+                  <div className="track-detail-title">Basics</div>
+                  <div className="track-detail-grid">
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Duration</div>
+                      <div>{formatDuration(selectedTrackDetail.durationMs)}</div>
+                    </div>
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Explicit</div>
+                      <div>{formatExplicit(selectedTrackDetail.explicit)}</div>
+                    </div>
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Popularity</div>
+                      <div>
+                        {selectedTrackDetail.popularity === null ||
+                        selectedTrackDetail.popularity === undefined
+                          ? "—"
+                          : selectedTrackDetail.popularity}
+                      </div>
+                    </div>
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Added at</div>
+                      <div>{formatTimestamp(selectedTrackDetail.addedAt)}</div>
+                    </div>
                   </div>
                 </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Added at</div>
-                  <div>{formatTimestamp(selectedTrackDetail.addedAt)}</div>
-                </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Added by</div>
-                  <div>{selectedTrackDetail.addedBySpotifyUserId || "—"}</div>
-                </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Position</div>
-                  <div>
-                    {selectedTrackDetail.position === null ||
-                    selectedTrackDetail.position === undefined
-                      ? "—"
-                      : selectedTrackDetail.position}
+
+                <div className="track-detail-section">
+                  <div className="track-detail-title">Album</div>
+                  <div className="track-detail-grid">
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Album</div>
+                      <div>{selectedTrackDetail.albumName || "—"}</div>
+                    </div>
                   </div>
                 </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Snapshot ID at sync</div>
-                  <div>{selectedTrackDetail.snapshotIdAtSync || "—"}</div>
-                </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Sync run ID</div>
-                  <div>{selectedTrackDetail.syncRunId || "—"}</div>
-                </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Album image URL</div>
-                  <div className="text-body">
-                    {selectedTrackDetail.albumImageUrl || "—"}
-                  </div>
-                </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Cover URL</div>
-                  <div className="text-body">
-                    {selectedTrackDetail.coverUrl || "—"}
-                  </div>
-                </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Artists</div>
-                  {selectedTrackDetail.artists?.length ? (
-                    <div>
-                      {selectedTrackDetail.artists.map((artist) => (
-                        <div key={artist.id}>
-                          {artist.name}{" "}
-                          <span className="text-subtle">({artist.id})</span>
+
+                <div className="track-detail-section">
+                  <div className="track-detail-title">Artists</div>
+                  <div className="track-detail-grid">
+                    <div className="track-detail-field">
+                      {selectedTrackDetail.artists?.length ? (
+                        <div>
+                          {selectedTrackDetail.artists.map((artist) => (
+                            <div key={artist.id}>
+                              {artist.name}{" "}
+                              <span className="text-subtle">({artist.id})</span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      ) : (
+                        <div>{selectedTrackDetail.artistsText || "—"}</div>
+                      )}
                     </div>
-                  ) : (
-                    <div>{selectedTrackDetail.artistsText || "—"}</div>
-                  )}
+                  </div>
                 </div>
-                <div className="track-detail-field">
-                  <div className="text-subtle">Playlists</div>
-                  {selectedTrackDetail.playlists?.length ? (
-                    <div className="track-detail-playlists">
-                      {selectedTrackDetail.playlists.map((pl) => (
-                        <a
-                          key={pl.id}
-                          href={pl.spotifyUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          {pl.name || "Untitled playlist"}{" "}
-                          <span className="text-subtle">({pl.id})</span>
-                        </a>
-                      ))}
+
+                <div className="track-detail-section">
+                  <div className="track-detail-title">Playlists</div>
+                  <div className="track-detail-grid">
+                    <div className="track-detail-field">
+                      {selectedTrackDetail.playlists?.length ? (
+                        <div className="track-detail-playlists">
+                          {selectedTrackDetail.playlists.map((pl) => (
+                            <a
+                              key={pl.id}
+                              href={pl.spotifyUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              {pl.name || "Untitled playlist"}
+                            </a>
+                          ))}
+                        </div>
+                      ) : (
+                        <div>—</div>
+                      )}
                     </div>
-                  ) : (
-                    <div>—</div>
-                  )}
+                  </div>
                 </div>
               </div>
             </div>

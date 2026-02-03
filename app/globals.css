@@ -506,11 +506,29 @@ details[open] > .details-summary::after {
 
 .track-detail-cover img,
 .track-detail-cover.placeholder {
-  width: 220px;
-  height: 220px;
+  width: min(280px, 100%);
+  height: auto;
+  aspect-ratio: 1 / 1;
   border-radius: 16px;
   object-fit: cover;
   background: rgba(255, 255, 255, 0.08);
+}
+
+.track-detail-content {
+  display: grid;
+  gap: 16px;
+}
+
+.track-detail-section {
+  display: grid;
+  gap: 10px;
+}
+
+.track-detail-title {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.7rem;
+  color: var(--text-subtle);
 }
 
 .track-detail-grid {

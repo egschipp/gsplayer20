@@ -43,11 +43,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   >([]);
   const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
   const [activeDeviceName, setActiveDeviceName] = useState<string | null>(null);
+  const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
+  const deviceCloseRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const playerRef = useRef<any>(null);
   const deviceIdRef = useRef<string | null>(null);
   const accessTokenRef = useRef<string | undefined>(accessToken);
   const sdkDeviceIdRef = useRef<string | null>(null);
+  const activeDeviceIdRef = useRef<string | null>(null);
   const readyRef = useRef(false);
 
   const canUseSdk = useMemo(() => Boolean(accessToken), [accessToken]);
@@ -95,7 +98,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setDeviceId(device_id);
       deviceIdRef.current = device_id;
       sdkDeviceIdRef.current = device_id;
-      transferPlayback(device_id).catch(() => {});
+      transferPlayback(device_id, false).catch(() => {});
     });
 
     player.addListener("not_ready", () => {
@@ -105,6 +108,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
     player.addListener("player_state_changed", (state: any) => {
       if (!state) return;
+      if (
+        activeDeviceIdRef.current &&
+        activeDeviceIdRef.current !== sdkDeviceIdRef.current
+      ) {
+        return;
+      }
       const current = state.track_window?.current_track;
       const trackId = current?.id ?? null;
       const nextPosition = state.position ?? 0;
@@ -138,9 +147,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
     const api: PlayerApi = {
       playQueue: async (uris, offsetUri) => {
-        const currentDevice = deviceIdRef.current;
         const token = accessTokenRef.current;
+        const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
         if (!currentDevice || !token) return;
+        if (
+          activeDeviceIdRef.current &&
+          activeDeviceIdRef.current !== sdkDeviceIdRef.current
+        ) {
+          await transferPlayback(activeDeviceIdRef.current, false);
+        }
         await fetch(
           `https://api.spotify.com/v1/me/player/play?device_id=${currentDevice}`,
           {
@@ -224,8 +239,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (!data || cancelled) return;
       const device = data.device;
       if (device?.id) {
-        setActiveDeviceId(device.id);
-        setActiveDeviceName(device.name ?? null);
+        setActiveDevice(device.id, device.name ?? null);
       }
       const item = data.item;
       if (item) {
@@ -255,6 +269,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     };
   }, [accessToken, onTrackChange]);
 
+  function setActiveDevice(id: string | null, name?: string | null) {
+    setActiveDeviceId(id);
+    activeDeviceIdRef.current = id;
+    if (name !== undefined) {
+      setActiveDeviceName(name);
+    }
+  }
+
   async function refreshDevices() {
     const token = accessTokenRef.current;
     if (!token) return;
@@ -274,15 +296,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     );
     const active = list.find((d: any) => d.is_active);
     if (active?.id) {
-      setActiveDeviceId(active.id);
-      setActiveDeviceName(active.name ?? null);
+      setActiveDevice(active.id, active.name ?? null);
     }
   }
 
   async function handleDeviceChange(targetId: string) {
     const token = accessTokenRef.current;
     if (!token || !targetId) return;
-    setActiveDeviceId(targetId);
+    setActiveDevice(targetId);
     await fetch("https://api.spotify.com/v1/me/player", {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}` },
@@ -296,8 +317,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handleTogglePlay() {
     const token = accessTokenRef.current;
-    const currentDevice = activeDeviceId || deviceIdRef.current;
-    if (!token || !currentDevice) return;
+    const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
+    if (!token || !currentDevice) {
+      await playerRef.current?.togglePlay?.();
+      return;
+    }
     const endpoint = playerState?.paused ? "play" : "pause";
     await fetch(
       `https://api.spotify.com/v1/me/player/${endpoint}?device_id=${currentDevice}`,
@@ -310,7 +334,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handleNext() {
     const token = accessTokenRef.current;
-    const currentDevice = activeDeviceId || deviceIdRef.current;
+    const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
     await fetch(
       `https://api.spotify.com/v1/me/player/next?device_id=${currentDevice}`,
@@ -323,7 +347,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handlePrevious() {
     const token = accessTokenRef.current;
-    const currentDevice = activeDeviceId || deviceIdRef.current;
+    const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
     await fetch(
       `https://api.spotify.com/v1/me/player/previous?device_id=${currentDevice}`,
@@ -344,7 +368,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handleSeek(nextMs: number) {
     const token = accessTokenRef.current;
-    const currentDevice = activeDeviceId || deviceIdRef.current;
+    const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
     await fetch(
       `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=${Math.floor(
@@ -361,13 +385,16 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   async function handleVolume(nextVolume: number) {
     const clamped = Math.max(0, Math.min(1, nextVolume));
     setVolume(clamped);
-    if (activeDeviceId && activeDeviceId !== sdkDeviceIdRef.current) {
+    if (
+      activeDeviceIdRef.current &&
+      activeDeviceIdRef.current !== sdkDeviceIdRef.current
+    ) {
       const token = accessTokenRef.current;
       if (!token) return;
       await fetch(
         `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(
           clamped * 100
-        )}&device_id=${activeDeviceId}`,
+        )}&device_id=${activeDeviceIdRef.current}`,
         {
           method: "PUT",
           headers: { Authorization: `Bearer ${token}` },
@@ -378,12 +405,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     await playerRef.current?.setVolume?.(clamped);
   }
 
-  async function transferPlayback(id: string) {
-    if (!accessToken) return;
+  async function transferPlayback(id: string, play = false) {
+    const token = accessTokenRef.current;
+    if (!token) return;
     await fetch("https://api.spotify.com/v1/me/player", {
       method: "PUT",
-      headers: { Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ device_ids: [id], play: false }),
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ device_ids: [id], play }),
     });
   }
 
@@ -482,20 +510,55 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             ↻
           </button>
         </div>
-        <select
-          className="player-device-select"
-          value={activeDeviceId || deviceId || ""}
-          onChange={(event) => handleDeviceChange(event.target.value)}
-        >
-          <option value="" disabled>
-            Select device
-          </option>
-          {devices.map((device) => (
-            <option key={device.id} value={device.id}>
-              {device.name} ({device.type})
-            </option>
-          ))}
-        </select>
+        <div className="player-device-select">
+          <div className="combo" style={{ width: "100%" }}>
+            <input
+              className="combo-input"
+              value={
+                devices.find((d) => d.id === (activeDeviceId || deviceId))?.name ||
+                "Select device"
+              }
+              readOnly
+              onFocus={() => setDeviceMenuOpen(true)}
+              onClick={() => setDeviceMenuOpen((prev) => !prev)}
+              onBlur={() => {
+                setTimeout(() => {
+                  if (!deviceCloseRef.current) setDeviceMenuOpen(false);
+                  deviceCloseRef.current = false;
+                }, 100);
+              }}
+              aria-label="Select Spotify Connect device"
+              aria-haspopup="listbox"
+              aria-expanded={deviceMenuOpen}
+            />
+            {deviceMenuOpen ? (
+              <div className="combo-list" role="listbox">
+                {devices.length === 0 ? (
+                  <div className="combo-empty">No devices found.</div>
+                ) : (
+                  devices.map((device) => (
+                    <button
+                      key={device.id}
+                      type="button"
+                      role="option"
+                      className={`combo-item${
+                        device.id === (activeDeviceId || deviceId) ? " active" : ""
+                      }`}
+                      onMouseDown={() => {
+                        deviceCloseRef.current = true;
+                        handleDeviceChange(device.id);
+                        setDeviceMenuOpen(false);
+                      }}
+                    >
+                      {device.name}{" "}
+                      <span className="text-subtle">({device.type})</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
         <div className="player-volume">
           <span className="text-subtle">Volume</span>
           <input

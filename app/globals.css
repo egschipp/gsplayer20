@@ -724,18 +724,10 @@ details[open] > .details-summary::after {
 
 .player-device-select {
   width: 100%;
-  padding: 0.7rem 1rem;
-  border-radius: 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.6);
-  color: var(--text-primary);
-  font-size: 0.9rem;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
 .player-device-select:focus-visible {
-  outline: 2px solid var(--tide);
-  outline-offset: 2px;
+  outline: none;
 }
 
 .player-play {

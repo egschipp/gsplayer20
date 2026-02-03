@@ -68,14 +68,18 @@ export default function PlaylistBrowser() {
         }
         const data = await res.json();
         const items = Array.isArray(data.items) ? data.items : [];
-        const playlistOptions = items
-          .map((p: any) => ({
-            id: p.playlistId,
-            name: p.name,
-            type: "playlist" as const,
-            spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+        const playlistOptions: PlaylistOption[] = items
+          .map(
+            (p: any): PlaylistOption => ({
+              id: p.playlistId,
+              name: p.name,
+              type: "playlist",
+              spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
+            })
+          )
+          .sort((a: PlaylistOption, b: PlaylistOption) =>
+            a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+          );
         const list: PlaylistOption[] = [LIKED_OPTION].concat(playlistOptions);
         if (!cancelled) {
           setOptions(list);

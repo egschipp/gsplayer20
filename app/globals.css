@@ -424,6 +424,29 @@ details[open] > .details-summary::after {
   background: rgba(0, 0, 0, 0.4);
 }
 
+.detail-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.detail-btn:hover {
+  border-color: rgba(29, 185, 84, 0.4);
+  background: rgba(29, 185, 84, 0.18);
+}
+
+.detail-btn:focus-visible {
+  outline: 2px solid var(--tide);
+  outline-offset: 2px;
+}
+
 .table-header {
   background: rgba(42, 42, 42, 0.8);
   text-transform: uppercase;
@@ -438,4 +461,95 @@ details[open] > .details-summary::after {
 
 .text-muted {
   color: var(--text-muted);
+}
+
+.track-detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 60;
+}
+
+.track-detail-card {
+  width: min(920px, 100%);
+  background: rgba(12, 12, 12, 0.98);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+}
+
+.track-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.track-detail-body {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 20px;
+  padding: 20px;
+}
+
+.track-detail-cover {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.track-detail-cover img,
+.track-detail-cover.placeholder {
+  width: 220px;
+  height: 220px;
+  border-radius: 16px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.track-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 16px;
+}
+
+.track-detail-field {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.85rem;
+}
+
+.track-detail-playlists {
+  display: grid;
+  gap: 6px;
+}
+
+.track-detail-playlists a {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.track-detail-playlists a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 720px) {
+  .track-detail-body {
+    grid-template-columns: 1fr;
+  }
+
+  .track-detail-cover img,
+  .track-detail-cover.placeholder {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+  }
 }

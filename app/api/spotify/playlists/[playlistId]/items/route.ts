@@ -67,13 +67,19 @@ export async function GET(
       playlistId: playlistItems.playlistId,
       trackId: tracks.trackId,
       name: tracks.name,
+      albumId: tracks.albumId,
       albumName: tracks.albumName,
       albumImageUrl: tracks.albumImageUrl,
       durationMs: tracks.durationMs,
+      explicit: tracks.explicit,
+      popularity: tracks.popularity,
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
       artists: sql<string | null>`group_concat(${artists.name}, ', ')`,
       addedAt: playlistItems.addedAt,
+      addedBySpotifyUserId: playlistItems.addedBySpotifyUserId,
       position: playlistItems.position,
+      snapshotIdAtSync: playlistItems.snapshotIdAtSync,
+      syncRunId: playlistItems.syncRunId,
     })
     .from(playlistItems)
     .innerJoin(

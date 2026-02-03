@@ -34,19 +34,56 @@ type TrackItem = {
   name: string;
   artists: { id: string; name: string }[];
   album: { id: string | null; name: string | null; images: { url: string }[] };
+  durationMs?: number | null;
+  explicit?: number | null;
+  popularity?: number | null;
+  albumImageUrl?: string | null;
   playlists: PlaylistLink[];
 };
 
 type TrackRow = {
   itemId?: string | null;
+  playlistId?: string | null;
   trackId?: string | null;
   name: string | null;
+  albumId?: string | null;
   albumName?: string | null;
   albumImageUrl?: string | null;
   coverUrl?: string | null;
   artists?: string | null;
   durationMs?: number | null;
+  explicit?: number | null;
+  popularity?: number | null;
+  addedAt?: number | null;
+  addedBySpotifyUserId?: string | null;
+  position?: number | null;
+  snapshotIdAtSync?: string | null;
+  syncRunId?: string | null;
   playlists?: PlaylistLink[];
+};
+
+type TrackDetail = {
+  id?: string | null;
+  itemId?: string | null;
+  trackId?: string | null;
+  name?: string | null;
+  artistsText?: string | null;
+  artists?: { id: string; name: string }[];
+  albumId?: string | null;
+  albumName?: string | null;
+  albumImageUrl?: string | null;
+  coverUrl?: string | null;
+  durationMs?: number | null;
+  explicit?: number | null;
+  popularity?: number | null;
+  addedAt?: number | null;
+  addedBySpotifyUserId?: string | null;
+  position?: number | null;
+  playlistId?: string | null;
+  snapshotIdAtSync?: string | null;
+  syncRunId?: string | null;
+  playlists?: PlaylistLink[];
+  spotifyUrl?: string | null;
 };
 
 const LIKED_OPTION: PlaylistOption = {
@@ -62,6 +99,18 @@ function formatDuration(ms?: number | null) {
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
   return `${min}:${sec.toString().padStart(2, "0")}`;
+}
+
+function formatTimestamp(ms?: number | null) {
+  if (!ms || ms <= 0) return "—";
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString();
+}
+
+function formatExplicit(value?: number | null) {
+  if (value === null || value === undefined) return "—";
+  return value ? "Yes" : "No";
 }
 
 export default function PlaylistBrowser() {
@@ -85,6 +134,9 @@ export default function PlaylistBrowser() {
   const [loadingArtists, setLoadingArtists] = useState(false);
   const [loadingTracksList, setLoadingTracksList] = useState(false);
   const [loadingTracks, setLoadingTracks] = useState(false);
+  const [selectedTrackDetail, setSelectedTrackDetail] = useState<TrackDetail | null>(
+    null
+  );
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const suppressCloseRef = useRef(false);
@@ -242,6 +294,10 @@ export default function PlaylistBrowser() {
                 name: String(track.name ?? ""),
                 artists: Array.isArray(track.artists) ? track.artists : [],
                 album: track.album ?? { id: null, name: null, images: [] },
+                durationMs: track.durationMs ?? null,
+                explicit: track.explicit ?? null,
+                popularity: track.popularity ?? null,
+                albumImageUrl: track.albumImageUrl ?? null,
                 playlists: Array.isArray(track.playlists) ? track.playlists : [],
               })
             )
@@ -356,6 +412,7 @@ export default function PlaylistBrowser() {
             target="_blank"
             rel="noreferrer"
             className="playlist-chip"
+            onClick={(event) => event.stopPropagation()}
           >
             {pl.name || "Untitled playlist"}
           </a>
@@ -366,6 +423,65 @@ export default function PlaylistBrowser() {
       </>
     );
   }
+
+  function openDetailFromRow(track: TrackRow) {
+    const spotifyUrl = track.trackId
+      ? `https://open.spotify.com/track/${track.trackId}`
+      : null;
+    setSelectedTrackDetail({
+      id: track.trackId ?? null,
+      itemId: track.itemId ?? null,
+      playlistId: track.playlistId ?? null,
+      trackId: track.trackId ?? null,
+      name: track.name ?? null,
+      artistsText: track.artists ?? null,
+      albumId: track.albumId ?? null,
+      albumName: track.albumName ?? null,
+      albumImageUrl: track.albumImageUrl ?? null,
+      coverUrl: track.coverUrl ?? null,
+      durationMs: track.durationMs ?? null,
+      explicit: track.explicit ?? null,
+      popularity: track.popularity ?? null,
+      addedAt: track.addedAt ?? null,
+      addedBySpotifyUserId: track.addedBySpotifyUserId ?? null,
+      position: track.position ?? null,
+      snapshotIdAtSync: track.snapshotIdAtSync ?? null,
+      syncRunId: track.syncRunId ?? null,
+      playlists: track.playlists ?? [],
+      spotifyUrl,
+    });
+  }
+
+  function openDetailFromItem(track: TrackItem) {
+    const coverUrl = track.album?.images?.[0]?.url ?? null;
+    const spotifyUrl = track.id ? `https://open.spotify.com/track/${track.id}` : null;
+    setSelectedTrackDetail({
+      id: track.id ?? null,
+      trackId: track.trackId ?? track.id ?? null,
+      name: track.name ?? null,
+      artists: track.artists ?? [],
+      albumId: track.album?.id ?? null,
+      albumName: track.album?.name ?? null,
+      albumImageUrl: track.albumImageUrl ?? null,
+      coverUrl,
+      durationMs: track.durationMs ?? null,
+      explicit: track.explicit ?? null,
+      popularity: track.popularity ?? null,
+      playlists: track.playlists ?? [],
+      spotifyUrl,
+    });
+  }
+
+  useEffect(() => {
+    if (!selectedTrackDetail) return;
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSelectedTrackDetail(null);
+      }
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [selectedTrackDetail]);
 
   useEffect(() => {
     let cancelled = false;
@@ -653,7 +769,7 @@ export default function PlaylistBrowser() {
               <div />
               <div>Track</div>
               {mode === "artists" ? <div>Playlists</div> : null}
-              <div>{mode === "artists" ? "Duration" : "Duration"}</div>
+              <div>Duration / Actions</div>
             </div>
           ) : null}
           {tracks.map((track, idx) => (
@@ -699,6 +815,23 @@ export default function PlaylistBrowser() {
                 <div className="text-subtle">
                   {formatDuration(track.durationMs)}
                 </div>
+                <button
+                  type="button"
+                  className="detail-btn"
+                  aria-label="Show track details"
+                  title="Details"
+                  onClick={() => openDetailFromRow(track)}
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    width="18"
+                    height="18"
+                    fill="currentColor"
+                  >
+                    <path d="M12 7.75a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5Zm-1 9.5h2v-7h-2v7Zm1-15C6.48 2.25 2.25 6.48 2.25 12S6.48 21.75 12 21.75 21.75 17.52 21.75 12 17.52 2.25 12 2.25Zm0 17.5c-4.28 0-7.75-3.47-7.75-7.75S7.72 4.25 12 4.25s7.75 3.47 7.75 7.75-3.47 7.75-7.75 7.75Z" />
+                  </svg>
+                </button>
                 {track.trackId ? (
                   <a
                     href={`https://open.spotify.com/track/${track.trackId}`}
@@ -738,7 +871,7 @@ export default function PlaylistBrowser() {
               <div />
               <div>Track</div>
               <div>Playlists</div>
-              <div>Open</div>
+              <div>Actions</div>
             </div>
           ) : null}
           {filteredTrackItems.map((track) => {
@@ -781,6 +914,23 @@ export default function PlaylistBrowser() {
                 </div>
                 <div>{renderPlaylistChips(track.playlists)}</div>
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    className="detail-btn"
+                    aria-label="Show track details"
+                    title="Details"
+                    onClick={() => openDetailFromItem(track)}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      width="18"
+                      height="18"
+                      fill="currentColor"
+                    >
+                      <path d="M12 7.75a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5Zm-1 9.5h2v-7h-2v7Zm1-15C6.48 2.25 2.25 6.48 2.25 12S6.48 21.75 12 21.75 21.75 17.52 21.75 12 17.52 2.25 12 2.25Zm0 17.5c-4.28 0-7.75-3.47-7.75-7.75S7.72 4.25 12 4.25s7.75 3.47 7.75 7.75-3.47 7.75-7.75 7.75Z" />
+                    </svg>
+                  </button>
                   <a
                     href={`https://open.spotify.com/track/${track.id}`}
                     target="_blank"
@@ -829,6 +979,186 @@ export default function PlaylistBrowser() {
           </button>
         ) : null}
       </div>
+
+      {selectedTrackDetail ? (
+        <div
+          className="track-detail-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Track details"
+          onClick={() => setSelectedTrackDetail(null)}
+        >
+          <div
+            className="track-detail-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="track-detail-header">
+              <div>
+                <div className="text-subtle">Track details</div>
+                <div style={{ fontWeight: 700, fontSize: 20 }}>
+                  {selectedTrackDetail.name || "Unknown track"}
+                </div>
+                {selectedTrackDetail.artistsText ? (
+                  <div className="text-body">{selectedTrackDetail.artistsText}</div>
+                ) : selectedTrackDetail.artists?.length ? (
+                  <div className="text-body">
+                    {selectedTrackDetail.artists
+                      .map((artist) => artist.name)
+                      .filter(Boolean)
+                      .join(", ")}
+                  </div>
+                ) : null}
+                {selectedTrackDetail.albumName ? (
+                  <div className="text-subtle">{selectedTrackDetail.albumName}</div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setSelectedTrackDetail(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="track-detail-body">
+              <div className="track-detail-cover">
+                {selectedTrackDetail.coverUrl || selectedTrackDetail.albumImageUrl ? (
+                  <img
+                    src={
+                      selectedTrackDetail.coverUrl ||
+                      selectedTrackDetail.albumImageUrl ||
+                      undefined
+                    }
+                    alt={selectedTrackDetail.albumName || "Album cover"}
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="track-detail-cover placeholder" />
+                )}
+                {selectedTrackDetail.spotifyUrl ? (
+                  <a
+                    href={selectedTrackDetail.spotifyUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn btn-primary"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    Open in Spotify
+                  </a>
+                ) : null}
+              </div>
+              <div className="track-detail-grid">
+                <div className="track-detail-field">
+                  <div className="text-subtle">Track ID</div>
+                  <div>{selectedTrackDetail.trackId || "—"}</div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Item ID</div>
+                  <div>{selectedTrackDetail.itemId || "—"}</div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Playlist ID</div>
+                  <div>{selectedTrackDetail.playlistId || "—"}</div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Album ID</div>
+                  <div>{selectedTrackDetail.albumId || "—"}</div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Duration</div>
+                  <div>{formatDuration(selectedTrackDetail.durationMs)}</div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Explicit</div>
+                  <div>{formatExplicit(selectedTrackDetail.explicit)}</div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Popularity</div>
+                  <div>
+                    {selectedTrackDetail.popularity === null ||
+                    selectedTrackDetail.popularity === undefined
+                      ? "—"
+                      : selectedTrackDetail.popularity}
+                  </div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Added at</div>
+                  <div>{formatTimestamp(selectedTrackDetail.addedAt)}</div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Added by</div>
+                  <div>{selectedTrackDetail.addedBySpotifyUserId || "—"}</div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Position</div>
+                  <div>
+                    {selectedTrackDetail.position === null ||
+                    selectedTrackDetail.position === undefined
+                      ? "—"
+                      : selectedTrackDetail.position}
+                  </div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Snapshot ID at sync</div>
+                  <div>{selectedTrackDetail.snapshotIdAtSync || "—"}</div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Sync run ID</div>
+                  <div>{selectedTrackDetail.syncRunId || "—"}</div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Album image URL</div>
+                  <div className="text-body">
+                    {selectedTrackDetail.albumImageUrl || "—"}
+                  </div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Cover URL</div>
+                  <div className="text-body">
+                    {selectedTrackDetail.coverUrl || "—"}
+                  </div>
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Artists</div>
+                  {selectedTrackDetail.artists?.length ? (
+                    <div>
+                      {selectedTrackDetail.artists.map((artist) => (
+                        <div key={artist.id}>
+                          {artist.name}{" "}
+                          <span className="text-subtle">({artist.id})</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div>{selectedTrackDetail.artistsText || "—"}</div>
+                  )}
+                </div>
+                <div className="track-detail-field">
+                  <div className="text-subtle">Playlists</div>
+                  {selectedTrackDetail.playlists?.length ? (
+                    <div className="track-detail-playlists">
+                      {selectedTrackDetail.playlists.map((pl) => (
+                        <a
+                          key={pl.id}
+                          href={pl.spotifyUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {pl.name || "Untitled playlist"}{" "}
+                          <span className="text-subtle">({pl.id})</span>
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    <div>—</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

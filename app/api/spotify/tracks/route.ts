@@ -43,6 +43,9 @@ export async function GET(req: Request) {
     .select({
       trackId: tracks.trackId,
       name: tracks.name,
+      durationMs: tracks.durationMs,
+      explicit: tracks.explicit,
+      popularity: tracks.popularity,
       albumId: tracks.albumId,
       albumName: tracks.albumName,
       albumImageUrl: tracks.albumImageUrl,
@@ -141,6 +144,9 @@ export async function GET(req: Request) {
           name: row.albumName ?? null,
           images: coverUrl ? [{ url: coverUrl }] : [],
         },
+        durationMs: row.durationMs ?? null,
+        explicit: row.explicit ?? null,
+        popularity: row.popularity ?? null,
         albumImageUrl: row.albumImageUrl ?? null,
         coverUrl,
       };

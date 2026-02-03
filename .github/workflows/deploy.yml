@@ -19,6 +19,7 @@ on:
       - "next.config.js"
       - "tsconfig.json"
       - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
   pull_request:
     paths:
       - "app/**"

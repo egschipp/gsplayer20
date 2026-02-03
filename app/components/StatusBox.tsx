@@ -128,6 +128,18 @@ export default function StatusBox() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!Object.keys(playlistMap).length) return;
+    setResourceNameMap((prev) => {
+      const next: ResourceNameMap = { ...prev };
+      for (const [id, meta] of Object.entries(playlistMap)) {
+        const key = `playlist_items:${id}`;
+        if (meta?.name) next[key] = meta.name;
+      }
+      return next;
+    });
+  }, [playlistMap]);
+
   async function forceSync() {
     setSyncing(true);
     try {
@@ -238,25 +250,19 @@ export default function StatusBox() {
               .slice()
               .sort((a: any, b: any) => {
                 const aName = String(
-                  String(a.resource).startsWith("playlist_items:")
-                    ? playlistMap[String(a.resource).split(":")[1]]?.name ??
-                      a.resource
-                    : a.resource
+                  resourceNameMap[String(a.resource)] ?? a.resource
                 );
                 const bName = String(
-                  String(b.resource).startsWith("playlist_items:")
-                    ? playlistMap[String(b.resource).split(":")[1]]?.name ??
-                      b.resource
-                    : b.resource
+                  resourceNameMap[String(b.resource)] ?? b.resource
                 );
                 return aName.localeCompare(bName, "nl", { sensitivity: "base" });
               })
               .map((row: any) => {
-              const isPlaylist = String(row.resource).startsWith("playlist_items:");
-              const playlistId = isPlaylist
-                ? String(row.resource).split(":")[1]
-                : null;
-              const displayName =
+                const isPlaylist = String(row.resource).startsWith("playlist_items:");
+                const playlistId = isPlaylist
+                  ? String(row.resource).split(":")[1]
+                  : null;
+                const displayName =
                 resourceNameMap[String(row.resource)] ?? row.resource;
               return (
               <div

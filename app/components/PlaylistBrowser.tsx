@@ -305,12 +305,12 @@ export default function PlaylistBrowser() {
       setLoadingTracks(true);
       setError(null);
       try {
-        const baseUrl =
-          mode === "playlists"
-            ? selectedPlaylist.type === "liked"
-              ? "/api/spotify/me/tracks"
-              : `/api/spotify/playlists/${selectedPlaylist.id}/items`
-            : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
+    const baseUrl =
+      mode === "playlists"
+        ? selectedPlaylist?.type === "liked"
+          ? "/api/spotify/me/tracks"
+          : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
+        : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
         const url = new URL(baseUrl, window.location.origin);
         url.searchParams.set("limit", "50");
         if (cursor) url.searchParams.set("cursor", cursor);

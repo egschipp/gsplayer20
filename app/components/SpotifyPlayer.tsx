@@ -45,6 +45,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [activeDeviceName, setActiveDeviceName] = useState<string | null>(null);
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
   const deviceCloseRef = useRef(false);
+  const lastDeviceSelectRef = useRef(0);
+  const pendingDeviceIdRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const playerRef = useRef<any>(null);
   const deviceIdRef = useRef<string | null>(null);
@@ -150,12 +152,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         const token = accessTokenRef.current;
         const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
         if (!currentDevice || !token) return;
-        if (
-          activeDeviceIdRef.current &&
-          activeDeviceIdRef.current !== sdkDeviceIdRef.current
-        ) {
-          await transferPlayback(activeDeviceIdRef.current, false);
-        }
+        await transferPlayback(currentDevice, false);
         await fetch(
           `https://api.spotify.com/v1/me/player/play?device_id=${currentDevice}`,
           {
@@ -238,8 +235,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       const data = await res.json();
       if (!data || cancelled) return;
       const device = data.device;
-      if (device?.id) {
+      const recentlySelected = Date.now() - lastDeviceSelectRef.current < 3000;
+      if (device?.id && (!recentlySelected || device.id === pendingDeviceIdRef.current)) {
         setActiveDevice(device.id, device.name ?? null);
+        if (device.id === pendingDeviceIdRef.current) {
+          pendingDeviceIdRef.current = null;
+        }
       }
       const item = data.item;
       if (item) {
@@ -304,6 +305,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const token = accessTokenRef.current;
     if (!token || !targetId) return;
     setActiveDevice(targetId);
+    pendingDeviceIdRef.current = targetId;
+    lastDeviceSelectRef.current = Date.now();
     await fetch("https://api.spotify.com/v1/me/player", {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}` },
@@ -512,15 +515,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         </div>
         <div className="player-device-select">
           <div className="combo" style={{ width: "100%" }}>
-            <input
+            <button
+              type="button"
               className="combo-input"
-              value={
-                devices.find((d) => d.id === (activeDeviceId || deviceId))?.name ||
-                "Select device"
-              }
-              readOnly
-              onFocus={() => setDeviceMenuOpen(true)}
-              onClick={() => setDeviceMenuOpen((prev) => !prev)}
+              onMouseDown={() => setDeviceMenuOpen((prev) => !prev)}
               onBlur={() => {
                 setTimeout(() => {
                   if (!deviceCloseRef.current) setDeviceMenuOpen(false);
@@ -530,7 +528,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               aria-label="Select Spotify Connect device"
               aria-haspopup="listbox"
               aria-expanded={deviceMenuOpen}
-            />
+            >
+              {devices.find((d) => d.id === (activeDeviceId || deviceId))?.name ||
+                "Select device"}
+            </button>
             {deviceMenuOpen ? (
               <div className="combo-list" role="listbox">
                 {devices.length === 0 ? (

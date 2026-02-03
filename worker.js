@@ -8,6 +8,9 @@ const TOKEN_ENCRYPTION_KEY = process.env.TOKEN_ENCRYPTION_KEY;
 const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000");
 const MAX_CONCURRENCY = Number(process.env.SPOTIFY_MAX_CONCURRENCY || "3");
 const MAX_RETRY_DELAY_MS = 60_000;
+const SCHEDULE_INTERVAL_MS = Number(
+  process.env.SYNC_SCHEDULE_MS || "600000"
+);
 
 if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
   console.error("Missing SPOTIFY_CLIENT_ID/SECRET");
@@ -278,6 +281,10 @@ const statements = {
     `UPDATE tracks
      SET album_id=?, album_name=?, album_image_url=?, updated_at=?
      WHERE track_id=?`
+  ),
+  getUsers: db.prepare(`SELECT id FROM users`),
+  countJobsByType: db.prepare(
+    `SELECT count(*) as c FROM jobs WHERE type=? AND status IN ('queued','running')`
   ),
   countCoverJobs: db.prepare(
     `SELECT count(*) as c FROM jobs WHERE type='SYNC_COVERS' AND status IN ('queued','running')`
@@ -959,6 +966,69 @@ function enqueueCoversIfMissing(userId) {
   });
 }
 
+let lastScheduledAt = 0;
+
+function schedulePeriodicSync() {
+  const now = Date.now();
+  if (now - lastScheduledAt < SCHEDULE_INTERVAL_MS) return;
+  lastScheduledAt = now;
+
+  const users = statements.getUsers.all();
+  for (const user of users) {
+    const tracksJobs = statements.countJobsByType.get("SYNC_TRACKS_INCREMENTAL");
+    if (!tracksJobs || tracksJobs.c === 0) {
+      statements.enqueueJob.run({
+        id: crypto.randomUUID(),
+        user_id: user.id,
+        type: "SYNC_TRACKS_INCREMENTAL",
+        payload: JSON.stringify({ limit: 50, maxPagesPerRun: 5 }),
+        run_after: Date.now(),
+        status: "queued",
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+      statements.upsertSyncState.run({
+        user_id: user.id,
+        resource: "tracks",
+        status: "queued",
+        cursor_offset: null,
+        cursor_limit: null,
+        last_successful_at: null,
+        retry_after_at: null,
+        failure_count: 0,
+        last_error_code: null,
+        updated_at: Date.now(),
+      });
+    }
+
+    const playlistJobs = statements.countJobsByType.get("SYNC_PLAYLISTS");
+    if (!playlistJobs || playlistJobs.c === 0) {
+      statements.enqueueJob.run({
+        id: crypto.randomUUID(),
+        user_id: user.id,
+        type: "SYNC_PLAYLISTS",
+        payload: JSON.stringify({ limit: 50, maxPagesPerRun: 10 }),
+        run_after: Date.now(),
+        status: "queued",
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+      statements.upsertSyncState.run({
+        user_id: user.id,
+        resource: "playlists",
+        status: "queued",
+        cursor_offset: null,
+        cursor_limit: null,
+        last_successful_at: null,
+        retry_after_at: null,
+        failure_count: 0,
+        last_error_code: null,
+        updated_at: Date.now(),
+      });
+    }
+  }
+}
+
 async function handleJob(job) {
   if (job.type === "SYNC_TRACKS_INITIAL") {
     return syncTracksInitial(job);
@@ -1014,6 +1084,7 @@ async function runLoop() {
       statements.upsertHeartbeat.run(now);
       lastHeartbeatAt = now;
     }
+    schedulePeriodicSync();
     const job = statements.takeJob.get(now, now);
 
     if (!job) {

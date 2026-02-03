@@ -18,6 +18,7 @@ type WorkerHealth = {
   now: number;
 } | null;
 type VersionInfo = { name: string; version: string } | null;
+type ResourceNameMap = Record<string, string>;
 
 function Badge({ label, tone }: { label: string; tone?: "ok" | "warn" }) {
   const cls = tone === "ok" ? "pill pill-success" : "pill pill-warn";
@@ -34,6 +35,7 @@ export default function StatusBox() {
   const [versionInfo, setVersionInfo] = useState<VersionInfo>(null);
   const [syncing, setSyncing] = useState(false);
   const [loadingPlaylists, setLoadingPlaylists] = useState(false);
+  const [resourceNameMap, setResourceNameMap] = useState<ResourceNameMap>({});
 
   async function refresh() {
     try {
@@ -44,7 +46,30 @@ export default function StatusBox() {
       ]);
 
       if (dbRes.ok) setDbStatus(await dbRes.json());
-      if (syncRes.ok) setSyncStatus(await syncRes.json());
+      if (syncRes.ok) {
+        const data = await syncRes.json();
+        setSyncStatus(data);
+        if (data?.resources?.length) {
+          setResourceNameMap((prev) => {
+            const next: ResourceNameMap = { ...prev };
+            for (const row of data.resources) {
+              const resource = String(row.resource);
+              if (!resource.startsWith("playlist_items:")) {
+                if (!next[resource]) next[resource] = resource;
+                continue;
+              }
+              const playlistId = resource.split(":")[1];
+              const name = playlistMap[playlistId]?.name;
+              if (name) {
+                next[resource] = name;
+              } else if (!next[resource]) {
+                next[resource] = resource;
+              }
+            }
+            return next;
+          });
+        }
+      }
       if (workerRes.ok) setWorkerHealth(await workerRes.json());
       if (!loadingPlaylists && Object.keys(playlistMap).length === 0) {
         setLoadingPlaylists(true);
@@ -178,13 +203,11 @@ export default function StatusBox() {
       </div>
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <button onClick={forceSync} disabled={syncing} className="btn btn-primary">
-          {syncing ? "Syncing..." : "Force sync"}
-        </button>
         <button
           onClick={async () => {
             setSyncing(true);
             try {
+              await forceSync();
               await fetch("/api/spotify/sync", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -201,9 +224,9 @@ export default function StatusBox() {
             }
           }}
           disabled={syncing}
-          className="btn btn-secondary"
+          className="btn btn-primary"
         >
-          Backfill covers
+          {syncing ? "Syncing..." : "Force sync + covers"}
         </button>
       </div>
 
@@ -211,15 +234,30 @@ export default function StatusBox() {
         <div style={{ marginTop: 16, fontSize: 13 }}>
           <strong>Resources</strong>
           <div style={{ marginTop: 8 }}>
-            {syncStatus.resources.map((row: any) => {
+            {syncStatus.resources
+              .slice()
+              .sort((a: any, b: any) => {
+                const aName = String(
+                  String(a.resource).startsWith("playlist_items:")
+                    ? playlistMap[String(a.resource).split(":")[1]]?.name ??
+                      a.resource
+                    : a.resource
+                );
+                const bName = String(
+                  String(b.resource).startsWith("playlist_items:")
+                    ? playlistMap[String(b.resource).split(":")[1]]?.name ??
+                      b.resource
+                    : b.resource
+                );
+                return aName.localeCompare(bName, "nl", { sensitivity: "base" });
+              })
+              .map((row: any) => {
               const isPlaylist = String(row.resource).startsWith("playlist_items:");
               const playlistId = isPlaylist
                 ? String(row.resource).split(":")[1]
                 : null;
               const displayName =
-                playlistId && playlistMap[playlistId]?.name
-                  ? playlistMap[playlistId].name
-                  : row.resource;
+                resourceNameMap[String(row.resource)] ?? row.resource;
               return (
               <div
                 key={row.resource}

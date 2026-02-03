@@ -526,7 +526,12 @@ export default function PlaylistBrowser() {
                       ) : (
                         <span className="combo-track-cover placeholder" />
                       )}
-                      <span className="combo-track-name">{opt.name}</span>
+                      <span>
+                        <span className="combo-track-name">{opt.name}</span>
+                        {opt.artistNames ? (
+                          <span className="text-subtle"> {opt.artistNames}</span>
+                        ) : null}
+                      </span>
                     </span>
                   </button>
                 ))

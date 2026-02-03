@@ -74,7 +74,7 @@ export async function GET(
       explicit: tracks.explicit,
       popularity: tracks.popularity,
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
-      artists: sql<string | null>`group_concat(${artists.name}, ', ')`,
+      artists: sql<string | null>`group_concat(DISTINCT ${artists.name}, ', ')`,
       addedAt: playlistItems.addedAt,
       addedBySpotifyUserId: playlistItems.addedBySpotifyUserId,
       position: playlistItems.position,

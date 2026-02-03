@@ -63,7 +63,7 @@ export async function GET(
       albumName: tracks.albumName,
       albumImageUrl: tracks.albumImageUrl,
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
-      artists: sql<string | null>`group_concat(DISTINCT ${artists.name}, ', ')`,
+      artists: sql<string | null>`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,
     })
     .from(tracks)
     .leftJoin(trackArtists, eq(trackArtists.trackId, tracks.trackId))

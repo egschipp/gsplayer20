@@ -54,7 +54,7 @@ export async function GET(req: Request) {
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
       popularity: tracks.popularity,
       addedAt: userSavedTracks.addedAt,
-      artists: sql<string | null>`group_concat(DISTINCT ${artists.name}, ', ')`,
+      artists: sql<string | null>`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,
     })
     .from(userSavedTracks)
     .innerJoin(tracks, eq(tracks.trackId, userSavedTracks.trackId))

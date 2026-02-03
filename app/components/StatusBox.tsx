@@ -243,9 +243,11 @@ export default function StatusBox() {
       </div>
 
       {syncStatus?.resources?.length ? (
-        <div style={{ marginTop: 16, fontSize: 13 }}>
-          <strong>Resources</strong>
-          <div style={{ marginTop: 8 }}>
+        <details className="panel" style={{ marginTop: 16 }}>
+          <summary className="details-summary">
+            Resources ({syncStatus.resources.length})
+          </summary>
+          <div style={{ marginTop: 12, fontSize: 13 }}>
             {syncStatus.resources
               .slice()
               .sort((a: any, b: any) => {
@@ -263,54 +265,54 @@ export default function StatusBox() {
                   ? String(row.resource).split(":")[1]
                   : null;
                 const displayName =
-                resourceNameMap[String(row.resource)] ?? row.resource;
-              return (
-              <div
-                key={row.resource}
-                className="panel"
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: 6,
-                }}
-              >
-                <span>{displayName}</span>
-                <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span>
-                    {row.status}
-                    {row.lastErrorCode ? ` • ${row.lastErrorCode}` : ""}
-                  </span>
-                  {playlistId ? (
-                    <button
-                      className="btn btn-secondary"
-                      onClick={async () => {
-                        await fetch("/api/spotify/sync", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            type: "playlist_items",
-                            payload: {
-                              playlistId,
-                              offset: 0,
-                              limit: 50,
-                              maxPagesPerRun: 20,
-                              runId: `manual-${Date.now()}`,
-                            },
-                          }),
-                        });
-                        refresh();
-                      }}
-                    >
-                      Refresh now
-                    </button>
-                  ) : null}
-                </span>
-              </div>
-              );
-            })}
+                  resourceNameMap[String(row.resource)] ?? row.resource;
+                return (
+                  <div
+                    key={row.resource}
+                    className="panel"
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: 6,
+                    }}
+                  >
+                    <span>{displayName}</span>
+                    <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <span>
+                        {row.status}
+                        {row.lastErrorCode ? ` • ${row.lastErrorCode}` : ""}
+                      </span>
+                      {playlistId ? (
+                        <button
+                          className="btn btn-secondary"
+                          onClick={async () => {
+                            await fetch("/api/spotify/sync", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                type: "playlist_items",
+                                payload: {
+                                  playlistId,
+                                  offset: 0,
+                                  limit: 50,
+                                  maxPagesPerRun: 20,
+                                  runId: `manual-${Date.now()}`,
+                                },
+                              }),
+                            });
+                            refresh();
+                          }}
+                        >
+                          Refresh now
+                        </button>
+                      ) : null}
+                    </span>
+                  </div>
+                );
+              })}
           </div>
-        </div>
+        </details>
       ) : null}
     </section>
   );

@@ -189,6 +189,26 @@ a:hover {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
+.combo-clear {
+  position: absolute;
+  top: 50%;
+  right: 0.6rem;
+  transform: translateY(-50%);
+  border: 0;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.combo-clear:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
 .combo-list {
   position: absolute;
   top: calc(100% + 8px);
@@ -297,6 +317,28 @@ a:focus-visible {
   background: rgba(29, 185, 84, 0.2);
   color: #ffffff;
   box-shadow: var(--shadow-glow);
+}
+
+.details-summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #ffffff;
+  list-style: none;
+}
+
+.details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.details-summary::after {
+  content: "▾";
+  float: right;
+  color: var(--text-subtle);
+}
+
+details[open] > .details-summary::after {
+  content: "▴";
 }
 
 .track-row {

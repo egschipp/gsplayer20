@@ -119,7 +119,9 @@ export default function PlaylistBrowser() {
           );
           cursor = data.nextCursor ?? null;
         } while (cursor);
-        const playlistOptions: PlaylistOption[] = all.sort(
+        const unique = new Map<string, PlaylistOption>();
+        for (const option of all) unique.set(option.id, option);
+        const playlistOptions: PlaylistOption[] = Array.from(unique.values()).sort(
           (a: PlaylistOption, b: PlaylistOption) =>
             a.name.localeCompare(b.name, "en", { sensitivity: "base" })
         );
@@ -178,7 +180,9 @@ export default function PlaylistBrowser() {
           );
           cursor = data.nextCursor ?? null;
         } while (cursor);
-        const list = all.sort((a, b) =>
+        const unique = new Map<string, ArtistOption>();
+        for (const option of all) unique.set(option.id, option);
+        const list = Array.from(unique.values()).sort((a, b) =>
           a.name.localeCompare(b.name, "en", { sensitivity: "base" })
         );
         if (!cancelled) {
@@ -231,7 +235,9 @@ export default function PlaylistBrowser() {
           );
           cursor = data.nextCursor ?? null;
         } while (cursor);
-        const list = all.sort((a, b) =>
+        const unique = new Map<string, TrackOption>();
+        for (const option of all) unique.set(option.id, option);
+        const list = Array.from(unique.values()).sort((a, b) =>
           a.name.localeCompare(b.name, "en", { sensitivity: "base" })
         );
         if (!cancelled) {
@@ -248,12 +254,13 @@ export default function PlaylistBrowser() {
     };
   }, []);
 
-  const selectedPlaylist = useMemo(
-    () =>
+  const selectedPlaylist = useMemo(() => {
+    if (!selectedPlaylistId) return null;
+    return (
       playlistOptions.find((opt) => opt.id === selectedPlaylistId) ||
-      LIKED_OPTION,
-    [playlistOptions, selectedPlaylistId]
-  );
+      LIKED_OPTION
+    );
+  }, [playlistOptions, selectedPlaylistId]);
 
   const selectedArtist = useMemo(
     () => artistOptions.find((opt) => opt.id === selectedArtistId) || null,
@@ -265,7 +272,12 @@ export default function PlaylistBrowser() {
     [trackOptions, selectedTrackId]
   );
 
-  const selectedOption = mode === "playlists" ? selectedPlaylist : mode === "artists" ? selectedArtist : selectedTrack;
+  const selectedOption =
+    mode === "playlists"
+      ? selectedPlaylist
+      : mode === "artists"
+      ? selectedArtist
+      : selectedTrack;
 
   const filteredOptions = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -329,6 +341,8 @@ export default function PlaylistBrowser() {
 
     if (mode === "artists" && !selectedArtist?.id) return;
 
+    if (mode === "playlists" && !selectedPlaylist?.id) return;
+
     setTracks([]);
     setNextCursor(null);
     loadTracks(null, false);
@@ -336,7 +350,7 @@ export default function PlaylistBrowser() {
     return () => {
       cancelled = true;
     };
-  }, [mode, selectedPlaylist.id, selectedPlaylist.type, selectedArtist?.id]);
+  }, [mode, selectedPlaylist?.id, selectedPlaylist?.type, selectedArtist?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -380,12 +394,14 @@ export default function PlaylistBrowser() {
 
   async function loadMore() {
     if (!nextCursor) return;
+    if (mode === "playlists" && !selectedPlaylist?.id) return;
+    if (mode === "artists" && !selectedArtist?.id) return;
     const cursor = nextCursor;
     const baseUrl =
       mode === "playlists"
-        ? selectedPlaylist.type === "liked"
+        ? selectedPlaylist?.type === "liked"
           ? "/api/spotify/me/tracks"
-          : `/api/spotify/playlists/${selectedPlaylist.id}/items`
+          : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
         : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
     const url = new URL(baseUrl, window.location.origin);
     url.searchParams.set("limit", "50");
@@ -457,6 +473,22 @@ export default function PlaylistBrowser() {
                 : loadingTracksList
             }
           />
+          {selectedOption || query ? (
+            <button
+              type="button"
+              className="combo-clear"
+              aria-label="Clear selection"
+              onMouseDown={() => {
+                setQuery("");
+                setOpen(false);
+                if (mode === "playlists") setSelectedPlaylistId("");
+                if (mode === "artists") setSelectedArtistId("");
+                if (mode === "tracks") setSelectedTrackId("");
+              }}
+            >
+              ×
+            </button>
+          ) : null}
           {open ? (
             <div className="combo-list" role="listbox" id="playlist-options">
               {filteredOptions.length === 0 ? (

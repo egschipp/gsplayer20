@@ -491,27 +491,44 @@ details[open] > .details-summary::after {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.track-detail-header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.track-detail-header-cover {
+  width: 72px;
+  height: 72px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.track-detail-header-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.track-detail-header-cover.placeholder {
+  width: 72px;
+  height: 72px;
+}
+
+.track-detail-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .track-detail-body {
   display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: 20px;
+  grid-template-columns: 1fr;
+  gap: 16px;
   padding: 20px;
-}
-
-.track-detail-cover {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.track-detail-cover img,
-.track-detail-cover.placeholder {
-  width: min(280px, 100%);
-  height: auto;
-  aspect-ratio: 1 / 1;
-  border-radius: 16px;
-  object-fit: cover;
-  background: rgba(255, 255, 255, 0.08);
 }
 
 .track-detail-content {
@@ -560,14 +577,14 @@ details[open] > .details-summary::after {
 }
 
 @media (max-width: 720px) {
-  .track-detail-body {
-    grid-template-columns: 1fr;
+  .track-detail-header {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
-  .track-detail-cover img,
-  .track-detail-cover.placeholder {
+  .track-detail-header-actions {
     width: 100%;
-    height: auto;
-    aspect-ratio: 1 / 1;
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }

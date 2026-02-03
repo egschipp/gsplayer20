@@ -113,6 +113,32 @@ function formatExplicit(value?: number | null) {
   return value ? "Yes" : "No";
 }
 
+function dedupeArtistText(value?: string | null) {
+  if (!value) return "";
+  const names = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!names.length) return "";
+  const unique = Array.from(new Set(names));
+  return unique.join(", ");
+}
+
+function dedupeArtists(
+  artists?: { id: string; name: string }[] | null
+): { id: string; name: string }[] {
+  if (!artists?.length) return [];
+  const seen = new Set<string>();
+  const unique: { id: string; name: string }[] = [];
+  for (const artist of artists) {
+    const key = `${artist.id}:${artist.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(artist);
+  }
+  return unique;
+}
+
 export default function PlaylistBrowser() {
   const [mode, setMode] = useState<Mode>("playlists");
   const [playlistOptions, setPlaylistOptions] = useState<PlaylistOption[]>([
@@ -434,7 +460,7 @@ export default function PlaylistBrowser() {
       playlistId: track.playlistId ?? null,
       trackId: track.trackId ?? null,
       name: track.name ?? null,
-      artistsText: track.artists ?? null,
+      artistsText: dedupeArtistText(track.artists ?? null) || null,
       albumId: track.albumId ?? null,
       albumName: track.albumName ?? null,
       albumImageUrl: track.albumImageUrl ?? null,
@@ -459,7 +485,7 @@ export default function PlaylistBrowser() {
       id: track.id ?? null,
       trackId: track.trackId ?? track.id ?? null,
       name: track.name ?? null,
-      artists: track.artists ?? [],
+      artists: dedupeArtists(track.artists ?? []),
       albumId: track.album?.id ?? null,
       albumName: track.album?.name ?? null,
       albumImageUrl: track.albumImageUrl ?? null,
@@ -802,7 +828,7 @@ export default function PlaylistBrowser() {
               <div>
                 <div style={{ fontWeight: 600 }}>{track.name || "Unknown"}</div>
                 <div className="text-body">
-                  {track.artists || "Unknown artist"}
+                  {dedupeArtistText(track.artists || "") || "Unknown artist"}
                 </div>
                 {track.albumName ? (
                   <div className="text-subtle">{track.albumName}</div>
@@ -880,6 +906,7 @@ export default function PlaylistBrowser() {
               .map((artist) => artist?.name)
               .filter(Boolean)
               .join(", ");
+            const uniqueArtistNames = dedupeArtistText(artistNames);
             return (
               <div
                 key={track.id}
@@ -906,7 +933,7 @@ export default function PlaylistBrowser() {
                 <div>
                   <div style={{ fontWeight: 600 }}>{track.name}</div>
                   <div className="text-body">
-                    {artistNames || "Unknown artist"}
+                    {uniqueArtistNames || "Unknown artist"}
                   </div>
                   {track.album?.name ? (
                     <div className="text-subtle">{track.album.name}</div>
@@ -993,48 +1020,43 @@ export default function PlaylistBrowser() {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="track-detail-header">
-              <div>
-                <div className="text-subtle">Track details</div>
-                <div style={{ fontWeight: 700, fontSize: 20 }}>
-                  {selectedTrackDetail.name || "Unknown track"}
+              <div className="track-detail-header-left">
+                <div className="track-detail-header-cover">
+                  {selectedTrackDetail.coverUrl || selectedTrackDetail.albumImageUrl ? (
+                    <img
+                      src={
+                        selectedTrackDetail.coverUrl ||
+                        selectedTrackDetail.albumImageUrl ||
+                        undefined
+                      }
+                      alt={selectedTrackDetail.albumName || "Album cover"}
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="track-detail-header-cover placeholder" />
+                  )}
                 </div>
-                {selectedTrackDetail.artistsText ? (
-                  <div className="text-body">{selectedTrackDetail.artistsText}</div>
-                ) : selectedTrackDetail.artists?.length ? (
-                  <div className="text-body">
-                    {selectedTrackDetail.artists
-                      .map((artist) => artist.name)
-                      .filter(Boolean)
-                      .join(", ")}
+                <div>
+                  <div className="text-subtle">Track details</div>
+                  <div style={{ fontWeight: 700, fontSize: 20 }}>
+                    {selectedTrackDetail.name || "Unknown track"}
                   </div>
-                ) : null}
-                {selectedTrackDetail.albumName ? (
-                  <div className="text-subtle">{selectedTrackDetail.albumName}</div>
-                ) : null}
+                  {selectedTrackDetail.artistsText ? (
+                    <div className="text-body">{selectedTrackDetail.artistsText}</div>
+                  ) : selectedTrackDetail.artists?.length ? (
+                    <div className="text-body">
+                      {selectedTrackDetail.artists
+                        .map((artist) => artist.name)
+                        .filter(Boolean)
+                        .join(", ")}
+                    </div>
+                  ) : null}
+                  {selectedTrackDetail.albumName ? (
+                    <div className="text-subtle">{selectedTrackDetail.albumName}</div>
+                  ) : null}
+                </div>
               </div>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setSelectedTrackDetail(null)}
-              >
-                Close
-              </button>
-            </div>
-            <div className="track-detail-body">
-              <div className="track-detail-cover">
-                {selectedTrackDetail.coverUrl || selectedTrackDetail.albumImageUrl ? (
-                  <img
-                    src={
-                      selectedTrackDetail.coverUrl ||
-                      selectedTrackDetail.albumImageUrl ||
-                      undefined
-                    }
-                    alt={selectedTrackDetail.albumName || "Album cover"}
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="track-detail-cover placeholder" />
-                )}
+              <div className="track-detail-header-actions">
                 {selectedTrackDetail.spotifyUrl ? (
                   <a
                     href={selectedTrackDetail.spotifyUrl}
@@ -1046,7 +1068,16 @@ export default function PlaylistBrowser() {
                     Open in Spotify
                   </a>
                 ) : null}
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setSelectedTrackDetail(null)}
+                >
+                  Close
+                </button>
               </div>
+            </div>
+            <div className="track-detail-body">
               <div className="track-detail-content">
                 <div className="track-detail-section">
                   <div className="track-detail-title">Basics</div>

@@ -854,7 +854,20 @@ export default function PlaylistBrowser() {
                 }
               }}
             >
-              <div style={{ position: "relative", width: 56, height: 56 }}>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: 10 }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className="play-btn"
+                  aria-label="Play track"
+                  title="Play"
+                  disabled={!track.trackId}
+                  onClick={() => handlePlayTrack(track.trackId)}
+                >
+                  ▶
+                </button>
                 {track.coverUrl || track.albumImageUrl ? (
                   <img
                     src={track.coverUrl || track.albumImageUrl || undefined}
@@ -872,19 +885,6 @@ export default function PlaylistBrowser() {
                     }}
                   />
                 )}
-                <button
-                  type="button"
-                  className="play-btn play-btn-overlay"
-                  aria-label="Play track"
-                  title="Play"
-                  disabled={!track.trackId}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handlePlayTrack(track.trackId);
-                  }}
-                >
-                  ▶
-                </button>
               </div>
               <div>
                 <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
@@ -974,7 +974,19 @@ export default function PlaylistBrowser() {
                   }
                 }}
               >
-                <div style={{ position: "relative", width: 56, height: 56 }}>
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: 10 }}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="play-btn"
+                    aria-label="Play track"
+                    title="Play"
+                    onClick={() => handlePlayTrack(track.id)}
+                  >
+                    ▶
+                  </button>
                   {coverUrl ? (
                     <img
                       src={coverUrl || undefined}
@@ -988,22 +1000,10 @@ export default function PlaylistBrowser() {
                         width: 56,
                         height: 56,
                         borderRadius: 12,
-                        background: "#2a2a2a",
-                      }}
-                    />
-                  )}
-                  <button
-                    type="button"
-                    className="play-btn play-btn-overlay"
-                    aria-label="Play track"
-                    title="Play"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handlePlayTrack(track.id);
+                      background: "#2a2a2a",
                     }}
-                  >
-                    ▶
-                  </button>
+                  />
+                )}
                 </div>
                 <div>
                   <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>

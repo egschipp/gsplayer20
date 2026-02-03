@@ -487,7 +487,6 @@ export default function PlaylistBrowser() {
                 if (mode === "artists") setSelectedArtistId("");
                 if (mode === "tracks") {
                   setSelectedTrackName("");
-                  setTrackArtists([]);
                 }
               }}
             >

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/egschipp/gsplayer20/compare/v1.1.0...v1.1.1) (2026-02-03)
+
+
+### Bug Fixes
+
+* runner label arm64 -&gt; ARM64 ([1965750](https://github.com/egschipp/gsplayer20/commit/19657502dc07c4dc51024d430be7cb5bb74e2653))
+* typings for playlist options ([c68f88d](https://github.com/egschipp/gsplayer20/commit/c68f88d6d73512258eb00a3fa18e75e4d5d57118))
+
 ## [1.1.0](https://github.com/egschipp/gsplayer20/compare/v1.0.0...v1.1.0) (2026-02-03)
 
 

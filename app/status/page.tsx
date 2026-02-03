@@ -6,6 +6,8 @@ export default function StatusPage() {
     <main className="page">
       <h1 className="heading-1">System Status</h1>
       <p className="text-body">Connectivity, sync, and database health overview.</p>
+      <SpotifyStatus showBadges={false} />
+      <SpotifyStatus showBadges={false} />
       <StatusBox />
     </main>
   );

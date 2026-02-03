@@ -43,17 +43,22 @@ export default function PlaylistBrowser() {
   const [loadingPlaylists, setLoadingPlaylists] = useState(true);
   const [loadingTracks, setLoadingTracks] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function loadPlaylists() {
       setLoadingPlaylists(true);
       setError(null);
+      setAuthRequired(false);
       try {
         const res = await fetch("/api/spotify/me/playlists?limit=50");
         if (!res.ok) {
-          if (res.status === 401) {
+          if (res.status === 401 || res.status === 403) {
+            setAuthRequired(true);
             setError("Please connect Spotify to load playlists.");
+          } else if (res.status === 429) {
+            setError("Rate limited. Please try again in a moment.");
           } else {
             setError("Failed to load playlists.");
           }
@@ -184,7 +189,14 @@ export default function PlaylistBrowser() {
         <p className="text-body">Loading playlists...</p>
       ) : null}
       {error ? (
-        <p style={{ color: "#fca5a5" }}>{error}</p>
+        <div style={{ color: "#fca5a5" }}>
+          <p>{error}</p>
+          {authRequired ? (
+            <a href="/api/auth/login" className="btn btn-primary">
+              Connect Spotify
+            </a>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="track-list" style={{ marginTop: 16 }}>

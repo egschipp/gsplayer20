@@ -18,7 +18,7 @@ function Badge({ label, tone }: { label: string; tone?: "ok" | "warn" }) {
   return <span className={cls}>{label}</span>;
 }
 
-export default function SpotifyStatus() {
+export default function SpotifyStatus({ showBadges = true }: { showBadges?: boolean }) {
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null);
   const [userStatus, setUserStatus] = useState<UserStatus | null>(null);
 
@@ -37,16 +37,18 @@ export default function SpotifyStatus() {
   return (
     <section style={{ marginTop: 24 }}>
       <h2 className="heading-2">Spotify Connection</h2>
-      <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Badge
-          label={`App: ${appStatus?.status ?? "CHECKING"}`}
-          tone={appStatus?.status === "OK" ? "ok" : "warn"}
-        />
-        <Badge
-          label={`User: ${userStatus?.status ?? "CHECKING"}`}
-          tone={userStatus?.status === "OK" ? "ok" : "warn"}
-        />
-      </div>
+      {showBadges ? (
+        <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Badge
+            label={`App: ${appStatus?.status ?? "CHECKING"}`}
+            tone={appStatus?.status === "OK" ? "ok" : "warn"}
+          />
+          <Badge
+            label={`User: ${userStatus?.status ?? "CHECKING"}`}
+            tone={userStatus?.status === "OK" ? "ok" : "warn"}
+          />
+        </div>
+      ) : null}
       <div style={{ marginTop: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>
         <a href="/api/auth/login" className="btn btn-primary">
           Connect Spotify

@@ -39,7 +39,7 @@ on:
 
 jobs:
   ci:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.actor != 'release-please[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

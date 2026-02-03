@@ -522,6 +522,38 @@ export default function PlaylistBrowser() {
             <div className="combo-list" role="listbox" id="playlist-options">
               {filteredOptions.length === 0 ? (
                 <div className="combo-empty">No matches.</div>
+              ) : mode === "tracks" ? (
+                (filteredOptions as TrackOption[]).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    role="option"
+                    aria-selected={opt.name === selectedTrackName}
+                    className={`combo-item${
+                      opt.name === selectedTrackName ? " active" : ""
+                    }`}
+                    onMouseDown={() => {
+                      suppressCloseRef.current = true;
+                      setSelectedTrackName(opt.name);
+                      setQuery(opt.name);
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="combo-track">
+                      {opt.coverUrl ? (
+                        <img
+                          src={opt.coverUrl || undefined}
+                          alt=""
+                          loading="lazy"
+                          className="combo-track-cover"
+                        />
+                      ) : (
+                        <span className="combo-track-cover placeholder" />
+                      )}
+                      <span className="combo-track-name">{opt.name}</span>
+                    </span>
+                  </button>
+                ))
               ) : (
                 filteredOptions.map((opt) => (
                   <button
@@ -531,14 +563,11 @@ export default function PlaylistBrowser() {
                     aria-selected={
                       mode === "playlists"
                         ? opt.id === selectedPlaylistId
-                        : mode === "artists"
-                        ? opt.id === selectedArtistId
-                        : opt.name === selectedTrackName
+                        : opt.id === selectedArtistId
                     }
                     className={`combo-item${
                       (mode === "playlists" && opt.id === selectedPlaylistId) ||
-                      (mode === "artists" && opt.id === selectedArtistId) ||
-                      (mode === "tracks" && opt.name === selectedTrackName)
+                      (mode === "artists" && opt.id === selectedArtistId)
                         ? " active"
                         : ""
                     }`}
@@ -546,28 +575,11 @@ export default function PlaylistBrowser() {
                       suppressCloseRef.current = true;
                       if (mode === "playlists") setSelectedPlaylistId(opt.id);
                       if (mode === "artists") setSelectedArtistId(opt.id);
-                      if (mode === "tracks") setSelectedTrackName(opt.name);
                       setQuery(opt.name);
                       setOpen(false);
                     }}
                   >
-                    {mode === "tracks" ? (
-                      <span className="combo-track">
-                        {opt.coverUrl ? (
-                          <img
-                            src={opt.coverUrl || undefined}
-                            alt=""
-                            loading="lazy"
-                            className="combo-track-cover"
-                          />
-                        ) : (
-                          <span className="combo-track-cover placeholder" />
-                        )}
-                        <span className="combo-track-name">{opt.name}</span>
-                      </span>
-                    ) : (
-                      opt.name
-                    )}
+                    {opt.name}
                   </button>
                 ))
               )}

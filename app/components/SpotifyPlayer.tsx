@@ -39,10 +39,19 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [durationMs, setDurationMs] = useState(0);
   const [volume, setVolume] = useState(0.8);
   const [devices, setDevices] = useState<
-    { id: string; name: string; isActive: boolean; type: string }[]
+    {
+      id: string;
+      name: string;
+      isActive: boolean;
+      type: string;
+      isRestricted?: boolean;
+      supportsVolume?: boolean;
+    }[]
   >([]);
   const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
   const [activeDeviceName, setActiveDeviceName] = useState<string | null>(null);
+  const [activeDeviceRestricted, setActiveDeviceRestricted] = useState(false);
+  const [activeDeviceSupportsVolume, setActiveDeviceSupportsVolume] = useState(true);
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
   const deviceCloseRef = useRef(false);
   const lastDeviceSelectRef = useRef(0);
@@ -143,6 +152,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     player.addListener("account_error", ({ message }: { message: string }) => {
       setError(message);
     });
+    player.addListener("autoplay_failed", () => {
+      setError("Autoplay blocked by browser. Click Play to start.");
+    });
 
     player.connect();
     playerRef.current = player;
@@ -152,6 +164,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         const token = accessTokenRef.current;
         const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
         if (!currentDevice || !token) return;
+        if (currentDevice === sdkDeviceIdRef.current) {
+          await playerRef.current?.activateElement?.();
+        }
         await transferPlayback(currentDevice, false);
         await fetch(
           `https://api.spotify.com/v1/me/player/play?device_id=${currentDevice}`,
@@ -238,6 +253,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       const recentlySelected = Date.now() - lastDeviceSelectRef.current < 3000;
       if (device?.id && (!recentlySelected || device.id === pendingDeviceIdRef.current)) {
         setActiveDevice(device.id, device.name ?? null);
+        setActiveDeviceRestricted(Boolean(device.is_restricted));
+        setActiveDeviceSupportsVolume(device.supports_volume !== false);
         if (device.id === pendingDeviceIdRef.current) {
           pendingDeviceIdRef.current = null;
         }
@@ -293,11 +310,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         name: d.name,
         isActive: Boolean(d.is_active),
         type: d.type,
+        isRestricted: Boolean(d.is_restricted),
+        supportsVolume: d.supports_volume !== false,
       }))
     );
     const active = list.find((d: any) => d.is_active);
     if (active?.id) {
       setActiveDevice(active.id, active.name ?? null);
+      setActiveDeviceRestricted(Boolean(active.is_restricted));
+      setActiveDeviceSupportsVolume(active.supports_volume !== false);
     }
   }
 
@@ -325,6 +346,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       await playerRef.current?.togglePlay?.();
       return;
     }
+    if (currentDevice === sdkDeviceIdRef.current) {
+      await playerRef.current?.activateElement?.();
+      await playerRef.current?.togglePlay?.();
+      return;
+    }
     const endpoint = playerState?.paused ? "play" : "pause";
     await fetch(
       `https://api.spotify.com/v1/me/player/${endpoint}?device_id=${currentDevice}`,
@@ -339,6 +365,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
+    if (currentDevice === sdkDeviceIdRef.current) {
+      await playerRef.current?.nextTrack?.();
+      return;
+    }
     await fetch(
       `https://api.spotify.com/v1/me/player/next?device_id=${currentDevice}`,
       {
@@ -352,6 +382,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
+    if (currentDevice === sdkDeviceIdRef.current) {
+      await playerRef.current?.previousTrack?.();
+      return;
+    }
     await fetch(
       `https://api.spotify.com/v1/me/player/previous?device_id=${currentDevice}`,
       {
@@ -373,6 +407,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
+    if (currentDevice === sdkDeviceIdRef.current) {
+      await playerRef.current?.seek?.(Math.floor(nextMs));
+      setPositionMs(nextMs);
+      return;
+    }
     await fetch(
       `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=${Math.floor(
         nextMs
@@ -449,6 +488,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           <div className="text-subtle">{playerState.album}</div>
         ) : null}
         {error ? <div className="text-subtle">Player error: {error}</div> : null}
+        {activeDeviceRestricted ? (
+          <div className="text-subtle">Device is restricted for playback control.</div>
+        ) : null}
         <div className="player-progress">
           <span className="text-subtle">{formatTime(positionMs)}</span>
           <input
@@ -571,6 +613,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             onChange={(event) => handleVolume(Number(event.target.value))}
             className="player-slider"
             aria-label="Volume"
+            disabled={!activeDeviceSupportsVolume}
           />
         </div>
       </div>

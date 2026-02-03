@@ -32,7 +32,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     album: string;
     coverUrl: string | null;
     paused: boolean;
+    positionMs: number;
+    durationMs: number;
   } | null>(null);
+  const [positionMs, setPositionMs] = useState(0);
+  const [durationMs, setDurationMs] = useState(0);
+  const [volume, setVolume] = useState(0.8);
+  const [devices, setDevices] = useState<
+    { id: string; name: string; isActive: boolean; type: string }[]
+  >([]);
   const [error, setError] = useState<string | null>(null);
   const playerRef = useRef<any>(null);
   const deviceIdRef = useRef<string | null>(null);
@@ -94,13 +102,19 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (!state) return;
       const current = state.track_window?.current_track;
       const trackId = current?.id ?? null;
+      const nextPosition = state.position ?? 0;
+      const nextDuration = current?.duration_ms ?? 0;
       setPlayerState({
         name: current?.name ?? "Unknown track",
         artists: (current?.artists ?? []).map((a: any) => a.name).join(", "),
         album: current?.album?.name ?? "",
         coverUrl: current?.album?.images?.[0]?.url ?? null,
         paused: Boolean(state.paused),
+        positionMs: nextPosition,
+        durationMs: nextDuration,
       });
+      setPositionMs(nextPosition);
+      setDurationMs(nextDuration);
       if (onTrackChange) onTrackChange(trackId);
     });
 
@@ -167,6 +181,90 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     onReady(api);
   }
 
+  useEffect(() => {
+    if (!playerState || playerState.paused) return;
+    let raf: number;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const delta = now - last;
+      last = now;
+      setPositionMs((prev) => {
+        const next = Math.min(prev + delta, durationMs || prev + delta);
+        return next;
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playerState?.paused, durationMs]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    refreshDevices();
+  }, [accessToken, deviceId]);
+
+  async function refreshDevices() {
+    const token = accessTokenRef.current;
+    if (!token) return;
+    const res = await fetch("https://api.spotify.com/v1/me/player/devices", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const list = Array.isArray(data.devices) ? data.devices : [];
+    setDevices(
+      list.map((d: any) => ({
+        id: d.id,
+        name: d.name,
+        isActive: Boolean(d.is_active),
+        type: d.type,
+      }))
+    );
+  }
+
+  async function handleDeviceChange(targetId: string) {
+    const token = accessTokenRef.current;
+    if (!token || !targetId) return;
+    await fetch("https://api.spotify.com/v1/me/player", {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ device_ids: [targetId], play: false }),
+    });
+    setDeviceId(targetId);
+    deviceIdRef.current = targetId;
+    refreshDevices();
+  }
+
+  function formatTime(ms?: number) {
+    if (!ms || ms < 0) return "0:00";
+    const totalSec = Math.floor(ms / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    return `${min}:${sec.toString().padStart(2, "0")}`;
+  }
+
+  async function handleSeek(nextMs: number) {
+    const token = accessTokenRef.current;
+    const currentDevice = deviceIdRef.current;
+    if (!token || !currentDevice) return;
+    await fetch(
+      `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=${Math.floor(
+        nextMs
+      )}`,
+      {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    setPositionMs(nextMs);
+  }
+
+  async function handleVolume(nextVolume: number) {
+    const clamped = Math.max(0, Math.min(1, nextVolume));
+    setVolume(clamped);
+    await playerRef.current?.setVolume?.(clamped);
+  }
+
   async function transferPlayback(id: string) {
     if (!accessToken) return;
     await fetch("https://api.spotify.com/v1/me/player", {
@@ -207,6 +305,34 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           <div className="text-subtle">{playerState.album}</div>
         ) : null}
         {error ? <div className="text-subtle">Player error: {error}</div> : null}
+        <div className="player-progress">
+          <span className="text-subtle">{formatTime(positionMs)}</span>
+          <input
+            type="range"
+            min={0}
+            max={durationMs || 1}
+            value={Math.min(positionMs, durationMs || 1)}
+            onChange={(event) => setPositionMs(Number(event.target.value))}
+            onMouseUp={() => handleSeek(positionMs)}
+            onTouchEnd={() => handleSeek(positionMs)}
+            className="player-slider"
+            aria-label="Seek"
+          />
+          <span className="text-subtle">{formatTime(durationMs)}</span>
+        </div>
+        <div className="player-volume">
+          <span className="text-subtle">Volume</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={(event) => handleVolume(Number(event.target.value))}
+            className="player-slider"
+            aria-label="Volume"
+          />
+        </div>
       </div>
       <div className="player-controls">
         <button
@@ -238,7 +364,32 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         </button>
       </div>
       <div className="player-badge">
-        {deviceId ? "Spotify Connect ready" : "Connecting..."}
+        <div className="player-device-row">
+          <span>{deviceId ? "Spotify Connect" : "Connecting..."}</span>
+          <button
+            type="button"
+            className="detail-btn"
+            aria-label="Refresh devices"
+            title="Refresh devices"
+            onClick={refreshDevices}
+          >
+            ↻
+          </button>
+        </div>
+        <select
+          className="player-device-select"
+          value={devices.find((d) => d.isActive)?.id || deviceId || ""}
+          onChange={(event) => handleDeviceChange(event.target.value)}
+        >
+          <option value="" disabled>
+            Select device
+          </option>
+          {devices.map((device) => (
+            <option key={device.id} value={device.id}>
+              {device.name} ({device.type})
+            </option>
+          ))}
+        </select>
       </div>
     </div>
   );

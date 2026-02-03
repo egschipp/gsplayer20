@@ -23,6 +23,15 @@ type TrackOption = {
   spotifyUrl: string;
   coverUrl?: string | null;
   trackId?: string | null;
+  artistNames?: string | null;
+};
+
+type TrackItem = {
+  id: string;
+  trackId?: string | null;
+  name: string;
+  artists: { id: string; name: string }[];
+  album: { id: string | null; name: string | null; images: { url: string }[] };
 };
 
 type TrackRow = {
@@ -34,13 +43,6 @@ type TrackRow = {
   coverUrl?: string | null;
   artists?: string | null;
   durationMs?: number | null;
-};
-
-type ArtistRow = {
-  artistId: string;
-  name: string | null;
-  genres?: string | null;
-  popularity?: number | null;
 };
 
 const LIKED_OPTION: PlaylistOption = {
@@ -73,7 +75,7 @@ export default function PlaylistBrowser() {
   const [query, setQuery] = useState<string>(LIKED_OPTION.name);
   const [open, setOpen] = useState(false);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
-  const [trackArtists, setTrackArtists] = useState<ArtistRow[]>([]);
+  const [trackItems, setTrackItems] = useState<TrackItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingPlaylists, setLoadingPlaylists] = useState(true);
   const [loadingArtists, setLoadingArtists] = useState(false);
@@ -207,7 +209,7 @@ export default function PlaylistBrowser() {
     async function loadTracksList() {
       setLoadingTracksList(true);
       try {
-        const all: TrackOption[] = [];
+        const all: TrackItem[] = [];
         let cursor: string | null = null;
         do {
           const url = new URL("/api/spotify/tracks", window.location.origin);
@@ -229,25 +231,40 @@ export default function PlaylistBrowser() {
           const items = Array.isArray(data.items) ? data.items : [];
           all.push(
             ...items.map(
-              (track: any): TrackOption => ({
-                id: String(track.name ?? "").trim().toLowerCase(),
-                name: track.name,
-                spotifyUrl: `https://open.spotify.com/track/${track.trackId}`,
-                coverUrl: track.coverUrl ?? track.albumImageUrl ?? null,
+              (track: any): TrackItem => ({
+                id: String(track.id ?? track.trackId ?? ""),
                 trackId: track.trackId ?? null,
+                name: String(track.name ?? ""),
+                artists: Array.isArray(track.artists) ? track.artists : [],
+                album: track.album ?? { id: null, name: null, images: [] },
               })
             )
           );
           cursor = data.nextCursor ?? null;
         } while (cursor);
         const unique = new Map<string, TrackOption>();
-        for (const option of all) {
-          if (!option.id) continue;
-          const existing = unique.get(option.id);
+        for (const track of all) {
+          const name = String(track.name ?? "").trim();
+          const key = name.toLowerCase();
+          if (!key) continue;
+          const artistNames = track.artists
+            .map((artist) => artist?.name)
+            .filter(Boolean)
+            .join(", ");
+          const coverUrl = track.album?.images?.[0]?.url ?? null;
+          const option: TrackOption = {
+            id: key,
+            name,
+            spotifyUrl: `https://open.spotify.com/track/${track.id}`,
+            coverUrl,
+            trackId: track.id ?? null,
+            artistNames: artistNames || null,
+          };
+          const existing = unique.get(key);
           if (!existing) {
-            unique.set(option.id, option);
+            unique.set(key, option);
           } else if (!existing.coverUrl && option.coverUrl) {
-            unique.set(option.id, option);
+            unique.set(key, option);
           }
         }
         const list = Array.from(unique.values()).sort((a, b) =>
@@ -255,6 +272,7 @@ export default function PlaylistBrowser() {
         );
         if (!cancelled) {
           setTrackOptions(list);
+          setTrackItems(all);
           if (!selectedTrackName && list.length) setSelectedTrackName(list[0].name);
         }
       } finally {
@@ -292,14 +310,6 @@ export default function PlaylistBrowser() {
       ? selectedArtist
       : selectedTrack;
 
-  const selectedTrackCover = useMemo(() => {
-    if (!selectedTrackName) return null;
-    const match = trackOptions.find(
-      (opt) => opt.name === selectedTrackName && opt.coverUrl
-    );
-    return match?.coverUrl ?? null;
-  }, [trackOptions, selectedTrackName]);
-
   const filteredOptions = useMemo(() => {
     const term = query.trim().toLowerCase();
     const list =
@@ -319,9 +329,13 @@ export default function PlaylistBrowser() {
     if (mode === "artists") setSelectedArtistId("");
     if (mode === "tracks") {
       setSelectedTrackName("");
-      setTrackArtists([]);
     }
   }, [mode]);
+
+  const filteredTrackItems = useMemo(() => {
+    if (!selectedTrackName) return [];
+    return trackItems.filter((track) => track.name === selectedTrackName);
+  }, [trackItems, selectedTrackName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -375,44 +389,6 @@ export default function PlaylistBrowser() {
       cancelled = true;
     };
   }, [mode, selectedPlaylist?.id, selectedPlaylist?.type, selectedArtist?.id]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadTrackArtists() {
-      if (!selectedTrack?.name) return;
-      setLoadingTracks(true);
-      setError(null);
-      try {
-        const url = new URL("/api/spotify/tracks/by-name", window.location.origin);
-        url.searchParams.set("name", selectedTrack.name);
-        const res = await fetch(url.toString());
-        if (!res.ok) {
-          if (res.status === 401) {
-            setError("Please connect Spotify to load artists.");
-          } else {
-            setError("Failed to load artists.");
-          }
-          return;
-        }
-        const data = await res.json();
-        const items = Array.isArray(data.items) ? data.items : [];
-        if (!cancelled) {
-          setTrackArtists(items);
-        }
-      } catch {
-        if (!cancelled) setError("Failed to load artists.");
-      } finally {
-        if (!cancelled) setLoadingTracks(false);
-      }
-    }
-
-    if (mode !== "tracks") return;
-    setTrackArtists([]);
-    loadTrackArtists();
-    return () => {
-      cancelled = true;
-    };
-  }, [mode, selectedTrack?.name]);
 
   async function loadMore() {
     if (!nextCursor) return;
@@ -659,60 +635,55 @@ export default function PlaylistBrowser() {
         </div>
       ) : (
         <div className="track-list" style={{ marginTop: 16 }}>
-          {selectedTrack ? (
-            <div className="track-row">
-              {selectedTrackCover ? (
-                <img
-                  src={selectedTrackCover || undefined}
-                  alt={selectedTrack.name || "Track cover"}
-                  loading="lazy"
-                  style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}
-                />
-              ) : (
-                <div
-                  style={{
-                    width: 56,
-                    height: 56,
-                    borderRadius: 12,
-                    background: "#2a2a2a",
-                  }}
-                />
-              )}
-              <div>
-                <div style={{ fontWeight: 600 }}>{selectedTrack.name}</div>
-                <div className="text-subtle">Selected track</div>
+          {filteredTrackItems.map((track) => {
+            const coverUrl = track.album?.images?.[0]?.url ?? null;
+            const artistNames = track.artists
+              .map((artist) => artist?.name)
+              .filter(Boolean)
+              .join(", ");
+            return (
+              <div key={track.id} className="track-row">
+                {coverUrl ? (
+                  <img
+                    src={coverUrl || undefined}
+                    alt={track.album?.name || "Album cover"}
+                    loading="lazy"
+                    style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: 12,
+                      background: "#2a2a2a",
+                    }}
+                  />
+                )}
+                <div>
+                  <div style={{ fontWeight: 600 }}>{track.name}</div>
+                  <div className="text-body">
+                    {artistNames || "Unknown artist"}
+                  </div>
+                  {track.album?.name ? (
+                    <div className="text-subtle">{track.album.name}</div>
+                  ) : null}
+                </div>
+                <div />
               </div>
-              <div />
-            </div>
-          ) : null}
-          {trackArtists.map((artist) => (
-            <div key={artist.artistId} className="track-row">
-              <div
-                style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: 12,
-                  background: "#2a2a2a",
-                }}
-              />
-              <div>
-                <div style={{ fontWeight: 600 }}>{artist.name || "Unknown"}</div>
-                {artist.genres ? (
-                  <div className="text-subtle">{artist.genres}</div>
-                ) : null}
-              </div>
-              <div className="text-subtle">
-                {artist.popularity ?? ""}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       <div style={{ marginTop: 12 }}>
-        {loadingTracks ? (
+        {mode === "tracks" ? (
+          loadingTracksList ? (
+            <span className="text-body">Loading tracks...</span>
+          ) : null
+        ) : loadingTracks ? (
           <span className="text-body">
-            {mode === "tracks" ? "Loading artists..." : "Loading tracks..."}
+            Loading tracks...
           </span>
         ) : null}
         {!loadingTracks && nextCursor && mode !== "tracks" ? (

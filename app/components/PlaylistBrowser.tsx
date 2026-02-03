@@ -21,6 +21,7 @@ type TrackOption = {
   id: string;
   name: string;
   spotifyUrl: string;
+  coverUrl?: string | null;
 };
 
 type TrackRow = {
@@ -67,7 +68,7 @@ export default function PlaylistBrowser() {
     LIKED_OPTION.id
   );
   const [selectedArtistId, setSelectedArtistId] = useState<string>("");
-  const [selectedTrackId, setSelectedTrackId] = useState<string>("");
+  const [selectedTrackName, setSelectedTrackName] = useState<string>("");
   const [query, setQuery] = useState<string>(LIKED_OPTION.name);
   const [open, setOpen] = useState(false);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
@@ -227,22 +228,31 @@ export default function PlaylistBrowser() {
           all.push(
             ...items.map(
               (track: any): TrackOption => ({
-                id: track.trackId,
+                id: String(track.name ?? "").trim().toLowerCase(),
                 name: track.name,
                 spotifyUrl: `https://open.spotify.com/track/${track.trackId}`,
+                coverUrl: track.coverUrl ?? track.albumImageUrl ?? null,
               })
             )
           );
           cursor = data.nextCursor ?? null;
         } while (cursor);
         const unique = new Map<string, TrackOption>();
-        for (const option of all) unique.set(option.id, option);
+        for (const option of all) {
+          if (!option.id) continue;
+          const existing = unique.get(option.id);
+          if (!existing) {
+            unique.set(option.id, option);
+          } else if (!existing.coverUrl && option.coverUrl) {
+            unique.set(option.id, option);
+          }
+        }
         const list = Array.from(unique.values()).sort((a, b) =>
           a.name.localeCompare(b.name, "en", { sensitivity: "base" })
         );
         if (!cancelled) {
           setTrackOptions(list);
-          if (!selectedTrackId && list.length) setSelectedTrackId(list[0].id);
+          if (!selectedTrackName && list.length) setSelectedTrackName(list[0].name);
         }
       } finally {
         if (!cancelled) setLoadingTracksList(false);
@@ -267,10 +277,10 @@ export default function PlaylistBrowser() {
     [artistOptions, selectedArtistId]
   );
 
-  const selectedTrack = useMemo(
-    () => trackOptions.find((opt) => opt.id === selectedTrackId) || null,
-    [trackOptions, selectedTrackId]
-  );
+  const selectedTrack = useMemo(() => {
+    if (!selectedTrackName) return null;
+    return trackOptions.find((opt) => opt.name === selectedTrackName) || null;
+  }, [trackOptions, selectedTrackName]);
 
   const selectedOption =
     mode === "playlists"
@@ -355,14 +365,12 @@ export default function PlaylistBrowser() {
   useEffect(() => {
     let cancelled = false;
     async function loadTrackArtists() {
-      if (!selectedTrack?.id) return;
+      if (!selectedTrack?.name) return;
       setLoadingTracks(true);
       setError(null);
       try {
-        const url = new URL(
-          `/api/spotify/tracks/${selectedTrack.id}/artists`,
-          window.location.origin
-        );
+        const url = new URL("/api/spotify/tracks/by-name", window.location.origin);
+        url.searchParams.set("name", selectedTrack.name);
         const res = await fetch(url.toString());
         if (!res.ok) {
           if (res.status === 401) {
@@ -390,7 +398,7 @@ export default function PlaylistBrowser() {
     return () => {
       cancelled = true;
     };
-  }, [mode, selectedTrack?.id]);
+  }, [mode, selectedTrack?.name]);
 
   async function loadMore() {
     if (!nextCursor) return;
@@ -483,7 +491,10 @@ export default function PlaylistBrowser() {
                 setOpen(false);
                 if (mode === "playlists") setSelectedPlaylistId("");
                 if (mode === "artists") setSelectedArtistId("");
-                if (mode === "tracks") setSelectedTrackId("");
+                if (mode === "tracks") {
+                  setSelectedTrackName("");
+                  setTrackArtists([]);
+                }
               }}
             >
               ×
@@ -504,19 +515,19 @@ export default function PlaylistBrowser() {
                         ? opt.id === selectedPlaylistId
                         : mode === "artists"
                         ? opt.id === selectedArtistId
-                        : opt.id === selectedTrackId
+                        : opt.name === selectedTrackName
                     }
                     className={`combo-item${
                       (mode === "playlists" && opt.id === selectedPlaylistId) ||
                       (mode === "artists" && opt.id === selectedArtistId) ||
-                      (mode === "tracks" && opt.id === selectedTrackId)
+                      (mode === "tracks" && opt.name === selectedTrackName)
                         ? " active"
                         : ""
                     }`}
                     onMouseDown={() => {
                       if (mode === "playlists") setSelectedPlaylistId(opt.id);
                       if (mode === "artists") setSelectedArtistId(opt.id);
-                      if (mode === "tracks") setSelectedTrackId(opt.id);
+                      if (mode === "tracks") setSelectedTrackName(opt.name);
                       setOpen(false);
                     }}
                   >
@@ -600,6 +611,32 @@ export default function PlaylistBrowser() {
         </div>
       ) : (
         <div className="track-list" style={{ marginTop: 16 }}>
+          {selectedTrack ? (
+            <div className="track-row">
+              {selectedTrack.coverUrl ? (
+                <img
+                  src={selectedTrack.coverUrl || undefined}
+                  alt={selectedTrack.name || "Track cover"}
+                  loading="lazy"
+                  style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 12,
+                    background: "#2a2a2a",
+                  }}
+                />
+              )}
+              <div>
+                <div style={{ fontWeight: 600 }}>{selectedTrack.name}</div>
+                <div className="text-subtle">Selected track</div>
+              </div>
+              <div />
+            </div>
+          ) : null}
           {trackArtists.map((artist) => (
             <div key={artist.artistId} className="track-row">
               <div

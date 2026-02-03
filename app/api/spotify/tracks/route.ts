@@ -8,7 +8,7 @@ import {
   playlistItems,
   userPlaylists,
 } from "@/lib/db/schema";
-import { and, desc, eq, lt, or } from "drizzle-orm";
+import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
 
 export const runtime = "nodejs";
@@ -42,6 +42,7 @@ export async function GET(req: Request) {
       name: tracks.name,
       albumName: tracks.albumName,
       albumImageUrl: tracks.albumImageUrl,
+      hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
     })
     .from(tracks)
     .leftJoin(
@@ -67,5 +68,12 @@ export async function GET(req: Request) {
   const last = rows[rows.length - 1];
   const nextCursor = last ? encodeCursor(0, last.trackId) : null;
 
-  return NextResponse.json({ items: rows, nextCursor, asOf: Date.now() });
+  return NextResponse.json({
+    items: rows.map((row) => ({
+      ...row,
+      coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,
+    })),
+    nextCursor,
+    asOf: Date.now(),
+  });
 }

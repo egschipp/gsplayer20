@@ -65,7 +65,7 @@ jobs:
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: [self-hosted, arm64, pi, gsplayer]
+    runs-on: [self-hosted, ARM64, pi, gsplayer]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

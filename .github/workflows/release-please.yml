@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   release-please:
-    runs-on: [self-hosted, arm64, pi, gsplayer]
+    runs-on: [self-hosted, ARM64, pi, gsplayer]
     steps:
       - uses: googleapis/release-please-action@v4
         with:

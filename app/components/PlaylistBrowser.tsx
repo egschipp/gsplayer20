@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import SpotifyPlayer, { type PlayerApi } from "./SpotifyPlayer";
 
 type Mode = "playlists" | "artists" | "tracks";
 
@@ -163,9 +164,11 @@ export default function PlaylistBrowser() {
   const [selectedTrackDetail, setSelectedTrackDetail] = useState<TrackDetail | null>(
     null
   );
+  const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const suppressCloseRef = useRef(false);
+  const playerApiRef = useRef<PlayerApi | null>(null);
   const MAX_PLAYLIST_CHIPS = 2;
 
   useEffect(() => {
@@ -590,9 +593,40 @@ export default function PlaylistBrowser() {
     }
   }
 
+  function buildQueue(): { uris: string[]; byId: Set<string> } {
+    if (mode === "tracks") {
+      const uris = filteredTrackItems
+        .map((track) => track.id)
+        .filter(Boolean)
+        .map((id) => `spotify:track:${id}`);
+      return { uris, byId: new Set(filteredTrackItems.map((t) => t.id)) };
+    }
+    const uris = tracks
+      .map((track) => track.trackId)
+      .filter(Boolean)
+      .map((id) => `spotify:track:${id}`);
+    return { uris, byId: new Set(tracks.map((t) => t.trackId || "")) };
+  }
+
+  async function handlePlayTrack(trackId: string | null | undefined) {
+    if (!trackId || !playerApiRef.current) return;
+    const queue = buildQueue();
+    if (!queue.uris.length) return;
+    const targetUri = `spotify:track:${trackId}`;
+    await playerApiRef.current.playQueue(queue.uris, targetUri);
+  }
+
   return (
     <section style={{ marginTop: 24 }}>
       <h2 className="heading-2">Library</h2>
+      <SpotifyPlayer
+        onReady={(api) => {
+          playerApiRef.current = api;
+        }}
+        onTrackChange={(trackId) => {
+          setCurrentTrackId(trackId);
+        }}
+      />
       <div className="segmented" role="tablist" aria-label="Library modes">
         {(["playlists", "artists", "tracks"] as Mode[]).map((value) => (
           <button
@@ -830,7 +864,14 @@ export default function PlaylistBrowser() {
                 />
               )}
               <div>
-                <div style={{ fontWeight: 600 }}>{track.name || "Unknown"}</div>
+                <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
+                  {track.name || "Unknown"}
+                  {currentTrackId && track.trackId === currentTrackId ? (
+                    <span className="playing-indicator" aria-label="Now playing">
+                      ▶
+                    </span>
+                  ) : null}
+                </div>
                 <div className="text-body">
                   {dedupeArtistText(track.artists || "") || "Unknown artist"}
                 </div>
@@ -845,6 +886,16 @@ export default function PlaylistBrowser() {
                 <div className="text-subtle">
                   {formatDuration(track.durationMs)}
                 </div>
+                <button
+                  type="button"
+                  className="play-btn"
+                  aria-label="Play track"
+                  title="Play"
+                  disabled={!track.trackId}
+                  onClick={() => handlePlayTrack(track.trackId)}
+                >
+                  ▶
+                </button>
                 <button
                   type="button"
                   className="detail-btn"
@@ -935,7 +986,14 @@ export default function PlaylistBrowser() {
                   />
                 )}
                 <div>
-                  <div style={{ fontWeight: 600 }}>{track.name}</div>
+                  <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
+                    {track.name}
+                    {currentTrackId && track.id === currentTrackId ? (
+                      <span className="playing-indicator" aria-label="Now playing">
+                        ▶
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="text-body">
                     {uniqueArtistNames || "Unknown artist"}
                   </div>
@@ -945,6 +1003,15 @@ export default function PlaylistBrowser() {
                 </div>
                 <div>{renderPlaylistChips(track.playlists)}</div>
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    className="play-btn"
+                    aria-label="Play track"
+                    title="Play"
+                    onClick={() => handlePlayTrack(track.id)}
+                  >
+                    ▶
+                  </button>
                   <button
                     type="button"
                     className="detail-btn"

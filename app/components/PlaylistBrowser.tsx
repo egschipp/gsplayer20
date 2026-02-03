@@ -844,24 +844,48 @@ export default function PlaylistBrowser() {
                   ? { gridTemplateColumns: "56px 1fr 1fr auto" }
                   : undefined
               }
+              role="button"
+              tabIndex={0}
+              onClick={() => openDetailFromRow(track)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openDetailFromRow(track);
+                }
+              }}
             >
-              {track.coverUrl || track.albumImageUrl ? (
-                <img
-                  src={track.coverUrl || track.albumImageUrl || undefined}
-                  alt={track.albumName || "Album cover"}
-                  loading="lazy"
-                  style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}
-                />
-              ) : (
-                <div
-                  style={{
-                    width: 56,
-                    height: 56,
-                    borderRadius: 12,
-                    background: "#2a2a2a",
+              <div style={{ position: "relative", width: 56, height: 56 }}>
+                {track.coverUrl || track.albumImageUrl ? (
+                  <img
+                    src={track.coverUrl || track.albumImageUrl || undefined}
+                    alt={track.albumName || "Album cover"}
+                    loading="lazy"
+                    style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: 12,
+                      background: "#2a2a2a",
+                    }}
+                  />
+                )}
+                <button
+                  type="button"
+                  className="play-btn play-btn-overlay"
+                  aria-label="Play track"
+                  title="Play"
+                  disabled={!track.trackId}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handlePlayTrack(track.trackId);
                   }}
-                />
-              )}
+                >
+                  ▶
+                </button>
+              </div>
               <div>
                 <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
                   {track.name || "Unknown"}
@@ -885,33 +909,6 @@ export default function PlaylistBrowser() {
                 <div className="text-subtle">
                   {formatDuration(track.durationMs)}
                 </div>
-                <button
-                  type="button"
-                  className="play-btn"
-                  aria-label="Play track"
-                  title="Play"
-                  disabled={!track.trackId}
-                  onClick={() => handlePlayTrack(track.trackId)}
-                >
-                  ▶
-                </button>
-                <button
-                  type="button"
-                  className="detail-btn"
-                  aria-label="Show track details"
-                  title="Details"
-                  onClick={() => openDetailFromRow(track)}
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    width="18"
-                    height="18"
-                    fill="currentColor"
-                  >
-                    <path d="M12 7.75a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5Zm-1 9.5h2v-7h-2v7Zm1-15C6.48 2.25 2.25 6.48 2.25 12S6.48 21.75 12 21.75 21.75 17.52 21.75 12 17.52 2.25 12 2.25Zm0 17.5c-4.28 0-7.75-3.47-7.75-7.75S7.72 4.25 12 4.25s7.75 3.47 7.75 7.75-3.47 7.75-7.75 7.75Z" />
-                  </svg>
-                </button>
                 {track.trackId ? (
                   <a
                     href={`https://open.spotify.com/track/${track.trackId}`}
@@ -920,6 +917,7 @@ export default function PlaylistBrowser() {
                     aria-label="Open in Spotify"
                     title="Open in Spotify"
                     style={{ color: "var(--text-primary)", display: "inline-flex" }}
+                    onClick={(event) => event.stopPropagation()}
                   >
                     <svg
                       aria-hidden="true"
@@ -966,24 +964,47 @@ export default function PlaylistBrowser() {
                 key={track.id}
                 className="track-row"
                 style={{ gridTemplateColumns: "56px 1fr 1fr auto" }}
+                role="button"
+                tabIndex={0}
+                onClick={() => openDetailFromItem(track)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openDetailFromItem(track);
+                  }
+                }}
               >
-                {coverUrl ? (
-                  <img
-                    src={coverUrl || undefined}
-                    alt={track.album?.name || "Album cover"}
-                    loading="lazy"
-                    style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}
-                  />
-                ) : (
-                  <div
-                    style={{
-                      width: 56,
-                      height: 56,
-                      borderRadius: 12,
-                      background: "#2a2a2a",
+                <div style={{ position: "relative", width: 56, height: 56 }}>
+                  {coverUrl ? (
+                    <img
+                      src={coverUrl || undefined}
+                      alt={track.album?.name || "Album cover"}
+                      loading="lazy"
+                      style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: 56,
+                        height: 56,
+                        borderRadius: 12,
+                        background: "#2a2a2a",
+                      }}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    className="play-btn play-btn-overlay"
+                    aria-label="Play track"
+                    title="Play"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handlePlayTrack(track.id);
                     }}
-                  />
-                )}
+                  >
+                    ▶
+                  </button>
+                </div>
                 <div>
                   <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
                     {track.name}
@@ -1002,32 +1023,6 @@ export default function PlaylistBrowser() {
                 </div>
                 <div>{renderPlaylistChips(track.playlists)}</div>
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <button
-                    type="button"
-                    className="play-btn"
-                    aria-label="Play track"
-                    title="Play"
-                    onClick={() => handlePlayTrack(track.id)}
-                  >
-                    ▶
-                  </button>
-                  <button
-                    type="button"
-                    className="detail-btn"
-                    aria-label="Show track details"
-                    title="Details"
-                    onClick={() => openDetailFromItem(track)}
-                  >
-                    <svg
-                      aria-hidden="true"
-                      viewBox="0 0 24 24"
-                      width="18"
-                      height="18"
-                      fill="currentColor"
-                    >
-                      <path d="M12 7.75a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5Zm-1 9.5h2v-7h-2v7Zm1-15C6.48 2.25 2.25 6.48 2.25 12S6.48 21.75 12 21.75 21.75 17.52 21.75 12 17.52 2.25 12 2.25Zm0 17.5c-4.28 0-7.75-3.47-7.75-7.75S7.72 4.25 12 4.25s7.75 3.47 7.75 7.75-3.47 7.75-7.75 7.75Z" />
-                    </svg>
-                  </button>
                   <a
                     href={`https://open.spotify.com/track/${track.id}`}
                     target="_blank"
@@ -1035,6 +1030,7 @@ export default function PlaylistBrowser() {
                     aria-label="Open in Spotify"
                     title="Open in Spotify"
                     style={{ color: "var(--text-primary)", display: "inline-flex" }}
+                    onClick={(event) => event.stopPropagation()}
                   >
                     <svg
                       aria-hidden="true"

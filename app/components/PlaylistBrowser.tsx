@@ -841,7 +841,7 @@ export default function PlaylistBrowser() {
               className="track-row"
               style={
                 mode === "artists" || mode === "playlists"
-                  ? { gridTemplateColumns: "56px 1fr 1fr auto" }
+                  ? { gridTemplateColumns: "98px 1fr 1fr auto" }
                   : undefined
               }
               role="button"
@@ -963,7 +963,7 @@ export default function PlaylistBrowser() {
               <div
                 key={track.id}
                 className="track-row"
-                style={{ gridTemplateColumns: "56px 1fr 1fr auto" }}
+                style={{ gridTemplateColumns: "98px 1fr 1fr auto" }}
                 role="button"
                 tabIndex={0}
                 onClick={() => openDetailFromItem(track)}

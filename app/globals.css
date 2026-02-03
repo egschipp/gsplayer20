@@ -325,7 +325,7 @@ a:focus-visible {
 
 .track-header {
   display: grid;
-  grid-template-columns: 56px 1fr auto;
+  grid-template-columns: 98px 1fr auto;
   gap: 12px;
   align-items: center;
   padding: 8px 12px;
@@ -339,7 +339,7 @@ a:focus-visible {
 }
 
 .track-header.columns-4 {
-  grid-template-columns: 56px 1fr 1fr auto;
+  grid-template-columns: 98px 1fr 1fr auto;
 }
 
 .empty-state {

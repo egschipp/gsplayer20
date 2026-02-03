@@ -566,16 +566,6 @@ export default function PlaylistBrowser() {
             </div>
           ) : null}
         </div>
-        {selectedOption ? (
-          <a
-            href={selectedOption.spotifyUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="btn btn-secondary"
-          >
-            Open in Spotify
-          </a>
-        ) : null}
       </div>
 
       {loadingPlaylists && mode === "playlists" ? (
@@ -631,8 +621,30 @@ export default function PlaylistBrowser() {
                   <div className="text-subtle">{track.albumName}</div>
                 ) : null}
               </div>
-              <div className="text-subtle">
-                {formatDuration(track.durationMs)}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div className="text-subtle">
+                  {formatDuration(track.durationMs)}
+                </div>
+                {track.trackId ? (
+                  <a
+                    href={`https://open.spotify.com/track/${track.trackId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="Open in Spotify"
+                    title="Open in Spotify"
+                    style={{ color: "var(--text-primary)", display: "inline-flex" }}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      width="18"
+                      height="18"
+                      fill="currentColor"
+                    >
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm4.6 14.52c-.18.3-.57.4-.87.22-2.4-1.46-5.42-1.8-8.97-1.02-.34.08-.68-.13-.76-.47-.08-.34.13-.68.47-.76 3.86-.86 7.2-.47 9.9 1.18.3.18.4.57.22.87Zm1.24-2.76c-.22.36-.7.48-1.06.26-2.74-1.68-6.92-2.17-10.17-1.18-.41.12-.85-.11-.97-.52-.12-.41.11-.85.52-.97 3.71-1.12 8.33-.57 11.47 1.36.36.22.48.7.26 1.05Zm.11-2.87c-3.28-1.95-8.69-2.13-11.82-1.18-.49.15-1.02-.13-1.17-.62-.15-.49.13-1.02.62-1.17 3.59-1.09 9.56-.88 13.33 1.36.44.26.58.83.32 1.27-.26.44-.83.58-1.27.32Z" />
+                    </svg>
+                  </a>
+                ) : null}
               </div>
             </div>
           ))}
@@ -673,7 +685,26 @@ export default function PlaylistBrowser() {
                     <div className="text-subtle">{track.album.name}</div>
                   ) : null}
                 </div>
-                <div />
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <a
+                    href={`https://open.spotify.com/track/${track.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="Open in Spotify"
+                    title="Open in Spotify"
+                    style={{ color: "var(--text-primary)", display: "inline-flex" }}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      width="18"
+                      height="18"
+                      fill="currentColor"
+                    >
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm4.6 14.52c-.18.3-.57.4-.87.22-2.4-1.46-5.42-1.8-8.97-1.02-.34.08-.68-.13-.76-.47-.08-.34.13-.68.47-.76 3.86-.86 7.2-.47 9.9 1.18.3.18.4.57.22.87Zm1.24-2.76c-.22.36-.7.48-1.06.26-2.74-1.68-6.92-2.17-10.17-1.18-.41.12-.85-.11-.97-.52-.12-.41.11-.85.52-.97 3.71-1.12 8.33-.57 11.47 1.36.36.22.48.7.26 1.05Zm.11-2.87c-3.28-1.95-8.69-2.13-11.82-1.18-.49.15-1.02-.13-1.17-.62-.15-.49.13-1.02.62-1.17 3.59-1.09 9.56-.88 13.33 1.36.44.26.58.83.32 1.27-.26.44-.83.58-1.27.32Z" />
+                    </svg>
+                  </a>
+                </div>
               </div>
             );
           })}

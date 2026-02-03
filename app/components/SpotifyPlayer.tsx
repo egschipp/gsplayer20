@@ -235,6 +235,46 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     refreshDevices();
   }
 
+  async function handleTogglePlay() {
+    const token = accessTokenRef.current;
+    const currentDevice = deviceIdRef.current;
+    if (!token || !currentDevice) return;
+    const endpoint = playerState?.paused ? "play" : "pause";
+    await fetch(
+      `https://api.spotify.com/v1/me/player/${endpoint}?device_id=${currentDevice}`,
+      {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+  }
+
+  async function handleNext() {
+    const token = accessTokenRef.current;
+    const currentDevice = deviceIdRef.current;
+    if (!token || !currentDevice) return;
+    await fetch(
+      `https://api.spotify.com/v1/me/player/next?device_id=${currentDevice}`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+  }
+
+  async function handlePrevious() {
+    const token = accessTokenRef.current;
+    const currentDevice = deviceIdRef.current;
+    if (!token || !currentDevice) return;
+    await fetch(
+      `https://api.spotify.com/v1/me/player/previous?device_id=${currentDevice}`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+  }
+
   function formatTime(ms?: number) {
     if (!ms || ms < 0) return "0:00";
     const totalSec = Math.floor(ms / 1000);
@@ -320,19 +360,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           />
           <span className="text-subtle">{formatTime(durationMs)}</span>
         </div>
-        <div className="player-volume">
-          <span className="text-subtle">Volume</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={volume}
-            onChange={(event) => handleVolume(Number(event.target.value))}
-            className="player-slider"
-            aria-label="Volume"
-          />
-        </div>
       </div>
       <div className="player-controls">
         <button
@@ -340,7 +367,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           className="detail-btn"
           aria-label="Previous"
           title="Previous"
-          onClick={() => playerRef.current?.previousTrack?.() || undefined}
+          onClick={handlePrevious}
         >
           ⏮
         </button>
@@ -349,7 +376,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           className="player-play"
           aria-label={playerState?.paused ? "Play" : "Pause"}
           title={playerState?.paused ? "Play" : "Pause"}
-          onClick={() => playerRef.current?.togglePlay?.() || undefined}
+          onClick={handleTogglePlay}
         >
           {playerState?.paused ? "▶" : "⏸"}
         </button>
@@ -358,7 +385,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           className="detail-btn"
           aria-label="Next"
           title="Next"
-          onClick={() => playerRef.current?.nextTrack?.() || undefined}
+          onClick={handleNext}
         >
           ⏭
         </button>
@@ -390,6 +417,19 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             </option>
           ))}
         </select>
+        <div className="player-volume">
+          <span className="text-subtle">Volume</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={(event) => handleVolume(Number(event.target.value))}
+            className="player-slider"
+            aria-label="Volume"
+          />
+        </div>
       </div>
     </div>
   );

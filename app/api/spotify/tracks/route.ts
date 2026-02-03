@@ -3,8 +3,7 @@ import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
 import { getDb } from "@/lib/db/client";
 import {
-  artists,
-  trackArtists,
+  tracks,
   userSavedTracks,
   playlistItems,
   userPlaylists,
@@ -21,14 +20,14 @@ export async function GET(req: Request) {
   }
 
   const { searchParams } = new URL(req.url);
-  const limit = Math.min(Number(searchParams.get("limit") ?? "50"), 50);
+  const limit = Math.min(Number(searchParams.get("limit") ?? "50"), 100);
   const cursor = searchParams.get("cursor");
 
   const db = getDb();
   const baseWhere = cursor
     ? (() => {
         const decoded = decodeCursor(cursor);
-        return lt(artists.artistId, decoded.id);
+        return lt(tracks.trackId, decoded.id);
       })()
     : undefined;
 
@@ -39,21 +38,20 @@ export async function GET(req: Request) {
 
   const rows = await db
     .select({
-      artistId: artists.artistId,
-      name: artists.name,
-      genres: artists.genres,
-      popularity: artists.popularity,
+      trackId: tracks.trackId,
+      name: tracks.name,
+      albumName: tracks.albumName,
+      albumImageUrl: tracks.albumImageUrl,
     })
-    .from(artists)
-    .leftJoin(trackArtists, eq(trackArtists.artistId, artists.artistId))
+    .from(tracks)
     .leftJoin(
       userSavedTracks,
       and(
-        eq(userSavedTracks.trackId, trackArtists.trackId),
+        eq(userSavedTracks.trackId, tracks.trackId),
         eq(userSavedTracks.userId, session.appUserId as string)
       )
     )
-    .leftJoin(playlistItems, eq(playlistItems.trackId, trackArtists.trackId))
+    .leftJoin(playlistItems, eq(playlistItems.trackId, tracks.trackId))
     .leftJoin(
       userPlaylists,
       and(
@@ -62,12 +60,12 @@ export async function GET(req: Request) {
       )
     )
     .where(baseWhere ? and(baseWhere, userWhere) : userWhere)
-    .groupBy(artists.artistId)
-    .orderBy(desc(artists.artistId))
+    .groupBy(tracks.trackId)
+    .orderBy(desc(tracks.trackId))
     .limit(limit);
 
   const last = rows[rows.length - 1];
-  const nextCursor = last ? encodeCursor(0, last.artistId) : null;
+  const nextCursor = last ? encodeCursor(0, last.trackId) : null;
 
   return NextResponse.json({ items: rows, nextCursor, asOf: Date.now() });
 }

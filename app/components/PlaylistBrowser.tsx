@@ -2,10 +2,24 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+type Mode = "playlists" | "artists" | "tracks";
+
 type PlaylistOption = {
   id: string;
   name: string;
   type: "liked" | "playlist";
+  spotifyUrl: string;
+};
+
+type ArtistOption = {
+  id: string;
+  name: string;
+  spotifyUrl: string;
+};
+
+type TrackOption = {
+  id: string;
+  name: string;
   spotifyUrl: string;
 };
 
@@ -18,6 +32,13 @@ type TrackRow = {
   coverUrl?: string | null;
   artists?: string | null;
   durationMs?: number | null;
+};
+
+type ArtistRow = {
+  artistId: string;
+  name: string | null;
+  genres?: string | null;
+  popularity?: number | null;
 };
 
 const LIKED_OPTION: PlaylistOption = {
@@ -36,13 +57,25 @@ function formatDuration(ms?: number | null) {
 }
 
 export default function PlaylistBrowser() {
-  const [options, setOptions] = useState<PlaylistOption[]>([LIKED_OPTION]);
-  const [selectedId, setSelectedId] = useState<string>(LIKED_OPTION.id);
+  const [mode, setMode] = useState<Mode>("playlists");
+  const [playlistOptions, setPlaylistOptions] = useState<PlaylistOption[]>([
+    LIKED_OPTION,
+  ]);
+  const [artistOptions, setArtistOptions] = useState<ArtistOption[]>([]);
+  const [trackOptions, setTrackOptions] = useState<TrackOption[]>([]);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>(
+    LIKED_OPTION.id
+  );
+  const [selectedArtistId, setSelectedArtistId] = useState<string>("");
+  const [selectedTrackId, setSelectedTrackId] = useState<string>("");
   const [query, setQuery] = useState<string>(LIKED_OPTION.name);
   const [open, setOpen] = useState(false);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
+  const [trackArtists, setTrackArtists] = useState<ArtistRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingPlaylists, setLoadingPlaylists] = useState(true);
+  const [loadingArtists, setLoadingArtists] = useState(false);
+  const [loadingTracksList, setLoadingTracksList] = useState(false);
   const [loadingTracks, setLoadingTracks] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
@@ -54,35 +87,48 @@ export default function PlaylistBrowser() {
       setError(null);
       setAuthRequired(false);
       try {
-        const res = await fetch("/api/spotify/me/playlists?limit=50");
-        if (!res.ok) {
-          if (res.status === 401 || res.status === 403) {
-            setAuthRequired(true);
-            setError("Please connect Spotify to load playlists.");
-          } else if (res.status === 429) {
-            setError("Rate limited. Please try again in a moment.");
-          } else {
-            setError("Failed to load playlists.");
+        const all: PlaylistOption[] = [];
+        let cursor: string | null = null;
+        do {
+          const url = new URL("/api/spotify/me/playlists", window.location.origin);
+          url.searchParams.set("limit", "50");
+          if (cursor) url.searchParams.set("cursor", cursor);
+          const res = await fetch(url.toString());
+          if (!res.ok) {
+            if (res.status === 401 || res.status === 403) {
+              setAuthRequired(true);
+              setError("Please connect Spotify to load playlists.");
+            } else if (res.status === 429) {
+              setError("Rate limited. Please try again in a moment.");
+            } else {
+              setError("Failed to load playlists.");
+            }
+            return;
           }
-          return;
-        }
-        const data = await res.json();
-        const items = Array.isArray(data.items) ? data.items : [];
-        const playlistOptions: PlaylistOption[] = items
-          .map(
-            (p: any): PlaylistOption => ({
-              id: p.playlistId,
-              name: p.name,
-              type: "playlist",
-              spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
-            })
-          )
-          .sort((a: PlaylistOption, b: PlaylistOption) =>
-            a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+          const data = await res.json();
+          const items = Array.isArray(data.items) ? data.items : [];
+          all.push(
+            ...items.map(
+              (p: any): PlaylistOption => ({
+                id: p.playlistId,
+                name: p.name,
+                type: "playlist",
+                spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
+              })
+            )
           );
-        const list: PlaylistOption[] = [LIKED_OPTION].concat(playlistOptions);
+          cursor = data.nextCursor ?? null;
+        } while (cursor);
+        const playlistOptions: PlaylistOption[] = all.sort(
+          (a: PlaylistOption, b: PlaylistOption) =>
+            a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+        );
+        const list: PlaylistOption[] = [LIKED_OPTION, ...playlistOptions];
         if (!cancelled) {
-          setOptions(list);
+          setPlaylistOptions(list);
+          if (!selectedPlaylistId) {
+            setSelectedPlaylistId(LIKED_OPTION.id);
+          }
         }
       } catch {
         if (!cancelled) setError("Failed to load playlists.");
@@ -96,20 +142,150 @@ export default function PlaylistBrowser() {
     };
   }, []);
 
-  const selected = useMemo(
-    () => options.find((opt) => opt.id === selectedId) || LIKED_OPTION,
-    [options, selectedId]
+  useEffect(() => {
+    let cancelled = false;
+    async function loadArtists() {
+      setLoadingArtists(true);
+      try {
+        const all: ArtistOption[] = [];
+        let cursor: string | null = null;
+        do {
+          const url = new URL("/api/spotify/artists", window.location.origin);
+          url.searchParams.set("limit", "100");
+          if (cursor) url.searchParams.set("cursor", cursor);
+          const res = await fetch(url.toString());
+          if (!res.ok) {
+            if (res.status === 401 || res.status === 403) {
+              setAuthRequired(true);
+              setError("Please connect Spotify to load artists.");
+            } else if (res.status === 429) {
+              setError("Rate limited. Please try again in a moment.");
+            } else {
+              setError("Failed to load artists.");
+            }
+            return;
+          }
+          const data = await res.json();
+          const items = Array.isArray(data.items) ? data.items : [];
+          all.push(
+            ...items.map(
+              (artist: any): ArtistOption => ({
+                id: artist.artistId,
+                name: artist.name,
+                spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
+              })
+            )
+          );
+          cursor = data.nextCursor ?? null;
+        } while (cursor);
+        const list = all.sort((a, b) =>
+          a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+        );
+        if (!cancelled) {
+          setArtistOptions(list);
+          if (!selectedArtistId && list.length) setSelectedArtistId(list[0].id);
+        }
+      } finally {
+        if (!cancelled) setLoadingArtists(false);
+      }
+    }
+    loadArtists();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTracksList() {
+      setLoadingTracksList(true);
+      try {
+        const all: TrackOption[] = [];
+        let cursor: string | null = null;
+        do {
+          const url = new URL("/api/spotify/tracks", window.location.origin);
+          url.searchParams.set("limit", "100");
+          if (cursor) url.searchParams.set("cursor", cursor);
+          const res = await fetch(url.toString());
+          if (!res.ok) {
+            if (res.status === 401 || res.status === 403) {
+              setAuthRequired(true);
+              setError("Please connect Spotify to load tracks.");
+            } else if (res.status === 429) {
+              setError("Rate limited. Please try again in a moment.");
+            } else {
+              setError("Failed to load tracks.");
+            }
+            return;
+          }
+          const data = await res.json();
+          const items = Array.isArray(data.items) ? data.items : [];
+          all.push(
+            ...items.map(
+              (track: any): TrackOption => ({
+                id: track.trackId,
+                name: track.name,
+                spotifyUrl: `https://open.spotify.com/track/${track.trackId}`,
+              })
+            )
+          );
+          cursor = data.nextCursor ?? null;
+        } while (cursor);
+        const list = all.sort((a, b) =>
+          a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+        );
+        if (!cancelled) {
+          setTrackOptions(list);
+          if (!selectedTrackId && list.length) setSelectedTrackId(list[0].id);
+        }
+      } finally {
+        if (!cancelled) setLoadingTracksList(false);
+      }
+    }
+    loadTracksList();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const selectedPlaylist = useMemo(
+    () =>
+      playlistOptions.find((opt) => opt.id === selectedPlaylistId) ||
+      LIKED_OPTION,
+    [playlistOptions, selectedPlaylistId]
   );
+
+  const selectedArtist = useMemo(
+    () => artistOptions.find((opt) => opt.id === selectedArtistId) || null,
+    [artistOptions, selectedArtistId]
+  );
+
+  const selectedTrack = useMemo(
+    () => trackOptions.find((opt) => opt.id === selectedTrackId) || null,
+    [trackOptions, selectedTrackId]
+  );
+
+  const selectedOption = mode === "playlists" ? selectedPlaylist : mode === "artists" ? selectedArtist : selectedTrack;
 
   const filteredOptions = useMemo(() => {
     const term = query.trim().toLowerCase();
-    if (!term) return options;
-    return options.filter((opt) => opt.name.toLowerCase().includes(term));
-  }, [options, query]);
+    const list =
+      mode === "playlists"
+        ? playlistOptions
+        : mode === "artists"
+        ? artistOptions
+        : trackOptions;
+    if (!term) return list;
+    return list.filter((opt) => opt.name.toLowerCase().includes(term));
+  }, [playlistOptions, artistOptions, trackOptions, query, mode]);
 
   useEffect(() => {
-    setQuery(selected.name);
-  }, [selected.name]);
+    if (selectedOption?.name) setQuery(selectedOption.name);
+  }, [selectedOption?.name]);
+
+  useEffect(() => {
+    setOpen(false);
+  }, [mode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -118,9 +294,11 @@ export default function PlaylistBrowser() {
       setError(null);
       try {
         const baseUrl =
-          selected.type === "liked"
-            ? "/api/spotify/me/tracks"
-            : `/api/spotify/playlists/${selected.id}/items`;
+          mode === "playlists"
+            ? selectedPlaylist.type === "liked"
+              ? "/api/spotify/me/tracks"
+              : `/api/spotify/playlists/${selectedPlaylist.id}/items`
+            : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
         const url = new URL(baseUrl, window.location.origin);
         url.searchParams.set("limit", "50");
         if (cursor) url.searchParams.set("cursor", cursor);
@@ -147,6 +325,10 @@ export default function PlaylistBrowser() {
       }
     }
 
+    if (mode === "tracks") return;
+
+    if (mode === "artists" && !selectedArtist?.id) return;
+
     setTracks([]);
     setNextCursor(null);
     loadTracks(null, false);
@@ -154,15 +336,57 @@ export default function PlaylistBrowser() {
     return () => {
       cancelled = true;
     };
-  }, [selected.id, selected.type]);
+  }, [mode, selectedPlaylist.id, selectedPlaylist.type, selectedArtist?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTrackArtists() {
+      if (!selectedTrack?.id) return;
+      setLoadingTracks(true);
+      setError(null);
+      try {
+        const url = new URL(
+          `/api/spotify/tracks/${selectedTrack.id}/artists`,
+          window.location.origin
+        );
+        const res = await fetch(url.toString());
+        if (!res.ok) {
+          if (res.status === 401) {
+            setError("Please connect Spotify to load artists.");
+          } else {
+            setError("Failed to load artists.");
+          }
+          return;
+        }
+        const data = await res.json();
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!cancelled) {
+          setTrackArtists(items);
+        }
+      } catch {
+        if (!cancelled) setError("Failed to load artists.");
+      } finally {
+        if (!cancelled) setLoadingTracks(false);
+      }
+    }
+
+    if (mode !== "tracks") return;
+    setTrackArtists([]);
+    loadTrackArtists();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, selectedTrack?.id]);
 
   async function loadMore() {
     if (!nextCursor) return;
     const cursor = nextCursor;
     const baseUrl =
-      selected.type === "liked"
-        ? "/api/spotify/me/tracks"
-        : `/api/spotify/playlists/${selected.id}/items`;
+      mode === "playlists"
+        ? selectedPlaylist.type === "liked"
+          ? "/api/spotify/me/tracks"
+          : `/api/spotify/playlists/${selectedPlaylist.id}/items`
+        : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
     const url = new URL(baseUrl, window.location.origin);
     url.searchParams.set("limit", "50");
     url.searchParams.set("cursor", cursor);
@@ -182,11 +406,25 @@ export default function PlaylistBrowser() {
 
   return (
     <section style={{ marginTop: 24 }}>
-      <h2 className="heading-2">Playlists</h2>
+      <h2 className="heading-2">Library</h2>
+      <div className="segmented" role="tablist" aria-label="Library modes">
+        {(["playlists", "artists", "tracks"] as Mode[]).map((value) => (
+          <button
+            key={value}
+            type="button"
+            className={`segmented-btn${mode === value ? " active" : ""}`}
+            role="tab"
+            aria-selected={mode === value}
+            onClick={() => setMode(value)}
+          >
+            {value.charAt(0).toUpperCase() + value.slice(1)}
+          </button>
+        ))}
+      </div>
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <div className="combo" style={{ minWidth: 260 }}>
           <label className="sr-only" htmlFor="playlist-search">
-            Select playlist
+            Select option
           </label>
           <input
             id="playlist-search"
@@ -200,12 +438,24 @@ export default function PlaylistBrowser() {
               setTimeout(() => setOpen(false), 100);
             }}
             className="combo-input"
-            aria-label="Select playlist"
+            aria-label="Select option"
             aria-autocomplete="list"
             aria-expanded={open}
             aria-controls="playlist-options"
-            placeholder="Search playlists..."
-            disabled={loadingPlaylists}
+            placeholder={
+              mode === "playlists"
+                ? "Search playlists..."
+                : mode === "artists"
+                ? "Search artists..."
+                : "Search tracks..."
+            }
+            disabled={
+              mode === "playlists"
+                ? loadingPlaylists
+                : mode === "artists"
+                ? loadingArtists
+                : loadingTracksList
+            }
           />
           {open ? (
             <div className="combo-list" role="listbox" id="playlist-options">
@@ -217,10 +467,24 @@ export default function PlaylistBrowser() {
                     key={opt.id}
                     type="button"
                     role="option"
-                    aria-selected={opt.id === selectedId}
-                    className={`combo-item${opt.id === selectedId ? " active" : ""}`}
+                    aria-selected={
+                      mode === "playlists"
+                        ? opt.id === selectedPlaylistId
+                        : mode === "artists"
+                        ? opt.id === selectedArtistId
+                        : opt.id === selectedTrackId
+                    }
+                    className={`combo-item${
+                      (mode === "playlists" && opt.id === selectedPlaylistId) ||
+                      (mode === "artists" && opt.id === selectedArtistId) ||
+                      (mode === "tracks" && opt.id === selectedTrackId)
+                        ? " active"
+                        : ""
+                    }`}
                     onMouseDown={() => {
-                      setSelectedId(opt.id);
+                      if (mode === "playlists") setSelectedPlaylistId(opt.id);
+                      if (mode === "artists") setSelectedArtistId(opt.id);
+                      if (mode === "tracks") setSelectedTrackId(opt.id);
                       setOpen(false);
                     }}
                   >
@@ -231,13 +495,26 @@ export default function PlaylistBrowser() {
             </div>
           ) : null}
         </div>
-        <a href={selected.spotifyUrl} target="_blank" rel="noreferrer" className="btn btn-secondary">
-          Open in Spotify
-        </a>
+        {selectedOption ? (
+          <a
+            href={selectedOption.spotifyUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="btn btn-secondary"
+          >
+            Open in Spotify
+          </a>
+        ) : null}
       </div>
 
-      {loadingPlaylists ? (
+      {loadingPlaylists && mode === "playlists" ? (
         <p className="text-body">Loading playlists...</p>
+      ) : null}
+      {loadingArtists && mode === "artists" ? (
+        <p className="text-body">Loading artists...</p>
+      ) : null}
+      {loadingTracksList && mode === "tracks" ? (
+        <p className="text-body">Loading tracks...</p>
       ) : null}
       {error ? (
         <div style={{ color: "#fca5a5" }}>
@@ -250,20 +527,49 @@ export default function PlaylistBrowser() {
         </div>
       ) : null}
 
-      <div className="track-list" style={{ marginTop: 16 }}>
-        {tracks.map((track, idx) => (
-          <div
-            key={`${track.itemId || track.trackId || idx}`}
-            className="track-row"
-          >
-            {track.coverUrl || track.albumImageUrl ? (
-              <img
-                src={track.coverUrl || track.albumImageUrl || undefined}
-                alt={track.albumName || "Album cover"}
-                loading="lazy"
-                style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}
-              />
-            ) : (
+      {mode !== "tracks" ? (
+        <div className="track-list" style={{ marginTop: 16 }}>
+          {tracks.map((track, idx) => (
+            <div
+              key={`${track.itemId || track.trackId || idx}`}
+              className="track-row"
+            >
+              {track.coverUrl || track.albumImageUrl ? (
+                <img
+                  src={track.coverUrl || track.albumImageUrl || undefined}
+                  alt={track.albumName || "Album cover"}
+                  loading="lazy"
+                  style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 12,
+                    background: "#2a2a2a",
+                  }}
+                />
+              )}
+              <div>
+                <div style={{ fontWeight: 600 }}>{track.name || "Unknown"}</div>
+                <div className="text-body">
+                  {track.artists || "Unknown artist"}
+                </div>
+                {track.albumName ? (
+                  <div className="text-subtle">{track.albumName}</div>
+                ) : null}
+              </div>
+              <div className="text-subtle">
+                {formatDuration(track.durationMs)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="track-list" style={{ marginTop: 16 }}>
+          {trackArtists.map((artist) => (
+            <div key={artist.artistId} className="track-row">
               <div
                 style={{
                   width: 56,
@@ -272,26 +578,27 @@ export default function PlaylistBrowser() {
                   background: "#2a2a2a",
                 }}
               />
-            )}
-            <div>
-              <div style={{ fontWeight: 600 }}>{track.name || "Unknown"}</div>
-              <div className="text-body">
-                {track.artists || "Unknown artist"}
+              <div>
+                <div style={{ fontWeight: 600 }}>{artist.name || "Unknown"}</div>
+                {artist.genres ? (
+                  <div className="text-subtle">{artist.genres}</div>
+                ) : null}
               </div>
-              {track.albumName ? (
-                <div className="text-subtle">{track.albumName}</div>
-              ) : null}
+              <div className="text-subtle">
+                {artist.popularity ?? ""}
+              </div>
             </div>
-            <div className="text-subtle">
-              {formatDuration(track.durationMs)}
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ marginTop: 12 }}>
-        {loadingTracks ? <span className="text-body">Loading tracks...</span> : null}
-        {!loadingTracks && nextCursor ? (
+        {loadingTracks ? (
+          <span className="text-body">
+            {mode === "tracks" ? "Loading artists..." : "Loading tracks..."}
+          </span>
+        ) : null}
+        {!loadingTracks && nextCursor && mode !== "tracks" ? (
           <button
             onClick={loadMore}
             className="btn btn-primary"

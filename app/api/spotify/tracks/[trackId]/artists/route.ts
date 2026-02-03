@@ -9,34 +9,25 @@ import {
   playlistItems,
   userPlaylists,
 } from "@/lib/db/schema";
-import { and, desc, eq, lt, or } from "drizzle-orm";
-import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
+import { and, eq, or } from "drizzle-orm";
 
 export const runtime = "nodejs";
 
-export async function GET(req: Request) {
+export async function GET(
+  _req: Request,
+  ctx: { params: Promise<{ trackId: string }> }
+) {
   const session = await getServerSession(getAuthOptions());
   if (!session?.appUserId) {
     return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   }
 
-  const { searchParams } = new URL(req.url);
-  const limit = Math.min(Number(searchParams.get("limit") ?? "50"), 50);
-  const cursor = searchParams.get("cursor");
+  const { trackId } = await ctx.params;
+  if (!trackId) {
+    return NextResponse.json({ error: "MISSING_TRACK" }, { status: 400 });
+  }
 
   const db = getDb();
-  const baseWhere = cursor
-    ? (() => {
-        const decoded = decodeCursor(cursor);
-        return lt(artists.artistId, decoded.id);
-      })()
-    : undefined;
-
-  const userWhere = or(
-    eq(userSavedTracks.userId, session.appUserId as string),
-    eq(userPlaylists.userId, session.appUserId as string)
-  );
-
   const rows = await db
     .select({
       artistId: artists.artistId,
@@ -44,8 +35,8 @@ export async function GET(req: Request) {
       genres: artists.genres,
       popularity: artists.popularity,
     })
-    .from(artists)
-    .leftJoin(trackArtists, eq(trackArtists.artistId, artists.artistId))
+    .from(trackArtists)
+    .innerJoin(artists, eq(artists.artistId, trackArtists.artistId))
     .leftJoin(
       userSavedTracks,
       and(
@@ -61,13 +52,17 @@ export async function GET(req: Request) {
         eq(userPlaylists.userId, session.appUserId as string)
       )
     )
-    .where(baseWhere ? and(baseWhere, userWhere) : userWhere)
+    .where(
+      and(
+        eq(trackArtists.trackId, trackId),
+        or(
+          eq(userSavedTracks.userId, session.appUserId as string),
+          eq(userPlaylists.userId, session.appUserId as string)
+        )
+      )
+    )
     .groupBy(artists.artistId)
-    .orderBy(desc(artists.artistId))
-    .limit(limit);
+    .orderBy(artists.name);
 
-  const last = rows[rows.length - 1];
-  const nextCursor = last ? encodeCursor(0, last.artistId) : null;
-
-  return NextResponse.json({ items: rows, nextCursor, asOf: Date.now() });
+  return NextResponse.json({ items: rows, asOf: Date.now() });
 }

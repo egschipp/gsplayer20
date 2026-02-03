@@ -8,7 +8,7 @@ export default function StatusPage() {
         src="/georgies-spotify.png"
         alt="Georgies Spotify logo"
         loading="lazy"
-        style={{ maxWidth: "315px", width: "100%", height: "auto", marginBottom: 12 }}
+        style={{ maxWidth: "210px", width: "100%", height: "auto", marginBottom: 12 }}
       />
       <SpotifyStatus showBadges={false} />
       <StatusBox />

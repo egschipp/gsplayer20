@@ -618,14 +618,22 @@ export default function PlaylistBrowser() {
 
   return (
     <section style={{ marginTop: 24 }}>
-      <SpotifyPlayer
-        onReady={(api) => {
-          playerApiRef.current = api;
-        }}
-        onTrackChange={(trackId) => {
-          setCurrentTrackId(trackId);
-        }}
-      />
+      <div className="library-sticky">
+        <img
+          src="/georgies-spotify.png"
+          alt="Georgies Spotify logo"
+          loading="lazy"
+          className="library-logo"
+        />
+        <SpotifyPlayer
+          onReady={(api) => {
+            playerApiRef.current = api;
+          }}
+          onTrackChange={(trackId) => {
+            setCurrentTrackId(trackId);
+          }}
+        />
+      </div>
       <div className="segmented" role="tablist" aria-label="Library modes">
         {(["playlists", "artists", "tracks"] as Mode[]).map((value) => (
           <button

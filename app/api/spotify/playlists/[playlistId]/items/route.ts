@@ -177,10 +177,12 @@ export async function GET(
               },
             ]
           : []),
-        ...(playlistsByTrack.get(row.trackId) ?? []).map((pl) => ({
+        ...((row.trackId ? playlistsByTrack.get(row.trackId) : null) ?? []).map(
+          (pl) => ({
           ...pl,
           spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
-        })),
+          })
+        ),
       ],
     })),
     nextCursor,

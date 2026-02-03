@@ -713,9 +713,14 @@ details[open] > .details-summary::after {
   padding: 6px 8px;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.55);
   color: var(--text-primary);
   font-size: 0.8rem;
+}
+
+.player-device-select:focus-visible {
+  outline: 2px solid var(--tide);
+  outline-offset: 2px;
 }
 
 .player-play {

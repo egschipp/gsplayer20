@@ -41,10 +41,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [devices, setDevices] = useState<
     { id: string; name: string; isActive: boolean; type: string }[]
   >([]);
+  const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
+  const [activeDeviceName, setActiveDeviceName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const playerRef = useRef<any>(null);
   const deviceIdRef = useRef<string | null>(null);
   const accessTokenRef = useRef<string | undefined>(accessToken);
+  const sdkDeviceIdRef = useRef<string | null>(null);
   const readyRef = useRef(false);
 
   const canUseSdk = useMemo(() => Boolean(accessToken), [accessToken]);
@@ -91,11 +94,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     player.addListener("ready", ({ device_id }: { device_id: string }) => {
       setDeviceId(device_id);
       deviceIdRef.current = device_id;
+      sdkDeviceIdRef.current = device_id;
       transferPlayback(device_id).catch(() => {});
     });
 
     player.addListener("not_ready", () => {
       setDeviceId(null);
+      sdkDeviceIdRef.current = null;
     });
 
     player.addListener("player_state_changed", (state: any) => {
@@ -203,6 +208,53 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     refreshDevices();
   }, [accessToken, deviceId]);
 
+  useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    async function poll() {
+      const token = accessTokenRef.current;
+      if (!token || cancelled) return;
+      const res = await fetch("https://api.spotify.com/v1/me/player", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data || cancelled) return;
+      const device = data.device;
+      if (device?.id) {
+        setActiveDeviceId(device.id);
+        setActiveDeviceName(device.name ?? null);
+      }
+      const item = data.item;
+      if (item) {
+        setPlayerState({
+          name: item.name ?? "Unknown track",
+          artists: (item.artists ?? []).map((a: any) => a.name).join(", "),
+          album: item.album?.name ?? "",
+          coverUrl: item.album?.images?.[0]?.url ?? null,
+          paused: Boolean(!data.is_playing),
+          positionMs: data.progress_ms ?? 0,
+          durationMs: item.duration_ms ?? 0,
+        });
+        setPositionMs(data.progress_ms ?? 0);
+        setDurationMs(item.duration_ms ?? 0);
+        if (onTrackChange) onTrackChange(item.id ?? null);
+      }
+      if (typeof device?.volume_percent === "number") {
+        setVolume(device.volume_percent / 100);
+      }
+    }
+
+    timer = setInterval(poll, 2500);
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [accessToken, onTrackChange]);
+
   async function refreshDevices() {
     const token = accessTokenRef.current;
     if (!token) return;
@@ -220,11 +272,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         type: d.type,
       }))
     );
+    const active = list.find((d: any) => d.is_active);
+    if (active?.id) {
+      setActiveDeviceId(active.id);
+      setActiveDeviceName(active.name ?? null);
+    }
   }
 
   async function handleDeviceChange(targetId: string) {
     const token = accessTokenRef.current;
     if (!token || !targetId) return;
+    setActiveDeviceId(targetId);
     await fetch("https://api.spotify.com/v1/me/player", {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}` },
@@ -233,11 +291,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     setDeviceId(targetId);
     deviceIdRef.current = targetId;
     refreshDevices();
+    setTimeout(refreshDevices, 800);
   }
 
   async function handleTogglePlay() {
     const token = accessTokenRef.current;
-    const currentDevice = deviceIdRef.current;
+    const currentDevice = activeDeviceId || deviceIdRef.current;
     if (!token || !currentDevice) return;
     const endpoint = playerState?.paused ? "play" : "pause";
     await fetch(
@@ -251,7 +310,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handleNext() {
     const token = accessTokenRef.current;
-    const currentDevice = deviceIdRef.current;
+    const currentDevice = activeDeviceId || deviceIdRef.current;
     if (!token || !currentDevice) return;
     await fetch(
       `https://api.spotify.com/v1/me/player/next?device_id=${currentDevice}`,
@@ -264,7 +323,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handlePrevious() {
     const token = accessTokenRef.current;
-    const currentDevice = deviceIdRef.current;
+    const currentDevice = activeDeviceId || deviceIdRef.current;
     if (!token || !currentDevice) return;
     await fetch(
       `https://api.spotify.com/v1/me/player/previous?device_id=${currentDevice}`,
@@ -285,7 +344,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handleSeek(nextMs: number) {
     const token = accessTokenRef.current;
-    const currentDevice = deviceIdRef.current;
+    const currentDevice = activeDeviceId || deviceIdRef.current;
     if (!token || !currentDevice) return;
     await fetch(
       `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=${Math.floor(
@@ -302,6 +361,20 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   async function handleVolume(nextVolume: number) {
     const clamped = Math.max(0, Math.min(1, nextVolume));
     setVolume(clamped);
+    if (activeDeviceId && activeDeviceId !== sdkDeviceIdRef.current) {
+      const token = accessTokenRef.current;
+      if (!token) return;
+      await fetch(
+        `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(
+          clamped * 100
+        )}&device_id=${activeDeviceId}`,
+        {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      return;
+    }
     await playerRef.current?.setVolume?.(clamped);
   }
 
@@ -392,7 +465,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       </div>
       <div className="player-badge">
         <div className="player-device-row">
-          <span>{deviceId ? "Spotify Connect" : "Connecting..."}</span>
+          <span>
+            {activeDeviceName
+              ? `Spotify Connect • ${activeDeviceName}`
+              : deviceId
+              ? "Spotify Connect"
+              : "Connecting..."}
+          </span>
           <button
             type="button"
             className="detail-btn"
@@ -405,7 +484,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         </div>
         <select
           className="player-device-select"
-          value={devices.find((d) => d.isActive)?.id || deviceId || ""}
+          value={activeDeviceId || deviceId || ""}
           onChange={(event) => handleDeviceChange(event.target.value)}
         >
           <option value="" disabled>

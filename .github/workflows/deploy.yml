@@ -125,9 +125,9 @@ jobs:
           SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
           SPOTIFY_REDIRECT_URI: ${{ secrets.SPOTIFY_REDIRECT_URI }}
           AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-          AUTH_URL: ${{ secrets.AUTH_URL }}
+          AUTH_URL: ${{ secrets.AUTH_URL || secrets.NEXTAUTH_URL }}
           NEXTAUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-          NEXTAUTH_URL: ${{ secrets.AUTH_URL }}
+          NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL || secrets.AUTH_URL }}
           TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
           DB_PATH: /data/gsplayer.sqlite
         with:

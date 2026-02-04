@@ -18,7 +18,6 @@ export function getAuthOptions(): NextAuthOptions {
           sameSite: "lax",
           path: "/",
           secure: true,
-          domain: ".schippers-online.nl",
         },
       },
       callbackUrl: {
@@ -27,7 +26,6 @@ export function getAuthOptions(): NextAuthOptions {
           sameSite: "lax",
           path: "/",
           secure: true,
-          domain: ".schippers-online.nl",
         },
       },
       csrfToken: {
@@ -46,7 +44,6 @@ export function getAuthOptions(): NextAuthOptions {
           sameSite: "lax",
           path: "/",
           secure: true,
-          domain: ".schippers-online.nl",
         },
       },
       state: {
@@ -56,7 +53,6 @@ export function getAuthOptions(): NextAuthOptions {
           sameSite: "lax",
           path: "/",
           secure: true,
-          domain: ".schippers-online.nl",
         },
       },
     },

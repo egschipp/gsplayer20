@@ -161,3 +161,7 @@ export function clearAuthLog() {
   authLogState.active = false;
   authLogState.entries = [];
 }
+
+export function isAuthLogActive() {
+  return authLogState.active;
+}

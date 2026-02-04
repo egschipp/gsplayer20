@@ -1,4 +1,6 @@
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 
 export type AuthLogLevel = "debug" | "info" | "warn" | "error";
 
@@ -36,6 +38,8 @@ const authLogState: AuthLogState = {
 };
 
 const SENSITIVE_KEYS = /code|token|secret|verifier|authorization|cookie|set-cookie/i;
+const LOG_PATH =
+  process.env.AUTH_LOG_PATH || path.join(process.cwd(), ".auth-login.log");
 
 function sha256(value: string) {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -106,6 +110,11 @@ function flush(entry: AuthLogEntry) {
   if (!process.stdout.write(line)) {
     process.stdout.once("drain", () => void 0);
   }
+  try {
+    fs.appendFileSync(LOG_PATH, line, "utf8");
+  } catch {
+    // ignore file write issues
+  }
 }
 
 export function startAuthLog(reason: string, data?: Record<string, unknown>) {
@@ -113,6 +122,11 @@ export function startAuthLog(reason: string, data?: Record<string, unknown>) {
   authLogState.startedAt = Date.now();
   authLogState.active = true;
   authLogState.entries = [];
+  try {
+    fs.writeFileSync(LOG_PATH, "", "utf8");
+  } catch {
+    // ignore file reset issues
+  }
   logAuthEvent({
     level: "info",
     event: "login_start",
@@ -148,6 +162,22 @@ export function endAuthLog(reason?: string) {
 }
 
 export function getAuthLog() {
+  try {
+    if (fs.existsSync(LOG_PATH)) {
+      const raw = fs.readFileSync(LOG_PATH, "utf8");
+      const entries = raw
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line)) as AuthLogEntry[];
+      const startedAt = entries[0]?.timestamp
+        ? new Date(entries[0].timestamp).getTime()
+        : authLogState.startedAt;
+      const runId = entries[0]?.runId ?? authLogState.runId;
+      return { runId, startedAt, entries };
+    }
+  } catch {
+    // fall back to memory
+  }
   return {
     runId: authLogState.runId,
     startedAt: authLogState.startedAt,
@@ -160,6 +190,11 @@ export function clearAuthLog() {
   authLogState.startedAt = null;
   authLogState.active = false;
   authLogState.entries = [];
+  try {
+    fs.writeFileSync(LOG_PATH, "", "utf8");
+  } catch {
+    // ignore
+  }
 }
 
 export function isAuthLogActive() {

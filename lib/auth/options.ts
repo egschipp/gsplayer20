@@ -10,7 +10,6 @@ export function getAuthOptions(): NextAuthOptions {
     secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
     session: { strategy: "jwt" },
     useSecureCookies: true,
-    trustHost: true,
     cookies: {
       sessionToken: {
         name: "__Secure-next-auth.session-token",

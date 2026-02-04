@@ -73,6 +73,11 @@ export async function getRefreshToken(userId: string) {
   return decryptToken(row.refreshTokenEnc);
 }
 
+export async function deleteTokens(userId: string) {
+  const db = getDb();
+  await db.delete(oauthTokens).where(eq(oauthTokens.userId, userId)).run();
+}
+
 export async function getUserIdBySpotifyId(spotifyUserId: string) {
   const db = getDb();
   const row = await db

@@ -3,7 +3,12 @@ import SpotifyProvider from "next-auth/providers/spotify";
 import { requireEnv } from "@/lib/env";
 import { scopeString } from "@/lib/spotify/scopes";
 import { refreshAccessToken } from "@/lib/spotify/tokens";
-import { getOrCreateUser, getRefreshToken, upsertTokens } from "@/lib/db/queries";
+import {
+  deleteTokens,
+  getOrCreateUser,
+  getRefreshToken,
+  upsertTokens,
+} from "@/lib/db/queries";
 import { logAuthEvent } from "@/lib/auth/authLog";
 
 export function getAuthOptions(): NextAuthOptions {
@@ -178,6 +183,15 @@ export function getAuthOptions(): NextAuthOptions {
           return token;
         }
 
+        if (token.error) {
+          logAuthEvent({
+            level: "warn",
+            event: "token_refresh_skipped",
+            errorCode: String(token.error),
+          });
+          return token;
+        }
+
         if (!token.appUserId) {
           return { ...token, error: "MissingUserId" };
         }
@@ -191,13 +205,21 @@ export function getAuthOptions(): NextAuthOptions {
         });
 
         if ("error" in refreshed) {
+          if (token.appUserId) {
+            await deleteTokens(token.appUserId as string);
+          }
           logAuthEvent({
             level: "error",
             event: "token_refresh_failed",
             errorCode: refreshed.error,
             data: { error: refreshed.error },
           });
-          return { ...token, error: refreshed.error };
+          return {
+            ...token,
+            error: refreshed.error,
+            accessToken: undefined,
+            accessTokenExpires: 0,
+          };
         }
 
         if (refreshed.refreshToken) {

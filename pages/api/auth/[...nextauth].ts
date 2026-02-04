@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import NextAuth from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
 import {
+  cookieFlags,
   cookieKeys,
   isAuthLogActive,
   logAuthEvent,
@@ -35,6 +36,7 @@ export default async function authHandler(req: NextApiRequest, res: NextApiRespo
         query,
         headers: redactHeaders(headers),
         cookieKeys: cookieKeys(headers),
+        cookieFlags: cookieFlags(headers),
       },
     });
   }

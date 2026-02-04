@@ -38,6 +38,7 @@ const authLogState: AuthLogState = {
 };
 
 const SENSITIVE_KEYS = /code|token|secret|verifier|authorization|cookie|set-cookie/i;
+const COOKIE_ALLOW_KEYS = new Set(["cookieKeys", "cookieFlags"]);
 const LOG_PATH =
   process.env.AUTH_LOG_PATH || path.join(process.cwd(), ".auth-login.log");
 
@@ -60,6 +61,10 @@ function sanitize(value: unknown): unknown {
   const input = value as Record<string, unknown>;
   const next: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(input)) {
+    if (COOKIE_ALLOW_KEYS.has(key)) {
+      next[key] = val;
+      continue;
+    }
     if (SENSITIVE_KEYS.test(key)) {
       next[key] = "[redacted]";
       continue;
@@ -98,6 +103,19 @@ export function cookieKeys(headers: Headers) {
     .split(";")
     .map((c) => c.split("=")[0].trim())
     .filter(Boolean);
+}
+
+export function cookieFlags(headers: Headers) {
+  const keys = cookieKeys(headers);
+  const hasState = keys.some((key) => key.includes("state"));
+  const hasPkce = keys.some((key) => key.includes("pkce"));
+  const hasCallback = keys.some((key) => key.includes("callback"));
+  return {
+    hasState,
+    hasPkce,
+    hasCallback,
+    total: keys.length,
+  };
 }
 
 export function hashSensitive(value?: string | null) {

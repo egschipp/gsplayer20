@@ -9,7 +9,7 @@ import {
   getRefreshToken,
   upsertTokens,
 } from "@/lib/db/queries";
-import { logAuthEvent } from "@/lib/auth/authLog";
+import { endAuthLog, logAuthEvent } from "@/lib/auth/authLog";
 
 export function getAuthOptions(): NextAuthOptions {
   return {
@@ -110,19 +110,10 @@ export function getAuthOptions(): NextAuthOptions {
             isNewUser: message.isNewUser ?? false,
           },
         });
+        endAuthLog("signin_complete");
       },
       async signOut() {
         logAuthEvent({ level: "info", event: "nextauth_signout" });
-      },
-      async session(message) {
-        logAuthEvent({
-          level: "debug",
-          event: "nextauth_session",
-          data: {
-            hasUser: Boolean(message.session?.user),
-            hasToken: Boolean(message.token),
-          },
-        });
       },
       async linkAccount(message) {
         logAuthEvent({

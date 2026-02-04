@@ -24,12 +24,14 @@ export type AuthLogEntry = {
 type AuthLogState = {
   runId: string | null;
   startedAt: number | null;
+  active: boolean;
   entries: AuthLogEntry[];
 };
 
 const authLogState: AuthLogState = {
   runId: null,
   startedAt: null,
+  active: false,
   entries: [],
 };
 
@@ -109,6 +111,7 @@ function flush(entry: AuthLogEntry) {
 export function startAuthLog(reason: string, data?: Record<string, unknown>) {
   authLogState.runId = crypto.randomUUID();
   authLogState.startedAt = Date.now();
+  authLogState.active = true;
   authLogState.entries = [];
   logAuthEvent({
     level: "info",
@@ -121,6 +124,9 @@ export function startAuthLog(reason: string, data?: Record<string, unknown>) {
 export function logAuthEvent(entry: Omit<AuthLogEntry, "timestamp" | "runId"> & {
   runId?: string;
 }) {
+  if (!authLogState.active && entry.event !== "login_start") {
+    return;
+  }
   const payload: AuthLogEntry = {
     ...entry,
     runId: entry.runId ?? authLogState.runId ?? undefined,
@@ -129,6 +135,16 @@ export function logAuthEvent(entry: Omit<AuthLogEntry, "timestamp" | "runId"> & 
   };
   authLogState.entries.push(payload);
   flush(payload);
+}
+
+export function endAuthLog(reason?: string) {
+  if (!authLogState.active) return;
+  logAuthEvent({
+    level: "info",
+    event: "login_end",
+    data: reason ? { reason } : undefined,
+  });
+  authLogState.active = false;
 }
 
 export function getAuthLog() {
@@ -142,5 +158,6 @@ export function getAuthLog() {
 export function clearAuthLog() {
   authLogState.runId = null;
   authLogState.startedAt = null;
+  authLogState.active = false;
   authLogState.entries = [];
 }

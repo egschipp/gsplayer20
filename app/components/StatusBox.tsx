@@ -61,6 +61,7 @@ export default function StatusBox() {
   const [resourceNameMap, setResourceNameMap] = useState<ResourceNameMap>({});
   const [authLog, setAuthLog] = useState<AuthLog>(null);
   const [authLogLoading, setAuthLogLoading] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
   async function refresh() {
     try {
@@ -161,6 +162,19 @@ export default function StatusBox() {
       setAuthLog(null);
     } finally {
       setAuthLogLoading(false);
+    }
+  }
+
+  async function copyAuthLog() {
+    if (!authLog) return;
+    const payload = JSON.stringify(authLog.entries ?? [], null, 2);
+    try {
+      await navigator.clipboard.writeText(payload);
+      setCopyStatus("Copied");
+    } catch {
+      setCopyStatus("Copy failed");
+    } finally {
+      setTimeout(() => setCopyStatus(null), 2000);
     }
   }
 
@@ -301,6 +315,14 @@ export default function StatusBox() {
         >
           Clear auth log
         </button>
+        <button
+          onClick={copyAuthLog}
+          disabled={!authLog || authLogLoading}
+          className="btn btn-secondary"
+        >
+          Copy auth log
+        </button>
+        {copyStatus ? <span className="text-body">{copyStatus}</span> : null}
       </div>
 
       <div className="panel" style={{ marginTop: 16 }}>

@@ -20,13 +20,25 @@ type WorkerHealth = {
 type VersionInfo = { name: string; version: string } | null;
 type ResourceNameMap = Record<string, string>;
 type AuthLogEntry = {
-  ts: number;
+  timestamp: string;
   level: string;
-  message: string;
+  event: string;
+  runId?: string;
+  requestId?: string;
+  sessionId?: string;
+  route?: string;
+  method?: string;
+  url?: string;
+  spotifyEndpoint?: string;
+  status?: number;
+  durationMs?: number;
+  errorCode?: string;
+  errorMessage?: string;
+  hints?: string[];
   data?: unknown;
 };
 type AuthLog = {
-  runId: number;
+  runId: string | null;
   startedAt: number | null;
   entries: AuthLogEntry[];
 } | null;

@@ -77,11 +77,25 @@ export function getAuthOptions(): NextAuthOptions {
     ],
     logger: {
       error(code, metadata) {
+        const error = (metadata as any)?.error;
+        const cause = error?.cause ?? error?.cause?.error ?? error?.cause?.data;
         logAuthEvent({
           level: "error",
           event: "nextauth_error",
           errorCode: String(code),
-          data: metadata ? { metadata } : undefined,
+          data: metadata
+            ? {
+                metadata,
+                errorSummary: {
+                  name: error?.name,
+                  message: error?.message,
+                  status: cause?.status ?? cause?.statusCode,
+                  error: cause?.error,
+                  error_description: cause?.error_description,
+                  body: cause?.body ?? cause,
+                },
+              }
+            : undefined,
         });
       },
       warn(code) {

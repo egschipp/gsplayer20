@@ -37,7 +37,9 @@ const authLogState: AuthLogState = {
   entries: [],
 };
 
-const SENSITIVE_KEYS = /code|token|secret|verifier|authorization|cookie|set-cookie/i;
+const SENSITIVE_KEYS =
+  /code|token|secret|verifier|authorization|cookie|set-cookie/i;
+const MASK_KEYS = /state|code_challenge/i;
 const COOKIE_ALLOW_KEYS = new Set(["cookieKeys", "cookieFlags"]);
 const LOG_PATH =
   process.env.AUTH_LOG_PATH || path.join(process.cwd(), ".auth-login.log");
@@ -63,6 +65,10 @@ function sanitize(value: unknown): unknown {
   for (const [key, val] of Object.entries(input)) {
     if (COOKIE_ALLOW_KEYS.has(key)) {
       next[key] = val;
+      continue;
+    }
+    if (MASK_KEYS.test(key) && typeof val === "string") {
+      next[key] = maskValue(val);
       continue;
     }
     if (SENSITIVE_KEYS.test(key)) {
@@ -115,6 +121,26 @@ export function cookieFlags(headers: Headers) {
     hasPkce,
     hasCallback,
     total: keys.length,
+  };
+}
+
+export function cookieHashes(headers: Headers) {
+  const raw = headers.get("cookie") ?? "";
+  const pairs = raw
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const eq = part.indexOf("=");
+      if (eq === -1) return [part, ""];
+      return [part.slice(0, eq), part.slice(eq + 1)];
+    });
+  const map = new Map(pairs as [string, string][]);
+  const state = map.get("__Secure-next-auth.state");
+  const pkce = map.get("__Secure-next-auth.pkce.code_verifier");
+  return {
+    state: state ? maskValue(state) : undefined,
+    pkce: pkce ? maskValue(pkce) : undefined,
   };
 }
 

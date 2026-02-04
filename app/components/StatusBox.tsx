@@ -19,6 +19,17 @@ type WorkerHealth = {
 } | null;
 type VersionInfo = { name: string; version: string } | null;
 type ResourceNameMap = Record<string, string>;
+type AuthLogEntry = {
+  ts: number;
+  level: string;
+  message: string;
+  data?: unknown;
+};
+type AuthLog = {
+  runId: number;
+  startedAt: number | null;
+  entries: AuthLogEntry[];
+} | null;
 
 function Badge({ label, tone }: { label: string; tone?: "ok" | "warn" }) {
   const cls = tone === "ok" ? "pill pill-success" : "pill pill-warn";
@@ -36,6 +47,8 @@ export default function StatusBox() {
   const [syncing, setSyncing] = useState(false);
   const [loadingPlaylists, setLoadingPlaylists] = useState(false);
   const [resourceNameMap, setResourceNameMap] = useState<ResourceNameMap>({});
+  const [authLog, setAuthLog] = useState<AuthLog>(null);
+  const [authLogLoading, setAuthLogLoading] = useState(false);
 
   async function refresh() {
     try {
@@ -114,6 +127,28 @@ export default function StatusBox() {
       if (versionRes.ok) setVersionInfo(await versionRes.json());
     } catch {
       // ignore
+    }
+  }
+
+  async function loadAuthLog() {
+    setAuthLogLoading(true);
+    try {
+      const res = await fetch("/api/auth/log", { cache: "no-store" });
+      if (res.ok) {
+        setAuthLog(await res.json());
+      }
+    } finally {
+      setAuthLogLoading(false);
+    }
+  }
+
+  async function clearAuthLog() {
+    setAuthLogLoading(true);
+    try {
+      await fetch("/api/auth/log", { method: "DELETE" });
+      setAuthLog(null);
+    } finally {
+      setAuthLogLoading(false);
     }
   }
 
@@ -240,6 +275,46 @@ export default function StatusBox() {
         >
           {syncing ? "Syncing..." : "Force sync + covers"}
         </button>
+        <button
+          onClick={loadAuthLog}
+          disabled={authLogLoading}
+          className="btn btn-secondary"
+        >
+          {authLogLoading ? "Loading..." : "Load auth log"}
+        </button>
+        <button
+          onClick={clearAuthLog}
+          disabled={authLogLoading}
+          className="btn btn-ghost"
+        >
+          Clear auth log
+        </button>
+      </div>
+
+      <div className="panel" style={{ marginTop: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <strong>Spotify login trace</strong>
+          <span>
+            {authLog?.startedAt
+              ? new Date(authLog.startedAt).toLocaleString()
+              : "n/a"}
+          </span>
+        </div>
+        <div style={{ fontSize: 13, marginTop: 8 }}>
+          Entries: {authLog?.entries?.length ?? 0}
+        </div>
+        <pre
+          style={{
+            marginTop: 12,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            fontSize: 12,
+          }}
+        >
+          {authLog
+            ? JSON.stringify(authLog.entries, null, 2)
+            : "No auth log loaded."}
+        </pre>
       </div>
 
       {syncStatus?.resources?.length ? (

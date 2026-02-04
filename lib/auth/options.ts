@@ -4,6 +4,7 @@ import { requireEnv } from "@/lib/env";
 import { scopeString } from "@/lib/spotify/scopes";
 import { refreshAccessToken } from "@/lib/spotify/tokens";
 import { getOrCreateUser, getRefreshToken, upsertTokens } from "@/lib/db/queries";
+import { addAuthLog } from "@/lib/auth/authLog";
 
 export function getAuthOptions(): NextAuthOptions {
   return {
@@ -69,9 +70,48 @@ export function getAuthOptions(): NextAuthOptions {
         checks: ["pkce", "state"],
       }),
     ],
+    logger: {
+      error(code, metadata) {
+        addAuthLog("error", `NextAuth error: ${code}`, metadata);
+      },
+      warn(code) {
+        addAuthLog("warn", `NextAuth warn: ${code}`);
+      },
+      debug(code, metadata) {
+        addAuthLog("debug", `NextAuth debug: ${code}`, metadata);
+      },
+    },
+    events: {
+      async signIn(message) {
+        addAuthLog("info", "NextAuth signIn", {
+          provider: message.account?.provider,
+          hasProfile: Boolean(message.profile),
+          isNewUser: message.isNewUser ?? false,
+        });
+      },
+      async signOut() {
+        addAuthLog("info", "NextAuth signOut");
+      },
+      async session(message) {
+        addAuthLog("debug", "NextAuth session", {
+          hasUser: Boolean(message.session?.user),
+          hasToken: Boolean(message.token),
+        });
+      },
+      async linkAccount(message) {
+        addAuthLog("info", "NextAuth linkAccount", {
+          provider: message.account?.provider,
+        });
+      },
+    },
     callbacks: {
       async jwt({ token, account }) {
         if (account) {
+          addAuthLog("info", "JWT account payload received", {
+            provider: account.provider,
+            scope: account.scope,
+            hasRefreshToken: Boolean(account.refresh_token),
+          });
           const expiresIn =
             typeof account.expires_in === "number"
               ? account.expires_in
@@ -124,6 +164,9 @@ export function getAuthOptions(): NextAuthOptions {
         });
 
         if ("error" in refreshed) {
+          addAuthLog("error", "Token refresh failed", {
+            error: refreshed.error,
+          });
           return { ...token, error: refreshed.error };
         }
 

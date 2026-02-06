@@ -477,6 +477,7 @@ export default function PlaylistBrowser() {
       trackId: track.trackId ?? null,
       name: track.name ?? null,
       artistsText: dedupeArtistText(track.artists ?? null) || null,
+      artists: [],
       albumId: track.albumId ?? null,
       albumName: track.albumName ?? null,
       albumImageUrl: track.albumImageUrl ?? null,
@@ -558,6 +559,38 @@ export default function PlaylistBrowser() {
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [selectedTrackDetail]);
+
+  useEffect(() => {
+    if (!selectedTrackDetail?.trackId) return;
+    if (selectedTrackDetail.artists && selectedTrackDetail.artists.length > 0) return;
+    let cancelled = false;
+    async function loadTrackArtists() {
+      try {
+        const res = await fetch(
+          `/api/spotify/tracks/${selectedTrackDetail.trackId}/artists`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const artists = Array.isArray(data?.artists) ? data.artists : [];
+        if (!cancelled) {
+          setSelectedTrackDetail((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  artists: dedupeArtists(artists),
+                }
+              : prev
+          );
+        }
+      } catch {
+        // ignore
+      }
+    }
+    loadTrackArtists();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTrackDetail?.trackId, selectedTrackDetail?.artists]);
 
   useEffect(() => {
     if (!selectedArtistDetail) return;

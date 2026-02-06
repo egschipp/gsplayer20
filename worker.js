@@ -277,6 +277,14 @@ const statements = {
      ORDER BY track_id ASC
      LIMIT ?`
   ),
+  getArtistsMissingMeta: db.prepare(
+    `SELECT artist_id
+     FROM artists
+     WHERE (genres IS NULL OR popularity IS NULL)
+       AND artist_id > ?
+     ORDER BY artist_id ASC
+     LIMIT ?`
+  ),
   updateTrackMeta: db.prepare(
     `UPDATE tracks
      SET album_id=?, album_name=?, album_image_url=?, updated_at=?
@@ -883,6 +891,71 @@ async function syncTrackMetadata(job) {
   return { done: false, nextCursor: lastId };
 }
 
+async function syncArtistMetadata(job) {
+  const payload = job.payload ? JSON.parse(job.payload) : {};
+  const limit = payload.limit || 50;
+  const cursor = payload.cursor || "";
+  const maxBatches =
+    payload.maxBatches || Number(process.env.SYNC_ARTIST_METADATA_BATCHES || "20");
+
+  let batches = 0;
+  let lastId = cursor;
+  const accessToken = await getAppAccessToken();
+
+  while (batches < maxBatches) {
+    const rows = statements.getArtistsMissingMeta.all(lastId, limit);
+    if (!rows.length) {
+      statements.upsertSyncState.run({
+        user_id: job.user_id,
+        resource: "artists",
+        status: "idle",
+        cursor_offset: null,
+        cursor_limit: limit,
+        last_successful_at: Date.now(),
+        retry_after_at: null,
+        failure_count: 0,
+        last_error_code: null,
+        updated_at: Date.now(),
+      });
+      return { done: true };
+    }
+
+    const ids = rows.map((r) => r.artist_id).filter(Boolean);
+    const url = `https://api.spotify.com/v1/artists?ids=${ids.join(",")}`;
+    const data = await spotifyGet(accessToken, url);
+    const now = Date.now();
+
+    for (const artist of data.artists || []) {
+      if (!artist?.id) continue;
+      statements.upsertArtist.run({
+        artist_id: artist.id,
+        name: artist.name || "Unknown Artist",
+        genres: artist.genres ? JSON.stringify(artist.genres) : null,
+        popularity: artist.popularity ?? null,
+        updated_at: now,
+      });
+      lastId = artist.id;
+    }
+
+    batches += 1;
+
+    statements.upsertSyncState.run({
+      user_id: job.user_id,
+      resource: "artists",
+      status: "running",
+      cursor_offset: null,
+      cursor_limit: limit,
+      last_successful_at: Date.now(),
+      retry_after_at: null,
+      failure_count: 0,
+      last_error_code: null,
+      updated_at: Date.now(),
+    });
+  }
+
+  return { done: false, nextCursor: lastId };
+}
+
 async function syncCovers(job) {
   const payload = job.payload ? JSON.parse(job.payload) : {};
   const limit = payload.limit || 50;
@@ -950,6 +1023,16 @@ function enqueueCoversIfMissing(userId) {
     type: "SYNC_TRACK_METADATA",
     payload: JSON.stringify({ limit: 50, maxBatches: 30, cursor: "" }),
     run_after: Date.now() + 1000,
+    status: "queued",
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  });
+  statements.enqueueJob.run({
+    id: crypto.randomUUID(),
+    user_id: userId,
+    type: "SYNC_ARTISTS",
+    payload: JSON.stringify({ limit: 50, maxBatches: 30, cursor: "" }),
+    run_after: Date.now() + 1500,
     status: "queued",
     created_at: Date.now(),
     updated_at: Date.now(),
@@ -1026,6 +1109,32 @@ function schedulePeriodicSync() {
         updated_at: Date.now(),
       });
     }
+
+    const artistJobs = statements.countJobsByType.get("SYNC_ARTISTS");
+    if (!artistJobs || artistJobs.c === 0) {
+      statements.enqueueJob.run({
+        id: crypto.randomUUID(),
+        user_id: user.id,
+        type: "SYNC_ARTISTS",
+        payload: JSON.stringify({ limit: 50, maxBatches: 10, cursor: "" }),
+        run_after: Date.now(),
+        status: "queued",
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+      statements.upsertSyncState.run({
+        user_id: user.id,
+        resource: "artists",
+        status: "queued",
+        cursor_offset: null,
+        cursor_limit: null,
+        last_successful_at: null,
+        retry_after_at: null,
+        failure_count: 0,
+        last_error_code: null,
+        updated_at: Date.now(),
+      });
+    }
   }
 }
 
@@ -1044,6 +1153,9 @@ async function handleJob(job) {
   }
   if (job.type === "SYNC_TRACK_METADATA") {
     return syncTrackMetadata(job);
+  }
+  if (job.type === "SYNC_ARTISTS") {
+    return syncArtistMetadata(job);
   }
   if (job.type === "SYNC_COVERS") {
     return syncCovers(job);
@@ -1069,6 +1181,9 @@ function getResourceForJob(job) {
   }
   if (job.type === "SYNC_TRACK_METADATA") {
     return "track_metadata";
+  }
+  if (job.type === "SYNC_ARTISTS") {
+    return "artists";
   }
   if (job.type === "SYNC_COVERS") {
     return "covers";

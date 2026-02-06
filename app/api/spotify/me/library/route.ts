@@ -2,7 +2,7 @@ import { getDb } from "@/lib/db/client";
 import { tracks, playlistItems, syncState, userPlaylists } from "@/lib/db/schema";
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
-import { rateLimitResponse, requireAppUser, jsonNoStore } from "@/lib/api/guards";
+import { rateLimitResponse, requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -66,7 +66,7 @@ export async function GET(req: Request) {
     .from(syncState)
     .where(eq(syncState.userId, session.appUserId as string));
 
-  return jsonNoStore({
+  return jsonPrivateCache({
     items: rows,
     nextCursor,
     asOf: Date.now(),

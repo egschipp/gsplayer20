@@ -8,7 +8,7 @@ import {
 } from "@/lib/db/schema";
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
-import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
+import { requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -65,5 +65,5 @@ export async function GET(req: Request) {
   const last = rows[rows.length - 1];
   const nextCursor = last ? encodeCursor(0, last.artistId) : null;
 
-  return jsonNoStore({ items: rows, nextCursor, asOf: Date.now() });
+  return jsonPrivateCache({ items: rows, nextCursor, asOf: Date.now() });
 }

@@ -8,7 +8,7 @@ import {
   userPlaylists,
 } from "@/lib/db/schema";
 import { and, eq, or } from "drizzle-orm";
-import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
+import { requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const name = (searchParams.get("name") ?? "").trim();
   if (!name) {
-    return jsonNoStore({ error: "MISSING_NAME" }, 400);
+    return jsonPrivateCache({ error: "MISSING_NAME" }, 400);
   }
 
   const db = getDb();
@@ -63,7 +63,7 @@ export async function GET(req: Request) {
   const unique = new Map<string, typeof rows[number]>();
   for (const row of rows) unique.set(row.artistId, row);
 
-  return jsonNoStore({
+  return jsonPrivateCache({
     items: Array.from(unique.values()),
     asOf: Date.now(),
   });

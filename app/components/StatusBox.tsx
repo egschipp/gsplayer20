@@ -274,7 +274,7 @@ export default function StatusBox() {
       <div className="text-body" style={{ marginBottom: 12 }}>
         Gebruik dit scherm als er iets niet werkt of als je handmatig wil bijwerken.
       </div>
-      <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className="status-badges" style={{ marginBottom: 12 }}>
         <Badge
           label={`App: ${appStatus?.status ?? "CHECKING"}`}
           tone={appStatus?.status === "OK" ? "ok" : "warn"}
@@ -290,13 +290,13 @@ export default function StatusBox() {
         />
       </div>
 
-      <div className="text-body" style={{ marginBottom: 12 }}>
+      <div className="text-body status-summary" style={{ marginBottom: 12 }}>
         <div>Laatst bijgewerkt: {lastSync}</div>
         <div>Worker controle: {workerLast}</div>
         <div>Versie: {versionInfo?.version ?? "n/a"}</div>
       </div>
 
-      <div className="status-grid" style={{ fontSize: 13, marginBottom: 12 }}>
+      <div className="status-grid compact" style={{ marginBottom: 12 }}>
         {importantCounts.length
           ? importantCounts.map((row) => (
               <div key={row.key} className="panel">

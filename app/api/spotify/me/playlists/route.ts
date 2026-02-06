@@ -2,7 +2,7 @@ import { getDb } from "@/lib/db/client";
 import { playlists, userPlaylists, syncState } from "@/lib/db/schema";
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
-import { rateLimitResponse, requireAppUser, jsonNoStore } from "@/lib/api/guards";
+import { rateLimitResponse, requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -75,7 +75,7 @@ export async function GET(req: Request) {
     ? Math.floor((Date.now() - lastSuccessfulAt) / 1000)
     : null;
 
-  return jsonNoStore({
+  return jsonPrivateCache({
     items: rows,
     nextCursor,
     asOf: Date.now(),

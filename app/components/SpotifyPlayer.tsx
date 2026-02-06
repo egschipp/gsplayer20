@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
+import { hasPlaybackScopes } from "@/lib/spotify/scopes";
 
 declare global {
   interface Window {
@@ -26,6 +27,8 @@ type PlayerProps = {
 export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const { data: session, status: sessionStatus } = useSession();
   const accessToken = session?.accessToken as string | undefined;
+  const scope = session?.scope as string | undefined;
+  const playbackAllowed = hasPlaybackScopes(scope);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [playerState, setPlayerState] = useState<{
     name: string;
@@ -67,15 +70,43 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const rateLimitRef = useRef({ until: 0, backoffMs: 5000 });
   const lastRequestAtRef = useRef(0);
   const lastDevicesRefreshRef = useRef(0);
+  const lastSdkEventAtRef = useRef(0);
+  const sdkReadyRef = useRef(false);
+  const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const volumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function formatPlayerError(message?: string | null) {
+    if (!message) return null;
+    const lower = String(message).toLowerCase();
+    if (lower.includes("invalid token scopes") || lower.includes("insufficient_scope")) {
+      return "Ontbrekende Spotify‑rechten. Koppel opnieuw.";
+    }
+    if (lower.includes("authentication") || lower.includes("token")) {
+      return "Verbinding met Spotify is verlopen. Koppel opnieuw.";
+    }
+    return message;
+  }
+
+  const playerErrorMessage = formatPlayerError(error);
   const lastTrackIdRef = useRef<string | null>(null);
   const pendingTrackIdRef = useRef<string | null>(null);
   const trackChangeLockUntilRef = useRef(0);
 
-  const canUseSdk = useMemo(() => Boolean(accessToken), [accessToken]);
+  const canUseSdk = useMemo(
+    () => Boolean(accessToken) && playbackAllowed,
+    [accessToken, playbackAllowed]
+  );
 
   useEffect(() => {
     accessTokenRef.current = accessToken;
   }, [accessToken]);
+
+  useEffect(() => {
+    return () => {
+      if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+      if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current);
+    };
+  }, []);
 
   const setActiveDevice = useCallback((id: string | null, name?: string | null) => {
     setActiveDeviceId(id);
@@ -131,29 +162,36 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   useEffect(() => {
     if (!canUseSdk) {
       onReady(null);
+      if (accessToken && !playbackAllowed) {
+        setError("Ontbrekende Spotify‑rechten. Koppel opnieuw.");
+      }
       return;
     }
 
     if (window.Spotify) {
-      initializePlayer();
-      return;
+      const cleanup = initializePlayer();
+      return () => {
+        if (typeof cleanup === "function") cleanup();
+      };
     }
 
     const script = document.createElement("script");
     script.src = "https://sdk.scdn.co/spotify-player.js";
     script.async = true;
     document.body.appendChild(script);
+    let cleanup: (() => void) | undefined;
     window.onSpotifyWebPlaybackSDKReady = () => {
-      initializePlayer();
+      cleanup = initializePlayer();
     };
 
     return () => {
       if (script.parentNode) script.parentNode.removeChild(script);
+      if (typeof cleanup === "function") cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUseSdk, accessToken]);
 
-  async function initializePlayer() {
+  function initializePlayer() {
     if (!accessToken || readyRef.current) return;
     readyRef.current = true;
 
@@ -163,10 +201,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       volume: 0.8,
     });
 
-    player.addListener("ready", async ({ device_id }: { device_id: string }) => {
+    const onSdkReady = async ({ device_id }: { device_id: string }) => {
       setDeviceId(device_id);
       deviceIdRef.current = device_id;
       sdkDeviceIdRef.current = device_id;
+      sdkReadyRef.current = true;
+      lastSdkEventAtRef.current = Date.now();
       const token = accessTokenRef.current;
       if (token) {
         try {
@@ -201,15 +241,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           // ignore
         }
       }
-    });
+    };
 
-    player.addListener("not_ready", () => {
+    const onNotReady = () => {
       setDeviceId(null);
       sdkDeviceIdRef.current = null;
-    });
+      sdkReadyRef.current = false;
+    };
 
-    player.addListener("player_state_changed", (state: any) => {
+    const onStateChanged = (state: any) => {
       if (!state) return;
+      lastSdkEventAtRef.current = Date.now();
       if (
         activeDeviceIdRef.current &&
         activeDeviceIdRef.current !== sdkDeviceIdRef.current
@@ -243,20 +285,28 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setPositionMs(isNewTrack || !allowProgressUpdate ? 0 : nextPosition);
       setDurationMs(nextDuration);
       if (onTrackChange) onTrackChange(trackId);
-    });
+    };
 
-    player.addListener("initialization_error", ({ message }: { message: string }) => {
+    const onInitError = ({ message }: { message: string }) => {
       setError(message);
-    });
-    player.addListener("authentication_error", ({ message }: { message: string }) => {
+    };
+    const onAuthError = ({ message }: { message: string }) => {
       setError(message);
-    });
-    player.addListener("account_error", ({ message }: { message: string }) => {
+    };
+    const onAccountError = ({ message }: { message: string }) => {
       setError(message);
-    });
-    player.addListener("autoplay_failed", () => {
+    };
+    const onAutoplayFailed = () => {
       setError("Autoplay is geblokkeerd door de browser. Klik op Play.");
-    });
+    };
+
+    player.addListener("ready", onSdkReady);
+    player.addListener("not_ready", onNotReady);
+    player.addListener("player_state_changed", onStateChanged);
+    player.addListener("initialization_error", onInitError);
+    player.addListener("authentication_error", onAuthError);
+    player.addListener("account_error", onAccountError);
+    player.addListener("autoplay_failed", onAutoplayFailed);
 
     player.connect();
     playerRef.current = player;
@@ -319,6 +369,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     };
 
     onReady(api);
+
+    return () => {
+      player.removeListener("ready", onSdkReady);
+      player.removeListener("not_ready", onNotReady);
+      player.removeListener("player_state_changed", onStateChanged);
+      player.removeListener("initialization_error", onInitError);
+      player.removeListener("authentication_error", onAuthError);
+      player.removeListener("account_error", onAccountError);
+      player.removeListener("autoplay_failed", onAutoplayFailed);
+      player.disconnect();
+    };
   }
 
   useEffect(() => {
@@ -378,6 +439,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     async function poll() {
       const token = accessTokenRef.current;
       if (!token || cancelled) return;
+      const now = Date.now();
+      if (sdkReadyRef.current && now - lastSdkEventAtRef.current < 4000) {
+        scheduleNext();
+        return;
+      }
       const res = await spotifyRequest("https://api.spotify.com/v1/me/player");
       if (!res) {
         scheduleNext();
@@ -581,33 +647,35 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
-    if (currentDevice === sdkDeviceIdRef.current) {
-      await playerRef.current?.seek?.(Math.floor(nextMs));
-      setPositionMs(nextMs);
-      return;
-    }
-    const res = await fetch(
-      `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=${Math.floor(
-        nextMs
-      )}`,
-      {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
-    if (res.status === 429) {
-      const retry = res.headers.get("Retry-After");
-      const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
-      rateLimitRef.current.until = Date.now() + retryMs;
-      rateLimitRef.current.backoffMs = Math.min(
-        rateLimitRef.current.backoffMs * 2,
-        60000
-      );
-      setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
-      return;
-    }
-    rateLimitRef.current.backoffMs = 5000;
     setPositionMs(nextMs);
+    if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+    seekTimerRef.current = setTimeout(async () => {
+      if (currentDevice === sdkDeviceIdRef.current) {
+        await playerRef.current?.seek?.(Math.floor(nextMs));
+        return;
+      }
+      const res = await fetch(
+        `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=${Math.floor(
+          nextMs
+        )}`,
+        {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (res.status === 429) {
+        const retry = res.headers.get("Retry-After");
+        const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+        rateLimitRef.current.until = Date.now() + retryMs;
+        rateLimitRef.current.backoffMs = Math.min(
+          rateLimitRef.current.backoffMs * 2,
+          60000
+        );
+        setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
+        return;
+      }
+      rateLimitRef.current.backoffMs = 5000;
+    }, 300);
   }
 
   async function handleVolume(nextVolume: number) {
@@ -620,30 +688,36 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       const token = accessTokenRef.current;
       if (!token) return;
       if (Date.now() < rateLimitRef.current.until) return;
-      const res = await fetch(
-        `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(
-          clamped * 100
-        )}&device_id=${activeDeviceIdRef.current}`,
-        {
-          method: "PUT",
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-      if (res.status === 429) {
-        const retry = res.headers.get("Retry-After");
-        const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
-        rateLimitRef.current.until = Date.now() + retryMs;
-        rateLimitRef.current.backoffMs = Math.min(
-          rateLimitRef.current.backoffMs * 2,
-          30000
+      if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current);
+      volumeTimerRef.current = setTimeout(async () => {
+        const res = await fetch(
+          `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(
+            clamped * 100
+          )}&device_id=${activeDeviceIdRef.current}`,
+          {
+            method: "PUT",
+            headers: { Authorization: `Bearer ${token}` },
+          }
         );
-        setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
-        return;
-      }
-      rateLimitRef.current.backoffMs = 2500;
+        if (res.status === 429) {
+          const retry = res.headers.get("Retry-After");
+          const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+          rateLimitRef.current.until = Date.now() + retryMs;
+          rateLimitRef.current.backoffMs = Math.min(
+            rateLimitRef.current.backoffMs * 2,
+            60000
+          );
+          setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
+          return;
+        }
+        rateLimitRef.current.backoffMs = 5000;
+      }, 250);
       return;
     }
-    await playerRef.current?.setVolume?.(clamped);
+    if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current);
+    volumeTimerRef.current = setTimeout(async () => {
+      await playerRef.current?.setVolume?.(clamped);
+    }, 250);
   }
 
   async function transferPlayback(id: string, play = false) {
@@ -688,6 +762,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           <div className="text-body">
             Verbind Spotify om in de browser af te spelen.
           </div>
+          {!playbackAllowed && accessToken ? (
+            <div className="text-subtle">
+              Je mist rechten voor afspelen. Koppel opnieuw om door te gaan.
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -716,7 +795,23 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         {playerState?.album ? (
           <div className="text-subtle">{playerState.album}</div>
         ) : null}
-        {error ? <div className="text-subtle">Probleem met afspelen: {error}</div> : null}
+        {playerErrorMessage ? (
+          <div className="text-subtle">
+            Probleem met afspelen: {playerErrorMessage}
+            {playerErrorMessage.includes("Koppel opnieuw") ? (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ marginLeft: 8 }}
+                onClick={() => {
+                  window.location.href = "/api/auth/login";
+                }}
+              >
+                Opnieuw verbinden
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {activeDeviceRestricted ? (
           <div className="text-subtle">
             Dit apparaat ondersteunt geen afstandsbediening.

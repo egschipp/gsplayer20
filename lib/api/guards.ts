@@ -65,6 +65,19 @@ export function jsonNoStore(
   });
 }
 
+export function jsonPrivateCache(
+  body: Record<string, unknown> | unknown,
+  status = 200,
+  maxAgeSeconds = 30
+) {
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "Cache-Control": `private, max-age=${maxAgeSeconds}, must-revalidate`,
+    },
+  });
+}
+
 export function requireSameOrigin(req: Request) {
   const baseUrl = process.env.NEXTAUTH_URL || process.env.AUTH_URL;
   const expectedOrigin = baseUrl

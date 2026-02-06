@@ -4,7 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { getAppAccessToken } from "@/lib/spotify/tokens";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
-import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
+import { requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -17,7 +17,7 @@ export async function GET(
 
   const { artistId } = await ctx.params;
   if (!artistId) {
-    return jsonNoStore({ error: "MISSING_ARTIST" }, 400);
+    return jsonPrivateCache({ error: "MISSING_ARTIST" }, 400);
   }
 
   const db = getDb();
@@ -38,7 +38,7 @@ export async function GET(
     .get();
 
   if (!row) {
-    return jsonNoStore({ error: "NOT_FOUND" }, 404);
+    return jsonPrivateCache({ error: "NOT_FOUND" }, 404);
   }
 
   let genres: string[] = [];
@@ -128,7 +128,7 @@ export async function GET(
     }
   }
 
-  return jsonNoStore({
+  return jsonPrivateCache({
     artistId: row.artistId,
     name: row.name,
     genres,

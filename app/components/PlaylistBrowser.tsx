@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FixedSizeList as List, type ListChildComponentProps } from "react-window";
 import SpotifyPlayer, { type PlayerApi } from "./SpotifyPlayer";
 import ChatGptButton from "./playlist/ChatGptButton";
 import PlaylistChips from "./playlist/PlaylistChips";
@@ -59,10 +60,23 @@ export default function PlaylistBrowser() {
   const suppressCloseRef = useRef(false);
   const playerApiRef = useRef<PlayerApi | null>(null);
   const MAX_PLAYLIST_CHIPS = 2;
+  const [listHeight, setListHeight] = useState(560);
+  const ROW_HEIGHT = 96;
   const allPlaylistNames = useMemo(
     () => playlistOptions.map((pl) => pl.name || "Untitled playlist"),
     [playlistOptions]
   );
+
+  useEffect(() => {
+    function handleResize() {
+      if (typeof window === "undefined") return;
+      const next = Math.min(720, Math.max(360, Math.round(window.innerHeight * 0.6)));
+      setListHeight(next);
+    }
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -589,12 +603,14 @@ export default function PlaylistBrowser() {
           }}
         />
       </div>
-      <div className="panel" style={{ marginBottom: 16 }}>
-        <div style={{ fontWeight: 600, marginBottom: 6 }}>Snelle start</div>
-        <div className="text-body">
-          1. Verbind Spotify. 2. Kies een playlist of artiest. 3. Start afspelen.
-        </div>
-        {authRequired ? (
+      {authRequired ? (
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>
+            Spotify is nog niet verbonden
+          </div>
+          <div className="text-body">
+            Verbind je account om af te spelen en playlists te laden.
+          </div>
           <div style={{ marginTop: 10 }}>
             <button
               type="button"
@@ -606,8 +622,8 @@ export default function PlaylistBrowser() {
               Spotify verbinden
             </button>
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       <div className="segmented" role="tablist" aria-label="Library modes">
         {(["playlists", "artists", "tracks"] as Mode[]).map((value) => (
           <button
@@ -863,122 +879,31 @@ export default function PlaylistBrowser() {
               <div>Duur / Acties</div>
             </div>
           ) : null}
-          {tracks.map((track, idx) => (
-            <div
-              key={`${track.itemId || track.trackId || idx}`}
-              className="track-row"
-              style={
-                mode === "artists" || mode === "playlists"
-                  ? { gridTemplateColumns: "98px 1fr 1fr auto" }
-                  : undefined
-              }
-              role="button"
-              tabIndex={0}
-              onClick={() => openDetailFromRow(track)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  openDetailFromRow(track);
-                }
+          {tracks.length ? (
+            <List
+              height={listHeight}
+              itemCount={tracks.length}
+              itemSize={ROW_HEIGHT}
+              width="100%"
+              overscanCount={6}
+              itemKey={(index: number, data: TrackRowData) => {
+                const item = data.items[index];
+                return item.itemId || item.trackId || index;
               }}
+              itemData={{
+                items: tracks,
+                mode,
+                currentTrackId,
+                openDetailFromRow,
+                handlePlayTrack,
+                allPlaylistNames,
+                MAX_PLAYLIST_CHIPS,
+              }}
+              className="track-virtual-list"
             >
-              <div
-                style={{ display: "flex", alignItems: "center", gap: 10 }}
-                onClick={(event) => event.stopPropagation()}
-              >
-                <button
-                  type="button"
-                  className="play-btn"
-                  aria-label="Track afspelen"
-                  title="Afspelen"
-                  disabled={!track.trackId}
-                  onClick={() => handlePlayTrack(track.trackId)}
-                >
-                  ▶
-                </button>
-                {track.coverUrl || track.albumImageUrl ? (
-                  <Image
-                    src={(track.coverUrl || track.albumImageUrl) as string}
-                    alt={track.albumName || "Album cover"}
-                    width={56}
-                    height={56}
-                    unoptimized
-                    style={{ borderRadius: 12, objectFit: "cover" }}
-                  />
-                ) : (
-                  <div
-                    style={{
-                      width: 56,
-                      height: 56,
-                      borderRadius: 12,
-                      background: "#2a2a2a",
-                    }}
-                  />
-                )}
-              </div>
-                <div>
-                  <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
-                  {track.name || "Onbekend"}
-                  {currentTrackId && track.trackId === currentTrackId ? (
-                    <span className="playing-indicator" aria-label="Now playing">
-                      ▶
-                    </span>
-                  ) : null}
-                </div>
-                <div className="text-body">
-                  {dedupeArtistText(track.artists || "") || "Onbekende artiest"}
-                </div>
-                {track.albumName ? (
-                  <div className="text-subtle">{track.albumName}</div>
-                ) : null}
-              </div>
-              {mode === "artists" || mode === "playlists" ? (
-                <div>
-                  <PlaylistChips
-                    playlists={track.playlists}
-                    maxVisible={MAX_PLAYLIST_CHIPS}
-                  />
-                </div>
-              ) : null}
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div className="text-subtle">
-                  {formatDuration(track.durationMs)}
-                </div>
-                <ChatGptButton
-                  trackUrl={
-                    track.trackId
-                      ? `https://open.spotify.com/track/${track.trackId}`
-                      : null
-                  }
-                  playlistNames={allPlaylistNames}
-                />
-                {track.trackId ? (
-                  <a
-                    href={`https://open.spotify.com/track/${track.trackId}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label="Openen in Spotify"
-                    title="Openen in Spotify"
-                    style={{ color: "var(--text-primary)", display: "inline-flex" }}
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <svg
-                      aria-hidden="true"
-                      viewBox="0 0 24 24"
-                      width="18"
-                      height="18"
-                      fill="currentColor"
-                    >
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm4.6 14.52c-.18.3-.57.4-.87.22-2.4-1.46-5.42-1.8-8.97-1.02-.34.08-.68-.13-.76-.47-.08-.34.13-.68.47-.76 3.86-.86 7.2-.47 9.9 1.18.3.18.4.57.22.87Zm1.24-2.76c-.22.36-.7.48-1.06.26-2.74-1.68-6.92-2.17-10.17-1.18-.41.12-.85-.11-.97-.52-.12-.41.11-.85.52-.97 3.71-1.12 8.33-.57 11.47 1.36.36.22.48.7.26 1.05Zm.11-2.87c-3.28-1.95-8.69-2.13-11.82-1.18-.49.15-1.02-.13-1.17-.62-.15-.49.13-1.02.62-1.17 3.59-1.09 9.56-.88 13.33 1.36.44.26.58.83.32 1.27-.26.44-.83.58-1.27.32Z" />
-                    </svg>
-                  </a>
-                ) : null}
-                {track.trackId ? (
-                  <span className="text-subtle">Spotify</span>
-                ) : null}
-              </div>
-            </div>
-          ))}
+              {TrackRowRenderer}
+            </List>
+          ) : null}
         </div>
       ) : (
         <div className="track-list" style={{ marginTop: 16 }}>
@@ -1001,116 +926,30 @@ export default function PlaylistBrowser() {
               <div>Acties</div>
             </div>
           ) : null}
-          {filteredTrackItems.map((track) => {
-            const coverUrl = track.album?.images?.[0]?.url ?? null;
-            const artistNames = track.artists
-              .map((artist) => artist?.name)
-              .filter(Boolean)
-              .join(", ");
-            const uniqueArtistNames = dedupeArtistText(artistNames);
-            return (
-              <div
-                key={track.id}
-                className="track-row"
-                style={{ gridTemplateColumns: "98px 1fr 1fr auto" }}
-                role="button"
-                tabIndex={0}
-                onClick={() => openDetailFromItem(track)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    openDetailFromItem(track);
-                  }
-                }}
-              >
-                <div
-                  style={{ display: "flex", alignItems: "center", gap: 10 }}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    className="play-btn"
-                    aria-label="Track afspelen"
-                    title="Afspelen"
-                    onClick={() => handlePlayTrack(track.id)}
-                  >
-                    ▶
-                  </button>
-                  {coverUrl ? (
-                    <Image
-                      src={coverUrl}
-                      alt={track.album?.name || "Album cover"}
-                      width={56}
-                      height={56}
-                      unoptimized
-                      style={{ borderRadius: 12, objectFit: "cover" }}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        width: 56,
-                        height: 56,
-                        borderRadius: 12,
-                      background: "#2a2a2a",
-                    }}
-                  />
-                )}
-                </div>
-                <div>
-                  <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
-                    {track.name}
-                    {currentTrackId && track.id === currentTrackId ? (
-                      <span className="playing-indicator" aria-label="Now playing">
-                        ▶
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="text-body">
-                    {uniqueArtistNames || "Onbekende artiest"}
-                  </div>
-                  {track.album?.name ? (
-                    <div className="text-subtle">{track.album.name}</div>
-                  ) : null}
-                </div>
-                <div>
-                  <PlaylistChips
-                    playlists={track.playlists}
-                    maxVisible={MAX_PLAYLIST_CHIPS}
-                  />
-                </div>
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-                  <ChatGptButton
-                    trackUrl={
-                      track.id ? `https://open.spotify.com/track/${track.id}` : null
-                    }
-                    playlistNames={allPlaylistNames}
-                  />
-                  <a
-                    href={`https://open.spotify.com/track/${track.id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label="Openen in Spotify"
-                    title="Openen in Spotify"
-                    style={{ color: "var(--text-primary)", display: "inline-flex" }}
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <svg
-                      aria-hidden="true"
-                      viewBox="0 0 24 24"
-                      width="18"
-                      height="18"
-                      fill="currentColor"
-                    >
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm4.6 14.52c-.18.3-.57.4-.87.22-2.4-1.46-5.42-1.8-8.97-1.02-.34.08-.68-.13-.76-.47-.08-.34.13-.68.47-.76 3.86-.86 7.2-.47 9.9 1.18.3.18.4.57.22.87Zm1.24-2.76c-.22.36-.7.48-1.06.26-2.74-1.68-6.92-2.17-10.17-1.18-.41.12-.85-.11-.97-.52-.12-.41.11-.85.52-.97 3.71-1.12 8.33-.57 11.47 1.36.36.22.48.7.26 1.05Zm.11-2.87c-3.28-1.95-8.69-2.13-11.82-1.18-.49.15-1.02-.13-1.17-.62-.15-.49.13-1.02.62-1.17 3.59-1.09 9.56-.88 13.33 1.36.44.26.58.83.32 1.27-.26.44-.83.58-1.27.32Z" />
-                    </svg>
-                  </a>
-                  <span className="text-subtle" style={{ marginLeft: 6 }}>
-                    Spotify
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+          {filteredTrackItems.length ? (
+            <List
+              height={listHeight}
+              itemCount={filteredTrackItems.length}
+              itemSize={ROW_HEIGHT}
+              width="100%"
+              overscanCount={6}
+              itemKey={(index: number, data: TrackItemData) => {
+                const item = data.items[index];
+                return item.id || index;
+              }}
+              itemData={{
+                items: filteredTrackItems,
+                currentTrackId,
+                openDetailFromItem,
+                handlePlayTrack,
+                allPlaylistNames,
+                MAX_PLAYLIST_CHIPS,
+              }}
+              className="track-virtual-list"
+            >
+              {TrackItemRenderer}
+            </List>
+          ) : null}
         </div>
       )}
 
@@ -1171,7 +1010,7 @@ export default function PlaylistBrowser() {
                   </div>
                   {selectedTrackDetail.artists?.length ? (
                     <div className="text-body">
-                      {selectedTrackDetail.artists.map((artist, index) => (
+                      {selectedTrackDetail.artists.map((artist: { id: string; name: string }, index) => (
                         <span key={artist.id}>
                           <button
                             type="button"
@@ -1260,7 +1099,7 @@ export default function PlaylistBrowser() {
                     <div className="track-detail-field">
                       {selectedTrackDetail.artists?.length ? (
                         <div>
-                          {selectedTrackDetail.artists.map((artist) => (
+                          {selectedTrackDetail.artists.map((artist: { id: string; name: string }) => (
                             <div key={artist.id}>
                               <button
                                 type="button"
@@ -1409,5 +1248,265 @@ export default function PlaylistBrowser() {
         </div>
       ) : null}
     </section>
+  );
+}
+
+type TrackRowData = {
+  items: TrackRow[];
+  mode: Mode;
+  currentTrackId: string | null;
+  openDetailFromRow: (track: TrackRow) => void;
+  handlePlayTrack: (trackId: string | null | undefined) => Promise<void>;
+  allPlaylistNames: string[];
+  MAX_PLAYLIST_CHIPS: number;
+};
+
+function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackRowData>) {
+  const track = data.items[index];
+  const isGrid = data.mode === "artists" || data.mode === "playlists";
+  return (
+    <div
+      style={style}
+      className="track-row"
+      role="button"
+      tabIndex={0}
+      onClick={() => data.openDetailFromRow(track)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          data.openDetailFromRow(track);
+        }
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: isGrid ? "98px 1fr 1fr auto" : "98px 1fr auto",
+          gap: 12,
+          alignItems: "center",
+          height: "100%",
+          padding: "12px",
+        }}
+      >
+        <div
+          style={{ display: "flex", alignItems: "center", gap: 10 }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="play-btn"
+            aria-label="Track afspelen"
+            title="Afspelen"
+            disabled={!track.trackId}
+            onClick={() => data.handlePlayTrack(track.trackId)}
+          >
+            ▶
+          </button>
+          {track.coverUrl || track.albumImageUrl ? (
+            <Image
+              src={(track.coverUrl || track.albumImageUrl) as string}
+              alt={track.albumName || "Album cover"}
+              width={56}
+              height={56}
+              unoptimized
+              style={{ borderRadius: 12, objectFit: "cover" }}
+            />
+          ) : (
+            <div
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: 12,
+                background: "#2a2a2a",
+              }}
+            />
+          )}
+        </div>
+        <div>
+          <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
+            {track.name || "Onbekend"}
+            {data.currentTrackId && track.trackId === data.currentTrackId ? (
+              <span className="playing-indicator" aria-label="Now playing">
+                ▶
+              </span>
+            ) : null}
+          </div>
+          <div className="text-body">
+            {dedupeArtistText(track.artists || "") || "Onbekende artiest"}
+          </div>
+          {track.albumName ? (
+            <div className="text-subtle">{track.albumName}</div>
+          ) : null}
+        </div>
+        {isGrid ? (
+          <div>
+            <PlaylistChips
+              playlists={track.playlists}
+              maxVisible={data.MAX_PLAYLIST_CHIPS}
+            />
+          </div>
+        ) : null}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div className="text-subtle">{formatDuration(track.durationMs)}</div>
+          <ChatGptButton
+            trackUrl={
+              track.trackId ? `https://open.spotify.com/track/${track.trackId}` : null
+            }
+            playlistNames={data.allPlaylistNames}
+          />
+          {track.trackId ? (
+            <a
+              href={`https://open.spotify.com/track/${track.trackId}`}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Openen in Spotify"
+              title="Openen in Spotify"
+              style={{ color: "var(--text-primary)", display: "inline-flex" }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+                fill="currentColor"
+              >
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm4.6 14.52c-.18.3-.57.4-.87.22-2.4-1.46-5.42-1.8-8.97-1.02-.34.08-.68-.13-.76-.47-.08-.34.13-.68.47-.76 3.86-.86 7.2-.47 9.9 1.18.3.18.4.57.22.87Zm1.24-2.76c-.22.36-.7.48-1.06.26-2.74-1.68-6.92-2.17-10.17-1.18-.41.12-.85-.11-.97-.52-.12-.41.11-.85.52-.97 3.71-1.12 8.33-.57 11.47 1.36.36.22.48.7.26 1.05Zm.11-2.87c-3.28-1.95-8.69-2.13-11.82-1.18-.49.15-1.02-.13-1.17-.62-.15-.49.13-1.02.62-1.17 3.59-1.09 9.56-.88 13.33 1.36.44.26.58.83.32 1.27-.26.44-.83.58-1.27.32Z" />
+              </svg>
+            </a>
+          ) : null}
+          {track.trackId ? <span className="text-subtle">Spotify</span> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type TrackItemData = {
+  items: TrackItem[];
+  currentTrackId: string | null;
+  openDetailFromItem: (track: TrackItem) => void;
+  handlePlayTrack: (trackId: string | null | undefined) => Promise<void>;
+  allPlaylistNames: string[];
+  MAX_PLAYLIST_CHIPS: number;
+};
+
+function TrackItemRenderer({
+  index,
+  style,
+  data,
+}: ListChildComponentProps<TrackItemData>) {
+  const track = data.items[index];
+  const coverUrl = track.album?.images?.[0]?.url ?? null;
+  const artistNames = track.artists
+    .map((artist) => artist?.name)
+    .filter(Boolean)
+    .join(", ");
+  const uniqueArtistNames = dedupeArtistText(artistNames);
+  return (
+    <div
+      style={style}
+      className="track-row"
+      role="button"
+      tabIndex={0}
+      onClick={() => data.openDetailFromItem(track)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          data.openDetailFromItem(track);
+        }
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "98px 1fr 1fr auto",
+          gap: 12,
+          alignItems: "center",
+          height: "100%",
+          padding: "12px",
+        }}
+      >
+        <div
+          style={{ display: "flex", alignItems: "center", gap: 10 }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="play-btn"
+            aria-label="Track afspelen"
+            title="Afspelen"
+            onClick={() => data.handlePlayTrack(track.id)}
+          >
+            ▶
+          </button>
+          {coverUrl ? (
+            <Image
+              src={coverUrl}
+              alt={track.album?.name || "Album cover"}
+              width={56}
+              height={56}
+              unoptimized
+              style={{ borderRadius: 12, objectFit: "cover" }}
+            />
+          ) : (
+            <div
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: 12,
+                background: "#2a2a2a",
+              }}
+            />
+          )}
+        </div>
+        <div>
+          <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
+            {track.name}
+            {data.currentTrackId && track.id === data.currentTrackId ? (
+              <span className="playing-indicator" aria-label="Now playing">
+                ▶
+              </span>
+            ) : null}
+          </div>
+          <div className="text-body">{uniqueArtistNames || "Onbekende artiest"}</div>
+          {track.album?.name ? <div className="text-subtle">{track.album.name}</div> : null}
+        </div>
+        <div>
+          <PlaylistChips
+            playlists={track.playlists}
+            maxVisible={data.MAX_PLAYLIST_CHIPS}
+          />
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <ChatGptButton
+            trackUrl={track.id ? `https://open.spotify.com/track/${track.id}` : null}
+            playlistNames={data.allPlaylistNames}
+          />
+          <a
+            href={`https://open.spotify.com/track/${track.id}`}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Openen in Spotify"
+            title="Openen in Spotify"
+            style={{ color: "var(--text-primary)", display: "inline-flex" }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="currentColor"
+            >
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm4.6 14.52c-.18.3-.57.4-.87.22-2.4-1.46-5.42-1.8-8.97-1.02-.34.08-.68-.13-.76-.47-.08-.34.13-.68.47-.76 3.86-.86 7.2-.47 9.9 1.18.3.18.4.57.22.87Zm1.24-2.76c-.22.36-.7.48-1.06.26-2.74-1.68-6.92-2.17-10.17-1.18-.41.12-.85-.11-.97-.52-.12-.41.11-.85.52-.97 3.71-1.12 8.33-.57 11.47 1.36.36.22.48.7.26 1.05Zm.11-2.87c-3.28-1.95-8.69-2.13-11.82-1.18-.49.15-1.02-.13-1.17-.62-.15-.49.13-1.02.62-1.17 3.59-1.09 9.56-.88 13.33 1.36.44.26.58.83.32 1.27-.26.44-.83.58-1.27.32Z" />
+            </svg>
+          </a>
+          <span className="text-subtle" style={{ marginLeft: 6 }}>
+            Spotify
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }

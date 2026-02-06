@@ -8,7 +8,7 @@ import {
 } from "@/lib/db/schema";
 import { and, eq, or } from "drizzle-orm";
 import { getAppAccessToken } from "@/lib/spotify/tokens";
-import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
+import { requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,7 @@ export async function GET(
 
   const { trackId } = await ctx.params;
   if (!trackId) {
-    return jsonNoStore({ error: "MISSING_TRACK" }, 400);
+    return jsonPrivateCache({ error: "MISSING_TRACK" }, 400);
   }
 
   const db = getDb();
@@ -81,7 +81,7 @@ export async function GET(
       const token = await getAppAccessToken();
       const ids = missing.map((artist) => artist.artistId).filter(Boolean);
       if (!ids.length) {
-        return jsonNoStore({ items, asOf: Date.now() });
+        return jsonPrivateCache({ items, asOf: Date.now() });
       }
       for (let i = 0; i < ids.length; i += 50) {
         const batch = ids.slice(i, i + 50);
@@ -125,5 +125,5 @@ export async function GET(
     .groupBy(artists.artistId)
     .orderBy(artists.name);
 
-  return jsonNoStore({ items: refreshed, asOf: Date.now() });
+  return jsonPrivateCache({ items: refreshed, asOf: Date.now() });
 }

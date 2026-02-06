@@ -2,7 +2,7 @@ import { getDb } from "@/lib/db/client";
 import { userSavedTracks, tracks, syncState, trackArtists, artists } from "@/lib/db/schema";
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
-import { rateLimitResponse, requireAppUser, jsonNoStore } from "@/lib/api/guards";
+import { rateLimitResponse, requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -79,7 +79,7 @@ export async function GET(req: Request) {
     ? Math.floor((Date.now() - lastSuccessfulAt) / 1000)
     : null;
 
-  return jsonNoStore({
+  return jsonPrivateCache({
     items: rows.map((row) => ({
       ...row,
       coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,

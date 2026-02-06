@@ -12,7 +12,7 @@ import {
 } from "@/lib/db/schema";
 import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
-import { rateLimitResponse, requireAppUser, jsonNoStore } from "@/lib/api/guards";
+import { rateLimitResponse, requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -31,7 +31,7 @@ export async function GET(
 
   const { playlistId } = await ctx.params;
   if (!playlistId) {
-    return jsonNoStore({ error: "MISSING_PLAYLIST" }, 400);
+    return jsonPrivateCache({ error: "MISSING_PLAYLIST" }, 400);
   }
 
   const { searchParams } = new URL(req.url);
@@ -159,7 +159,7 @@ export async function GET(
     ? Math.floor((Date.now() - lastSuccessfulAt) / 1000)
     : null;
 
-  return jsonNoStore({
+  return jsonPrivateCache({
     items: rows.map((row) => ({
       ...row,
       coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,

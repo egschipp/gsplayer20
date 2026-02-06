@@ -426,6 +426,23 @@ a:focus-visible {
   gap: 10px;
 }
 
+.status-grid.compact .panel {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+}
+
+.status-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.status-summary {
+  display: grid;
+  gap: 4px;
+}
+
+
 .track-list {
   display: grid;
   gap: 10px;
@@ -538,6 +555,19 @@ details[open] > .details-summary::after {
   gap: 12px;
   align-items: center;
   padding: 12px;
+  border-radius: 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.track-virtual-list .track-row {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: block;
+}
+
+.track-virtual-list .track-row > div {
   border-radius: 1.25rem;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(0, 0, 0, 0.4);

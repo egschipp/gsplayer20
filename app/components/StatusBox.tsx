@@ -62,6 +62,8 @@ export default function StatusBox() {
   const [authLog, setAuthLog] = useState<AuthLog>(null);
   const [authLogLoading, setAuthLogLoading] = useState(false);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [syncCooldownUntil, setSyncCooldownUntil] = useState<number | null>(null);
+  const [syncCooldownMessage, setSyncCooldownMessage] = useState<string | null>(null);
 
   async function refresh() {
     try {
@@ -305,21 +307,37 @@ export default function StatusBox() {
           onClick={async () => {
             setSyncing(true);
             try {
-              await fetch("/api/spotify/sync", {
+              const res = await fetch("/api/spotify/sync", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ type: "artists" }),
               });
+              if (res.status === 429) {
+                const retry = res.headers.get("Retry-After");
+                const retrySec = retry ? Number(retry) : 60;
+                const until = Date.now() + retrySec * 1000;
+                setSyncCooldownUntil(until);
+                setSyncCooldownMessage(
+                  `Rate limited. Try again in ${retrySec}s.`
+                );
+                return;
+              }
+              setSyncCooldownMessage(null);
             } finally {
               setSyncing(false);
               refresh();
             }
           }}
-          disabled={syncing}
+          disabled={
+            syncing || (syncCooldownUntil !== null && Date.now() < syncCooldownUntil)
+          }
           className="btn btn-secondary"
         >
           Sync artists
         </button>
+        {syncCooldownMessage ? (
+          <span className="text-body">{syncCooldownMessage}</span>
+        ) : null}
         <button
           onClick={loadAuthLog}
           disabled={authLogLoading}

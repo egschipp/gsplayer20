@@ -40,6 +40,7 @@ export async function GET() {
     tracksCount,
     coversCount,
     artistsCount,
+    artistsWithMetaCount,
     playlistItemsCount,
     userPlaylistsCount,
     trackArtistsCount,
@@ -57,6 +58,11 @@ export async function GET() {
       .where(isNotNull(tracks.albumImageBlob))
       .get(),
     count(artists, db),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(artists)
+      .where(isNotNull(artists.genres))
+      .get(),
     count(playlistItems, db),
     count(userPlaylists, db),
     count(trackArtists, db),
@@ -83,6 +89,7 @@ export async function GET() {
       tracks: tracksCount?.count ?? 0,
       cover_images: coversCount?.count ?? 0,
       artists: artistsCount?.count ?? 0,
+      artists_with_genres: artistsWithMetaCount?.count ?? 0,
       playlist_items: playlistItemsCount?.count ?? 0,
       user_playlists: userPlaylistsCount?.count ?? 0,
       track_artists: trackArtistsCount?.count ?? 0,

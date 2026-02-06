@@ -4,6 +4,7 @@ import { getAuthOptions } from "@/lib/auth/options";
 import { getDb } from "@/lib/db/client";
 import { artists, trackArtists, tracks } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
+import { getAppAccessToken } from "@/lib/spotify/tokens";
 
 export const runtime = "nodejs";
 
@@ -42,13 +43,45 @@ export async function GET(
     return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
   }
 
-  const genres = row.genres ? JSON.parse(row.genres) : [];
+  let genres = row.genres ? JSON.parse(row.genres) : [];
+  let popularity = row.popularity ?? null;
+
+  if ((!genres || genres.length === 0) && popularity === null) {
+    try {
+      const token = await getAppAccessToken();
+      const res = await fetch(
+        `https://api.spotify.com/v1/artists/${artistId}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        genres = Array.isArray(data?.genres) ? data.genres : [];
+        popularity =
+          data?.popularity === null || data?.popularity === undefined
+            ? null
+            : Number(data.popularity);
+        await db
+          .update(artists)
+          .set({
+            genres: genres.length ? JSON.stringify(genres) : null,
+            popularity,
+            updatedAt: Date.now(),
+          })
+          .where(eq(artists.artistId, artistId))
+          .run();
+      }
+    } catch {
+      // best-effort enrichment; keep existing values
+    }
+  }
 
   return NextResponse.json({
     artistId: row.artistId,
     name: row.name,
     genres,
-    popularity: row.popularity,
+    popularity,
     updatedAt: row.updatedAt,
     tracksCount: row.tracksCount ?? 0,
     spotifyUrl: row.artistId

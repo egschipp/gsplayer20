@@ -22,15 +22,13 @@ export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ playlistId: string }> }
 ) {
-  const ip = req.headers.get("x-forwarded-for") || "unknown";
-  const rl = rateLimit(`playlist-items:${ip}`, 60, 60_000);
-  if (!rl.allowed) {
-    return NextResponse.json({ error: "RATE_LIMIT" }, { status: 429 });
-  }
-
   const session = await getServerSession(getAuthOptions());
   if (!session?.appUserId) {
     return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+  }
+  const rl = rateLimit(`playlist-items:${session.appUserId}`, 600, 60_000);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: "RATE_LIMIT" }, { status: 429 });
   }
 
   const { playlistId } = await ctx.params;

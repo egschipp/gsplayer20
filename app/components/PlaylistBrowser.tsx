@@ -572,7 +572,14 @@ export default function PlaylistBrowser() {
         const res = await fetch(`/api/spotify/tracks/${trackId}/artists`);
         if (!res.ok) return;
         const data = await res.json();
-        const artists = Array.isArray(data?.items) ? data.items : [];
+        const artists = Array.isArray(data?.items)
+          ? data.items
+              .map((artist: any) => ({
+                id: artist.artistId ?? artist.id ?? "",
+                name: artist.name ?? "",
+              }))
+              .filter((artist: { id: string; name: string }) => artist.id || artist.name)
+          : [];
         if (!cancelled) {
           setSelectedTrackDetail((prev) =>
             prev
@@ -1309,7 +1316,9 @@ export default function PlaylistBrowser() {
                               >
                                 {artist.name}
                               </button>{" "}
-                              <span className="text-subtle">({artist.id})</span>
+                              {artist.id ? (
+                                <span className="text-subtle">({artist.id})</span>
+                              ) : null}
                             </div>
                           ))}
                         </div>

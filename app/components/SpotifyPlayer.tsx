@@ -63,6 +63,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const sdkDeviceIdRef = useRef<string | null>(null);
   const activeDeviceIdRef = useRef<string | null>(null);
   const readyRef = useRef(false);
+  const rateLimitRef = useRef({ until: 0, backoffMs: 2500 });
+  const lastTrackIdRef = useRef<string | null>(null);
+  const pendingTrackIdRef = useRef<string | null>(null);
+  const trackChangeLockUntilRef = useRef(0);
 
   const canUseSdk = useMemo(() => Boolean(accessToken), [accessToken]);
 
@@ -129,16 +133,27 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       const trackId = current?.id ?? null;
       const nextPosition = state.position ?? 0;
       const nextDuration = current?.duration_ms ?? 0;
-      setPlayerState({
-        name: current?.name ?? "Unknown track",
-        artists: (current?.artists ?? []).map((a: any) => a.name).join(", "),
-        album: current?.album?.name ?? "",
-        coverUrl: current?.album?.images?.[0]?.url ?? null,
+      const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
+      if (isNewTrack) {
+        lastTrackIdRef.current = trackId;
+        if (pendingTrackIdRef.current === trackId) {
+          pendingTrackIdRef.current = null;
+        }
+        trackChangeLockUntilRef.current = Date.now() + 1200;
+      }
+      setPlayerState((prev) => ({
+        name: current?.name ?? prev?.name ?? "Unknown track",
+        artists: (current?.artists ?? [])
+          .map((a: any) => a.name)
+          .join(", "),
+        album: current?.album?.name ?? prev?.album ?? "",
+        coverUrl: current?.album?.images?.[0]?.url ?? prev?.coverUrl ?? null,
         paused: Boolean(state.paused),
-        positionMs: nextPosition,
+        positionMs: isNewTrack ? 0 : nextPosition,
         durationMs: nextDuration,
-      });
-      setPositionMs(nextPosition);
+      }));
+      const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
+      setPositionMs(isNewTrack || !allowProgressUpdate ? 0 : nextPosition);
       setDurationMs(nextDuration);
       if (onTrackChange) onTrackChange(trackId);
     });
@@ -164,6 +179,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         const token = accessTokenRef.current;
         const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
         if (!currentDevice || !token) return;
+        if (offsetUri) {
+          const id = offsetUri.split(":").pop() || null;
+          pendingTrackIdRef.current = id;
+          trackChangeLockUntilRef.current = Date.now() + 2000;
+          setPositionMs(0);
+        }
         if (currentDevice === sdkDeviceIdRef.current) {
           await playerRef.current?.activateElement?.();
         }
@@ -238,15 +259,41 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   useEffect(() => {
     if (!accessToken) return;
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    async function spotifyRequest(url: string, options?: RequestInit) {
+      const token = accessTokenRef.current;
+      if (!token) return null;
+      const now = Date.now();
+      if (now < rateLimitRef.current.until) return null;
+      const res = await fetch(url, {
+        ...options,
+        headers: { Authorization: `Bearer ${token}`, ...options?.headers },
+      });
+      if (res.status === 429) {
+        const retry = res.headers.get("Retry-After");
+        const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+        rateLimitRef.current.until = Date.now() + retryMs;
+        rateLimitRef.current.backoffMs = Math.min(
+          rateLimitRef.current.backoffMs * 2,
+          30000
+        );
+        setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+        return null;
+      }
+      if (!res.ok) return null;
+      rateLimitRef.current.backoffMs = 2500;
+      return res;
+    }
 
     async function poll() {
       const token = accessTokenRef.current;
       if (!token || cancelled) return;
-      const res = await fetch("https://api.spotify.com/v1/me/player", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
+      const res = await spotifyRequest("https://api.spotify.com/v1/me/player");
+      if (!res) {
+        scheduleNext();
+        return;
+      }
       const data = await res.json();
       if (!data || cancelled) return;
       const device = data.device;
@@ -261,29 +308,49 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       const item = data.item;
       if (item) {
-        setPlayerState({
-          name: item.name ?? "Unknown track",
+        const trackId = item.id ?? null;
+        const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
+        if (isNewTrack) {
+          lastTrackIdRef.current = trackId;
+          if (pendingTrackIdRef.current === trackId) {
+            pendingTrackIdRef.current = null;
+          }
+          trackChangeLockUntilRef.current = Date.now() + 1200;
+        }
+        setPlayerState((prev) => ({
+          name: item.name ?? prev?.name ?? "Unknown track",
           artists: (item.artists ?? []).map((a: any) => a.name).join(", "),
-          album: item.album?.name ?? "",
-          coverUrl: item.album?.images?.[0]?.url ?? null,
+          album: item.album?.name ?? prev?.album ?? "",
+          coverUrl: item.album?.images?.[0]?.url ?? prev?.coverUrl ?? null,
           paused: Boolean(!data.is_playing),
-          positionMs: data.progress_ms ?? 0,
+          positionMs: isNewTrack ? 0 : data.progress_ms ?? 0,
           durationMs: item.duration_ms ?? 0,
-        });
-        setPositionMs(data.progress_ms ?? 0);
+        }));
+        const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
+        setPositionMs(isNewTrack || !allowProgressUpdate ? 0 : data.progress_ms ?? 0);
         setDurationMs(item.duration_ms ?? 0);
         if (onTrackChange) onTrackChange(item.id ?? null);
       }
       if (typeof device?.volume_percent === "number") {
         setVolume(device.volume_percent / 100);
       }
+      setError(null);
+      scheduleNext(data?.is_playing);
     }
 
-    timer = setInterval(poll, 2500);
+    function scheduleNext(isPlaying?: boolean) {
+      if (cancelled) return;
+      const baseDelay = isPlaying ? 2500 : 5000;
+      const waitExtra = Math.max(rateLimitRef.current.until - Date.now(), 0);
+      const delay = Math.min(baseDelay + waitExtra, 15000);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(poll, delay);
+    }
+
     poll();
     return () => {
       cancelled = true;
-      if (timer) clearInterval(timer);
+      if (timer) clearTimeout(timer);
     };
   }, [accessToken, onTrackChange]);
 
@@ -298,10 +365,24 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   async function refreshDevices() {
     const token = accessTokenRef.current;
     if (!token) return;
+    const now = Date.now();
+    if (now < rateLimitRef.current.until) return;
     const res = await fetch("https://api.spotify.com/v1/me/player/devices", {
       headers: { Authorization: `Bearer ${token}` },
     });
+    if (res.status === 429) {
+      const retry = res.headers.get("Retry-After");
+      const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+      rateLimitRef.current.until = Date.now() + retryMs;
+      rateLimitRef.current.backoffMs = Math.min(
+        rateLimitRef.current.backoffMs * 2,
+        30000
+      );
+      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      return;
+    }
     if (!res.ok) return;
+    rateLimitRef.current.backoffMs = 2500;
     const data = await res.json();
     const list = Array.isArray(data.devices) ? data.devices : [];
     setDevices(
@@ -325,14 +406,27 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   async function handleDeviceChange(targetId: string) {
     const token = accessTokenRef.current;
     if (!token || !targetId) return;
+    if (Date.now() < rateLimitRef.current.until) return;
     setActiveDevice(targetId);
     pendingDeviceIdRef.current = targetId;
     lastDeviceSelectRef.current = Date.now();
-    await fetch("https://api.spotify.com/v1/me/player", {
+    const res = await fetch("https://api.spotify.com/v1/me/player", {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ device_ids: [targetId], play: false }),
     });
+    if (res.status === 429) {
+      const retry = res.headers.get("Retry-After");
+      const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+      rateLimitRef.current.until = Date.now() + retryMs;
+      rateLimitRef.current.backoffMs = Math.min(
+        rateLimitRef.current.backoffMs * 2,
+        30000
+      );
+      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      return;
+    }
+    rateLimitRef.current.backoffMs = 2500;
     setDeviceId(targetId);
     deviceIdRef.current = targetId;
     refreshDevices();
@@ -346,53 +440,92 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       await playerRef.current?.togglePlay?.();
       return;
     }
+    if (Date.now() < rateLimitRef.current.until) return;
     if (currentDevice === sdkDeviceIdRef.current) {
       await playerRef.current?.activateElement?.();
       await playerRef.current?.togglePlay?.();
       return;
     }
     const endpoint = playerState?.paused ? "play" : "pause";
-    await fetch(
+    const res = await fetch(
       `https://api.spotify.com/v1/me/player/${endpoint}?device_id=${currentDevice}`,
       {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}` },
       }
     );
+    if (res.status === 429) {
+      const retry = res.headers.get("Retry-After");
+      const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+      rateLimitRef.current.until = Date.now() + retryMs;
+      rateLimitRef.current.backoffMs = Math.min(
+        rateLimitRef.current.backoffMs * 2,
+        30000
+      );
+      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      return;
+    }
+    rateLimitRef.current.backoffMs = 2500;
   }
 
   async function handleNext() {
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
+    if (Date.now() < rateLimitRef.current.until) return;
     if (currentDevice === sdkDeviceIdRef.current) {
       await playerRef.current?.nextTrack?.();
       return;
     }
-    await fetch(
+    const res = await fetch(
       `https://api.spotify.com/v1/me/player/next?device_id=${currentDevice}`,
       {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       }
     );
+    if (res.status === 429) {
+      const retry = res.headers.get("Retry-After");
+      const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+      rateLimitRef.current.until = Date.now() + retryMs;
+      rateLimitRef.current.backoffMs = Math.min(
+        rateLimitRef.current.backoffMs * 2,
+        30000
+      );
+      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      return;
+    }
+    rateLimitRef.current.backoffMs = 2500;
   }
 
   async function handlePrevious() {
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
+    if (Date.now() < rateLimitRef.current.until) return;
     if (currentDevice === sdkDeviceIdRef.current) {
       await playerRef.current?.previousTrack?.();
       return;
     }
-    await fetch(
+    const res = await fetch(
       `https://api.spotify.com/v1/me/player/previous?device_id=${currentDevice}`,
       {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       }
     );
+    if (res.status === 429) {
+      const retry = res.headers.get("Retry-After");
+      const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+      rateLimitRef.current.until = Date.now() + retryMs;
+      rateLimitRef.current.backoffMs = Math.min(
+        rateLimitRef.current.backoffMs * 2,
+        30000
+      );
+      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      return;
+    }
+    rateLimitRef.current.backoffMs = 2500;
   }
 
   function formatTime(ms?: number) {
@@ -407,12 +540,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
+    if (Date.now() < rateLimitRef.current.until) return;
     if (currentDevice === sdkDeviceIdRef.current) {
       await playerRef.current?.seek?.(Math.floor(nextMs));
       setPositionMs(nextMs);
       return;
     }
-    await fetch(
+    const res = await fetch(
       `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=${Math.floor(
         nextMs
       )}`,
@@ -421,6 +555,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         headers: { Authorization: `Bearer ${token}` },
       }
     );
+    if (res.status === 429) {
+      const retry = res.headers.get("Retry-After");
+      const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+      rateLimitRef.current.until = Date.now() + retryMs;
+      rateLimitRef.current.backoffMs = Math.min(
+        rateLimitRef.current.backoffMs * 2,
+        30000
+      );
+      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      return;
+    }
+    rateLimitRef.current.backoffMs = 2500;
     setPositionMs(nextMs);
   }
 
@@ -433,7 +579,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     ) {
       const token = accessTokenRef.current;
       if (!token) return;
-      await fetch(
+      if (Date.now() < rateLimitRef.current.until) return;
+      const res = await fetch(
         `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(
           clamped * 100
         )}&device_id=${activeDeviceIdRef.current}`,
@@ -442,6 +589,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           headers: { Authorization: `Bearer ${token}` },
         }
       );
+      if (res.status === 429) {
+        const retry = res.headers.get("Retry-After");
+        const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+        rateLimitRef.current.until = Date.now() + retryMs;
+        rateLimitRef.current.backoffMs = Math.min(
+          rateLimitRef.current.backoffMs * 2,
+          30000
+        );
+        setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+        return;
+      }
+      rateLimitRef.current.backoffMs = 2500;
       return;
     }
     await playerRef.current?.setVolume?.(clamped);
@@ -450,11 +609,24 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   async function transferPlayback(id: string, play = false) {
     const token = accessTokenRef.current;
     if (!token) return;
-    await fetch("https://api.spotify.com/v1/me/player", {
+    if (Date.now() < rateLimitRef.current.until) return;
+    const res = await fetch("https://api.spotify.com/v1/me/player", {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ device_ids: [id], play }),
     });
+    if (res.status === 429) {
+      const retry = res.headers.get("Retry-After");
+      const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+      rateLimitRef.current.until = Date.now() + retryMs;
+      rateLimitRef.current.backoffMs = Math.min(
+        rateLimitRef.current.backoffMs * 2,
+        30000
+      );
+      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      return;
+    }
+    rateLimitRef.current.backoffMs = 2500;
   }
 
   if (!canUseSdk) {

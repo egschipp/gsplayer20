@@ -70,23 +70,44 @@ async function doFetch<T>(
   body: unknown,
   accessToken: string
 ) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  const res = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: controller.signal,
-  });
-  clearTimeout(timeout);
+  const maxAttempts = 3;
+  let attempt = 0;
+  let lastError: string | null = null;
 
-  if (!res.ok) {
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const res = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      return (await res.json()) as T;
+    }
+
+    const retryAfter = res.headers.get("Retry-After");
+    const retryAfterMs = retryAfter ? Number(retryAfter) * 1000 : null;
     const text = await res.text();
-    throw new Error(`SpotifyFetchError:${res.status}:${text}`);
+    lastError = `SpotifyFetchError:${res.status}:${text}`;
+
+    const shouldRetry =
+      res.status === 429 || res.status === 500 || res.status === 502 || res.status === 503;
+
+    if (!shouldRetry || attempt >= maxAttempts) {
+      break;
+    }
+
+    const waitMs = retryAfterMs ?? Math.min(1000 * attempt * attempt, 4000);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
-  return (await res.json()) as T;
+  throw new Error(lastError ?? "SpotifyFetchError:unknown");
 }

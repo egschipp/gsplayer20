@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.0](https://github.com/egschipp/gsplayer20/compare/v1.1.1...v1.2.0) (2026-02-06)
+
+
+### Features
+
+* library selector + collapsible resources ([57246d7](https://github.com/egschipp/gsplayer20/commit/57246d756ce7a66e1db901fe35d32e3608067d57))
+* playlists/artists/tracks selector ([47f5e77](https://github.com/egschipp/gsplayer20/commit/47f5e77c1e7e24feaff779f21a81288e733d96b3))
+* track selector covers + reset ([0889d5f](https://github.com/egschipp/gsplayer20/commit/0889d5f145ada942bce25610448e960ff18358d8))
+
+
+### Bug Fixes
+
+* close selector on choose ([86a6edb](https://github.com/egschipp/gsplayer20/commit/86a6edb7f0945065e77f855cf32ad3bd98ac407f))
+* dedupe tracks by name + artist lookup ([39c458d](https://github.com/egschipp/gsplayer20/commit/39c458db68aedaa0282cfc9c86f5e67167243d8a))
+* null guard in playlist loader ([85b3cc1](https://github.com/egschipp/gsplayer20/commit/85b3cc119ccd7872bc0d0c4fa0e945431a45ba50))
+* track covers and selector focus ([ba091cd](https://github.com/egschipp/gsplayer20/commit/ba091cd6e1b1d2a59995b832ff6874c08da90287))
+* track selector typing for covers ([2e37dd8](https://github.com/egschipp/gsplayer20/commit/2e37dd85b23942551b51bd44b730c01b34cf534d))
+
 ## [1.1.1](https://github.com/egschipp/gsplayer20/compare/v1.1.0...v1.1.1) (2026-02-03)
 
 

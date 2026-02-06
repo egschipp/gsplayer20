@@ -1216,7 +1216,9 @@ export default function PlaylistBrowser() {
                           >
                             {artist.name}
                           </button>
-                          {index < selectedTrackDetail.artists.length - 1 ? ", " : ""}
+                          {index < (selectedTrackDetail.artists?.length ?? 0) - 1
+                            ? ", "
+                            : ""}
                         </span>
                       ))}
                     </div>

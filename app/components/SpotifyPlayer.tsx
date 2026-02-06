@@ -23,7 +23,7 @@ type PlayerProps = {
 };
 
 export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const accessToken = session?.accessToken as string | undefined;
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [playerState, setPlayerState] = useState<{
@@ -99,7 +99,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUseSdk, accessToken]);
 
-  function initializePlayer() {
+  async function initializePlayer() {
     if (!accessToken || readyRef.current) return;
     readyRef.current = true;
 
@@ -109,11 +109,44 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       volume: 0.8,
     });
 
-    player.addListener("ready", ({ device_id }: { device_id: string }) => {
+    player.addListener("ready", async ({ device_id }: { device_id: string }) => {
       setDeviceId(device_id);
       deviceIdRef.current = device_id;
       sdkDeviceIdRef.current = device_id;
-      transferPlayback(device_id, false).catch(() => {});
+      const token = accessTokenRef.current;
+      if (token) {
+        try {
+          const res = await fetch("https://api.spotify.com/v1/me/player", {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const device = data?.device;
+            if (device?.id) {
+              setActiveDevice(device.id, device.name ?? null);
+              setActiveDeviceRestricted(Boolean(device.is_restricted));
+              setActiveDeviceSupportsVolume(device.supports_volume !== false);
+            }
+            const item = data?.item;
+            if (item) {
+              setPlayerState({
+                name: item.name ?? "Unknown track",
+                artists: (item.artists ?? []).map((a: any) => a.name).join(", "),
+                album: item.album?.name ?? "",
+                coverUrl: item.album?.images?.[0]?.url ?? null,
+                paused: Boolean(!data.is_playing),
+                positionMs: data.progress_ms ?? 0,
+                durationMs: item.duration_ms ?? 0,
+              });
+              setPositionMs(data.progress_ms ?? 0);
+              setDurationMs(item.duration_ms ?? 0);
+              if (onTrackChange) onTrackChange(item.id ?? null);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
     });
 
     player.addListener("not_ready", () => {
@@ -627,6 +660,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       return;
     }
     rateLimitRef.current.backoffMs = 2500;
+  }
+
+  if (sessionStatus === "loading") {
+    return (
+      <div className="player-card">
+        <div className="player-meta">
+          <div className="player-title">Spotify Player</div>
+          <div className="text-body">Connecting Spotify session...</div>
+        </div>
+      </div>
+    );
   }
 
   if (!canUseSdk) {

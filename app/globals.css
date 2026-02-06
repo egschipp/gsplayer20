@@ -298,6 +298,44 @@ header.panel {
   color: #ffffff;
 }
 
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  background: radial-gradient(circle at top, rgba(18, 191, 162, 0.18), transparent 55%),
+    linear-gradient(180deg, #0b0b0b 0%, #050505 100%);
+}
+
+.login-card {
+  width: min(420px, 90vw);
+  padding: 2rem;
+  border-radius: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(16, 16, 16, 0.85);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  display: grid;
+  gap: 1rem;
+  text-align: center;
+}
+
+.login-logo {
+  width: 140px;
+  height: auto;
+  margin: 0 auto;
+}
+
+.login-title {
+  font-family: var(--font-display);
+  font-size: 1.7rem;
+  margin: 0;
+}
+
+.login-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .input:focus-visible,
 .combo-input:focus-visible,
 .btn:focus-visible,

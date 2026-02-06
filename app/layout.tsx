@@ -15,8 +15,8 @@ const bodyFont = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "GSPlayer20",
-  description: "Next.js app for GSPlayer20",
+  title: "Georgies Spotify",
+  description: "Georgies Spotify player",
   manifest: "/site.webmanifest",
   icons: {
     icon: [

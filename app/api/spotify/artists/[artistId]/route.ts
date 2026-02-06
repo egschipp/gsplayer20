@@ -51,7 +51,7 @@ export async function GET(
   }
   let popularity = row.popularity ?? null;
 
-  if ((!genres || genres.length === 0) && popularity === null) {
+  if (!genres || genres.length === 0 || popularity === null) {
     try {
       const token = await getAppAccessToken();
       let res = await fetch(`https://api.spotify.com/v1/artists/${artistId}`, {

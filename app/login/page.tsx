@@ -1,0 +1,67 @@
+"use client";
+
+import { useState } from "react";
+
+export default function LoginPage({
+  searchParams,
+}: {
+  searchParams: { next?: string };
+}) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/pin-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      if (!res.ok) {
+        setError("Incorrect PIN. Try again.");
+        return;
+      }
+      const next = searchParams?.next || "/";
+      window.location.href = next;
+    } catch {
+      setError("Login failed. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="login-shell">
+      <div className="login-card">
+        <img
+          src="/georgies-spotify.png"
+          alt="Georgies Spotify logo"
+          className="login-logo"
+        />
+        <h1 className="login-title">Georgies Spotify</h1>
+        <p className="text-subtle">Enter your PIN to continue.</p>
+        <form onSubmit={handleSubmit} className="login-form">
+          <input
+            type="password"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            autoComplete="one-time-code"
+            className="input"
+            placeholder="PIN code"
+            value={pin}
+            onChange={(event) => setPin(event.target.value)}
+            required
+          />
+          <button type="submit" className="btn btn-primary" disabled={loading}>
+            {loading ? "Checking..." : "Unlock"}
+          </button>
+        </form>
+        {error ? <div className="text-subtle">{error}</div> : null}
+      </div>
+    </div>
+  );
+}

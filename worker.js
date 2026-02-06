@@ -11,6 +11,9 @@ const MAX_RETRY_DELAY_MS = 60_000;
 const SCHEDULE_INTERVAL_MS = Number(
   process.env.SYNC_SCHEDULE_MS || "600000"
 );
+const MIN_SYNC_INTERVAL_MS = Number(
+  process.env.SYNC_MIN_INTERVAL_MS || "1800000"
+);
 
 if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
   console.error("Missing SPOTIFY_CLIENT_ID/SECRET");
@@ -296,6 +299,11 @@ const statements = {
   ),
   countCoverJobs: db.prepare(
     `SELECT count(*) as c FROM jobs WHERE type='SYNC_COVERS' AND status IN ('queued','running')`
+  ),
+  getSyncState: db.prepare(
+    `SELECT status, last_successful_at as lastSuccessfulAt
+     FROM sync_state
+     WHERE user_id=? AND resource=?`
   ),
   upsertArtist: db.prepare(
     `INSERT INTO artists (artist_id, name, genres, popularity, updated_at)
@@ -1058,8 +1066,20 @@ function schedulePeriodicSync() {
 
   const users = statements.getUsers.all();
   for (const user of users) {
+    function shouldEnqueue(resource) {
+      const row = statements.getSyncState.get(user.id, resource);
+      if (!row) return true;
+      if (row.status === "running" || row.status === "queued" || row.status === "backoff") {
+        return false;
+      }
+      if (row.lastSuccessfulAt && now - row.lastSuccessfulAt < MIN_SYNC_INTERVAL_MS) {
+        return false;
+      }
+      return true;
+    }
+
     const tracksJobs = statements.countJobsByType.get("SYNC_TRACKS_INCREMENTAL");
-    if (!tracksJobs || tracksJobs.c === 0) {
+    if ((!tracksJobs || tracksJobs.c === 0) && shouldEnqueue("tracks")) {
       statements.enqueueJob.run({
         id: crypto.randomUUID(),
         user_id: user.id,
@@ -1085,7 +1105,7 @@ function schedulePeriodicSync() {
     }
 
     const playlistJobs = statements.countJobsByType.get("SYNC_PLAYLISTS");
-    if (!playlistJobs || playlistJobs.c === 0) {
+    if ((!playlistJobs || playlistJobs.c === 0) && shouldEnqueue("playlists")) {
       statements.enqueueJob.run({
         id: crypto.randomUUID(),
         user_id: user.id,
@@ -1111,7 +1131,7 @@ function schedulePeriodicSync() {
     }
 
     const artistJobs = statements.countJobsByType.get("SYNC_ARTISTS");
-    if (!artistJobs || artistJobs.c === 0) {
+    if ((!artistJobs || artistJobs.c === 0) && shouldEnqueue("artists")) {
       statements.enqueueJob.run({
         id: crypto.randomUUID(),
         user_id: user.id,

@@ -1,18 +1,17 @@
 import { NextResponse } from "next/server";
 import { spotifyFetch } from "@/lib/spotify/client";
-import { rateLimit } from "@/lib/rate-limit/ratelimit";
+import { getRequestIp, rateLimitResponse } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  const ip = req.headers.get("x-forwarded-for") || "unknown";
-  const rl = rateLimit(`top:${ip}`, 60, 60_000);
-  if (!rl.allowed) {
-    return NextResponse.json(
-      { error: "RATE_LIMIT" },
-      { status: 429 }
-    );
-  }
+  const ip = getRequestIp(req);
+  const rl = rateLimitResponse({
+    key: `top:${ip}`,
+    limit: 60,
+    windowMs: 60_000,
+  });
+  if (rl) return rl;
 
   const { searchParams } = new URL(req.url);
   const type = searchParams.get("type") ?? "artists";

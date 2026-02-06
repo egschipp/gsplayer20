@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
 import { getAppAccessToken } from "@/lib/spotify/tokens";
-import { rateLimit } from "@/lib/rate-limit/ratelimit";
 import { assertSpotifyEnv } from "@/lib/env";
+import { getRequestIp, rateLimitResponse } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  const ip = req.headers.get("x-forwarded-for") || "unknown";
-  const rl = rateLimit(`app-status:${ip}`, 30, 60_000);
-  if (!rl.allowed) {
-    return NextResponse.json(
-      { status: "ERROR_RATE_LIMIT" },
-      { status: 429 }
-    );
-  }
+  const ip = getRequestIp(req);
+  const rl = rateLimitResponse({
+    key: `app-status:${ip}`,
+    limit: 30,
+    windowMs: 60_000,
+    body: { status: "ERROR_RATE_LIMIT" },
+  });
+  if (rl) return rl;
 
   try {
     assertSpotifyEnv();

@@ -1,23 +1,21 @@
 import { NextResponse } from "next/server";
-import { rateLimit } from "@/lib/rate-limit/ratelimit";
-import { getServerSession } from "next-auth";
-import { getAuthOptions } from "@/lib/auth/options";
 import { getDb } from "@/lib/db/client";
 import { userSavedTracks, tracks, syncState, trackArtists, artists } from "@/lib/db/schema";
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
+import { rateLimitResponse, requireAppUser } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  const session = await getServerSession(getAuthOptions());
-  if (!session?.appUserId) {
-    return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
-  }
-  const rl = rateLimit(`tracks:${session.appUserId}`, 600, 60_000);
-  if (!rl.allowed) {
-    return NextResponse.json({ error: "RATE_LIMIT" }, { status: 429 });
-  }
+  const { session, response } = await requireAppUser();
+  if (response) return response;
+  const rl = rateLimitResponse({
+    key: `tracks:${session.appUserId}`,
+    limit: 600,
+    windowMs: 60_000,
+  });
+  if (rl) return rl;
 
   const { searchParams } = new URL(req.url);
   const limit = Math.min(Number(searchParams.get("limit") ?? "50"), 50);

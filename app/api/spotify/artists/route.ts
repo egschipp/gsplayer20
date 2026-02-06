@@ -1,6 +1,4 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { getAuthOptions } from "@/lib/auth/options";
 import { getDb } from "@/lib/db/client";
 import {
   artists,
@@ -11,14 +9,13 @@ import {
 } from "@/lib/db/schema";
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
+import { requireAppUser } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  const session = await getServerSession(getAuthOptions());
-  if (!session?.appUserId) {
-    return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
-  }
+  const { session, response } = await requireAppUser();
+  if (response) return response;
 
   const { searchParams } = new URL(req.url);
   const limit = Math.min(Number(searchParams.get("limit") ?? "50"), 50);

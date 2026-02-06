@@ -1,20 +1,20 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
-import { rateLimit } from "@/lib/rate-limit/ratelimit";
 import { hasAllScopes } from "@/lib/spotify/scopes";
+import { getRequestIp, rateLimitResponse } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  const ip = req.headers.get("x-forwarded-for") || "unknown";
-  const rl = rateLimit(`user-status:${ip}`, 30, 60_000);
-  if (!rl.allowed) {
-    return NextResponse.json(
-      { status: "ERROR_RATE_LIMIT" },
-      { status: 429 }
-    );
-  }
+  const ip = getRequestIp(req);
+  const rl = rateLimitResponse({
+    key: `user-status:${ip}`,
+    limit: 30,
+    windowMs: 60_000,
+    body: { status: "ERROR_RATE_LIMIT" },
+  });
+  if (rl) return rl;
 
   const session = await getServerSession(getAuthOptions());
   if (!session?.accessToken) {

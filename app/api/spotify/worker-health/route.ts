@@ -1,19 +1,16 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { eq } from "drizzle-orm";
-import { getAuthOptions } from "@/lib/auth/options";
 import { getDb } from "@/lib/db/client";
 import { workerHeartbeat } from "@/lib/db/schema";
+import { requireAppUser } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
 const STALE_AFTER_MS = 30_000;
 
 export async function GET() {
-  const session = await getServerSession(getAuthOptions());
-  if (!session?.appUserId) {
-    return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
-  }
+  const { response } = await requireAppUser();
+  if (response) return response;
 
   const db = getDb();
   const row = db

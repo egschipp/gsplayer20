@@ -14,8 +14,7 @@ import {
   trackArtists,
 } from "@/lib/db/schema";
 import { sql, eq, isNotNull } from "drizzle-orm";
-import { getServerSession } from "next-auth";
-import { getAuthOptions } from "@/lib/auth/options";
+import { requireAppUser } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -24,10 +23,8 @@ function count(table: any, db: ReturnType<typeof getDb>) {
 }
 
 export async function GET() {
-  const session = await getServerSession(getAuthOptions());
-  if (!session?.appUserId) {
-    return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
-  }
+  const { session, response } = await requireAppUser();
+  if (response) return response;
 
   const db = getDb();
   const [

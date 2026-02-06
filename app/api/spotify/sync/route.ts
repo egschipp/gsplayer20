@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { getAuthOptions } from "@/lib/auth/options";
-import { rateLimit } from "@/lib/rate-limit/ratelimit";
 import { getDb } from "@/lib/db/client";
 import { jobs, syncState } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { cryptoRandomId } from "@/lib/db/queries";
 import { getBaseUrl } from "@/lib/env";
+import { getRequestIp, rateLimitResponse, requireAppUser } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -21,18 +19,17 @@ const jobMap: Record<string, string> = {
 };
 
 export async function POST(req: Request) {
-  const ip = req.headers.get("x-forwarded-for") || "unknown";
+  const ip = getRequestIp(req);
   const body = await req.json().catch(() => ({}));
   const type = jobMap[body?.type] ?? null;
   const rlKey = type ? `sync:${type}:${ip}` : `sync:${ip}`;
-  const rl = rateLimit(rlKey, 30, 60_000);
-  if (!rl.allowed) {
-    const retryAfter = Math.max(Math.ceil((rl.resetAt - Date.now()) / 1000), 1);
-    return NextResponse.json(
-      { error: "RATE_LIMIT", retryAfter },
-      { status: 429, headers: { "Retry-After": String(retryAfter) } }
-    );
-  }
+  const rl = rateLimitResponse({
+    key: rlKey,
+    limit: 30,
+    windowMs: 60_000,
+    includeRetryAfter: true,
+  });
+  if (rl) return rl;
 
   const baseUrl = getBaseUrl() || new URL(req.url).origin;
   const expectedOrigin = new URL(baseUrl).origin;
@@ -41,10 +38,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "INVALID_ORIGIN" }, { status: 403 });
   }
 
-  const session = await getServerSession(getAuthOptions());
-  if (!session?.appUserId) {
-    return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
-  }
+  const { session, response } = await requireAppUser();
+  if (response) return response;
 
   if (!type) {
     return NextResponse.json({ error: "INVALID_TYPE" }, { status: 400 });

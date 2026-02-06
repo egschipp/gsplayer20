@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { getAuthOptions } from "@/lib/auth/options";
 import { getDb } from "@/lib/db/client";
 import { artists, trackArtists, tracks } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { getAppAccessToken } from "@/lib/spotify/tokens";
+import { getServerSession } from "next-auth";
+import { getAuthOptions } from "@/lib/auth/options";
+import { requireAppUser } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -12,10 +13,8 @@ export async function GET(
   _req: Request,
   ctx: { params: Promise<{ artistId: string }> }
 ) {
-  const session = await getServerSession(getAuthOptions());
-  if (!session?.appUserId) {
-    return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
-  }
+  const { response } = await requireAppUser();
+  if (response) return response;
 
   const { artistId } = await ctx.params;
   if (!artistId) {

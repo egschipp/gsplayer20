@@ -167,6 +167,11 @@ export default function StatusBox() {
     }
   }
 
+  async function logoutPin() {
+    await fetch("/api/pin-logout", { method: "POST" });
+    window.location.href = "/login";
+  }
+
   async function copyAuthLog() {
     if (!authLog) return;
     const payload = JSON.stringify(authLog.entries ?? [], null, 2);
@@ -338,6 +343,9 @@ export default function StatusBox() {
         {syncCooldownMessage ? (
           <span className="text-body">{syncCooldownMessage}</span>
         ) : null}
+        <button onClick={logoutPin} className="btn btn-ghost">
+          Logout
+        </button>
         <button
           onClick={loadAuthLog}
           disabled={authLogLoading}

@@ -86,6 +86,37 @@ export async function GET(
           .where(eq(artists.artistId, artistId))
           .run();
       }
+      if ((!genres || genres.length === 0) || popularity === null) {
+        const session = await getServerSession(getAuthOptions());
+        const userToken = session?.accessToken as string | undefined;
+        if (userToken) {
+          const userRes = await fetch(
+            `https://api.spotify.com/v1/artists/${artistId}`,
+            {
+              headers: { Authorization: `Bearer ${userToken}` },
+            }
+          );
+          if (userRes.ok) {
+            const data = await userRes.json();
+            const nextGenres = Array.isArray(data?.genres) ? data.genres : [];
+            const nextPopularity =
+              data?.popularity === null || data?.popularity === undefined
+                ? null
+                : Number(data.popularity);
+            genres = nextGenres;
+            popularity = nextPopularity;
+            await db
+              .update(artists)
+              .set({
+                genres: genres.length ? JSON.stringify(genres) : null,
+                popularity,
+                updatedAt: Date.now(),
+              })
+              .where(eq(artists.artistId, artistId))
+              .run();
+          }
+        }
+      }
     } catch {
       // best-effort enrichment; keep existing values
     }

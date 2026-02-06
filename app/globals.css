@@ -283,6 +283,21 @@ header.panel {
   font-size: 0.8rem;
 }
 
+.artist-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--tide);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.artist-link:hover {
+  color: #ffffff;
+}
+
 .input:focus-visible,
 .combo-input:focus-visible,
 .btn:focus-visible,

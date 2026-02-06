@@ -87,6 +87,16 @@ type TrackDetail = {
   spotifyUrl?: string | null;
 };
 
+type ArtistDetail = {
+  artistId: string;
+  name: string;
+  genres: string[];
+  popularity: number | null;
+  tracksCount: number;
+  updatedAt?: number | null;
+  spotifyUrl?: string | null;
+};
+
 const LIKED_OPTION: PlaylistOption = {
   id: "liked",
   name: "Liked Songs",
@@ -164,6 +174,9 @@ export default function PlaylistBrowser() {
   const [selectedTrackDetail, setSelectedTrackDetail] = useState<TrackDetail | null>(
     null
   );
+  const [selectedArtistDetail, setSelectedArtistDetail] =
+    useState<ArtistDetail | null>(null);
+  const [artistDetailLoading, setArtistDetailLoading] = useState(false);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
@@ -501,6 +514,40 @@ export default function PlaylistBrowser() {
     });
   }
 
+  async function openArtistDetail(artistId?: string | null, name?: string | null) {
+    if (!artistId) return;
+    setArtistDetailLoading(true);
+    try {
+      const res = await fetch(`/api/spotify/artists/${artistId}`);
+      if (!res.ok) {
+        setSelectedArtistDetail({
+          artistId,
+          name: name || "Unknown artist",
+          genres: [],
+          popularity: null,
+          tracksCount: 0,
+          spotifyUrl: `https://open.spotify.com/artist/${artistId}`,
+        });
+        return;
+      }
+      const data = await res.json();
+      setSelectedArtistDetail({
+        artistId: data.artistId ?? artistId,
+        name: data.name ?? name ?? "Unknown artist",
+        genres: Array.isArray(data.genres) ? data.genres : [],
+        popularity:
+          data.popularity === null || data.popularity === undefined
+            ? null
+            : Number(data.popularity),
+        tracksCount: Number(data.tracksCount ?? 0),
+        updatedAt: data.updatedAt ?? null,
+        spotifyUrl: data.spotifyUrl ?? `https://open.spotify.com/artist/${artistId}`,
+      });
+    } finally {
+      setArtistDetailLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (!selectedTrackDetail) return;
     function handleEscape(event: KeyboardEvent) {
@@ -511,6 +558,17 @@ export default function PlaylistBrowser() {
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [selectedTrackDetail]);
+
+  useEffect(() => {
+    if (!selectedArtistDetail) return;
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSelectedArtistDetail(null);
+      }
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [selectedArtistDetail]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1115,15 +1173,23 @@ export default function PlaylistBrowser() {
                   <div style={{ fontWeight: 700, fontSize: 20 }}>
                     {selectedTrackDetail.name || "Unknown track"}
                   </div>
-                  {selectedTrackDetail.artistsText ? (
-                    <div className="text-body">{selectedTrackDetail.artistsText}</div>
-                  ) : selectedTrackDetail.artists?.length ? (
+                  {selectedTrackDetail.artists?.length ? (
                     <div className="text-body">
-                      {selectedTrackDetail.artists
-                        .map((artist) => artist.name)
-                        .filter(Boolean)
-                        .join(", ")}
+                      {selectedTrackDetail.artists.map((artist, index) => (
+                        <span key={artist.id}>
+                          <button
+                            type="button"
+                            className="artist-link"
+                            onClick={() => openArtistDetail(artist.id, artist.name)}
+                          >
+                            {artist.name}
+                          </button>
+                          {index < selectedTrackDetail.artists.length - 1 ? ", " : ""}
+                        </span>
+                      ))}
                     </div>
+                  ) : selectedTrackDetail.artistsText ? (
+                    <div className="text-body">{selectedTrackDetail.artistsText}</div>
                   ) : null}
                   {selectedTrackDetail.albumName ? (
                     <div className="text-subtle">{selectedTrackDetail.albumName}</div>
@@ -1198,7 +1264,13 @@ export default function PlaylistBrowser() {
                         <div>
                           {selectedTrackDetail.artists.map((artist) => (
                             <div key={artist.id}>
-                              {artist.name}{" "}
+                              <button
+                                type="button"
+                                className="artist-link"
+                                onClick={() => openArtistDetail(artist.id, artist.name)}
+                              >
+                                {artist.name}
+                              </button>{" "}
                               <span className="text-subtle">({artist.id})</span>
                             </div>
                           ))}
@@ -1234,6 +1306,101 @@ export default function PlaylistBrowser() {
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedArtistDetail ? (
+        <div
+          className="track-detail-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Artist details"
+          onClick={() => setSelectedArtistDetail(null)}
+        >
+          <div
+            className="track-detail-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="track-detail-header">
+              <div className="track-detail-header-left">
+                <div>
+                  <div className="text-subtle">Artist details</div>
+                  <div style={{ fontWeight: 700, fontSize: 20 }}>
+                    {selectedArtistDetail.name || "Unknown artist"}
+                  </div>
+                  {selectedArtistDetail.genres?.length ? (
+                    <div className="text-body">
+                      {selectedArtistDetail.genres.join(", ")}
+                    </div>
+                  ) : (
+                    <div className="text-subtle">No genres available</div>
+                  )}
+                </div>
+              </div>
+              <div className="track-detail-header-actions">
+                {selectedArtistDetail.spotifyUrl ? (
+                  <a
+                    href={selectedArtistDetail.spotifyUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn btn-primary"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    Open in Spotify
+                  </a>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setSelectedArtistDetail(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="track-detail-body">
+              <div className="track-detail-content">
+                <div className="track-detail-section">
+                  <div className="track-detail-title">Overview</div>
+                  <div className="track-detail-grid">
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Popularity</div>
+                      <div>
+                        {selectedArtistDetail.popularity === null ||
+                        selectedArtistDetail.popularity === undefined
+                          ? "—"
+                          : selectedArtistDetail.popularity}
+                      </div>
+                    </div>
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Tracks in library</div>
+                      <div>{selectedArtistDetail.tracksCount ?? 0}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="track-detail-section">
+                  <div className="track-detail-title">Genres</div>
+                  <div className="track-detail-grid">
+                    <div className="track-detail-field">
+                      {selectedArtistDetail.genres?.length ? (
+                        <div className="track-detail-playlists">
+                          {selectedArtistDetail.genres.map((genre) => (
+                            <span key={genre}>{genre}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div>—</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {artistDetailLoading ? (
+                  <div className="text-subtle">Loading artist details...</div>
+                ) : null}
               </div>
             </div>
           </div>

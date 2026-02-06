@@ -570,7 +570,7 @@ export default function PlaylistBrowser() {
         const res = await fetch(`/api/spotify/tracks/${trackId}/artists`);
         if (!res.ok) return;
         const data = await res.json();
-        const artists = Array.isArray(data?.artists) ? data.artists : [];
+        const artists = Array.isArray(data?.items) ? data.items : [];
         if (!cancelled) {
           setSelectedTrackDetail((prev) =>
             prev

@@ -43,18 +43,32 @@ export async function GET(
     return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
   }
 
-  let genres = row.genres ? JSON.parse(row.genres) : [];
+  let genres: string[] = [];
+  try {
+    genres = row.genres ? JSON.parse(row.genres) : [];
+  } catch {
+    genres = [];
+  }
   let popularity = row.popularity ?? null;
 
   if ((!genres || genres.length === 0) && popularity === null) {
     try {
       const token = await getAppAccessToken();
-      const res = await fetch(
-        `https://api.spotify.com/v1/artists/${artistId}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
+      let res = await fetch(`https://api.spotify.com/v1/artists/${artistId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const session = await getServerSession(getAuthOptions());
+        const userToken = session?.accessToken as string | undefined;
+        if (userToken) {
+          res = await fetch(
+            `https://api.spotify.com/v1/artists/${artistId}`,
+            {
+              headers: { Authorization: `Bearer ${userToken}` },
+            }
+          );
         }
-      );
+      }
       if (res.ok) {
         const data = await res.json();
         genres = Array.isArray(data?.genres) ? data.genres : [];

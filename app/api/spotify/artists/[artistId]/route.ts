@@ -1,11 +1,10 @@
-import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db/client";
 import { artists, trackArtists, tracks } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { getAppAccessToken } from "@/lib/spotify/tokens";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
-import { requireAppUser } from "@/lib/api/guards";
+import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -18,7 +17,7 @@ export async function GET(
 
   const { artistId } = await ctx.params;
   if (!artistId) {
-    return NextResponse.json({ error: "MISSING_ARTIST" }, { status: 400 });
+    return jsonNoStore({ error: "MISSING_ARTIST" }, 400);
   }
 
   const db = getDb();
@@ -39,7 +38,7 @@ export async function GET(
     .get();
 
   if (!row) {
-    return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
+    return jsonNoStore({ error: "NOT_FOUND" }, 404);
   }
 
   let genres: string[] = [];
@@ -129,7 +128,7 @@ export async function GET(
     }
   }
 
-  return NextResponse.json({
+  return jsonNoStore({
     artistId: row.artistId,
     name: row.name,
     genres,

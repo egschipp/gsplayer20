@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db/client";
 import {
   artists,
@@ -11,7 +10,7 @@ import {
 } from "@/lib/db/schema";
 import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
-import { requireAppUser } from "@/lib/api/guards";
+import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -123,7 +122,7 @@ export async function GET(req: Request) {
   const last = rows[rows.length - 1];
   const nextCursor = last ? encodeCursor(0, last.trackId) : null;
 
-  return NextResponse.json({
+  return jsonNoStore({
     items: rows.map((row) => {
       const coverUrl = row.hasCover
         ? `/api/spotify/cover/${row.trackId}`

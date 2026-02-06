@@ -75,6 +75,55 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     accessTokenRef.current = accessToken;
   }, [accessToken]);
 
+  const setActiveDevice = useCallback((id: string | null, name?: string | null) => {
+    setActiveDeviceId(id);
+    activeDeviceIdRef.current = id;
+    if (name !== undefined) {
+      setActiveDeviceName(name);
+    }
+  }, []);
+
+  const refreshDevices = useCallback(async () => {
+    const token = accessTokenRef.current;
+    if (!token) return;
+    const now = Date.now();
+    if (now < rateLimitRef.current.until) return;
+    const res = await fetch("https://api.spotify.com/v1/me/player/devices", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 429) {
+      const retry = res.headers.get("Retry-After");
+      const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+      rateLimitRef.current.until = Date.now() + retryMs;
+      rateLimitRef.current.backoffMs = Math.min(
+        rateLimitRef.current.backoffMs * 2,
+        30000
+      );
+      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      return;
+    }
+    if (!res.ok) return;
+    rateLimitRef.current.backoffMs = 2500;
+    const data = await res.json();
+    const list = Array.isArray(data.devices) ? data.devices : [];
+    setDevices(
+      list.map((d: any) => ({
+        id: d.id,
+        name: d.name,
+        isActive: Boolean(d.is_active),
+        type: d.type,
+        isRestricted: Boolean(d.is_restricted),
+        supportsVolume: d.supports_volume !== false,
+      }))
+    );
+    const active = list.find((d: any) => d.is_active);
+    if (active?.id) {
+      setActiveDevice(active.id, active.name ?? null);
+      setActiveDeviceRestricted(Boolean(active.is_restricted));
+      setActiveDeviceSupportsVolume(active.supports_volume !== false);
+    }
+  }, [setActiveDevice]);
+
   useEffect(() => {
     if (!canUseSdk) {
       onReady(null);
@@ -387,55 +436,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (timer) clearTimeout(timer);
     };
   }, [accessToken, onTrackChange, setActiveDevice]);
-
-  const setActiveDevice = useCallback((id: string | null, name?: string | null) => {
-    setActiveDeviceId(id);
-    activeDeviceIdRef.current = id;
-    if (name !== undefined) {
-      setActiveDeviceName(name);
-    }
-  }, []);
-
-  const refreshDevices = useCallback(async () => {
-    const token = accessTokenRef.current;
-    if (!token) return;
-    const now = Date.now();
-    if (now < rateLimitRef.current.until) return;
-    const res = await fetch("https://api.spotify.com/v1/me/player/devices", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.status === 429) {
-      const retry = res.headers.get("Retry-After");
-      const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
-      rateLimitRef.current.until = Date.now() + retryMs;
-      rateLimitRef.current.backoffMs = Math.min(
-        rateLimitRef.current.backoffMs * 2,
-        30000
-      );
-      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
-      return;
-    }
-    if (!res.ok) return;
-    rateLimitRef.current.backoffMs = 2500;
-    const data = await res.json();
-    const list = Array.isArray(data.devices) ? data.devices : [];
-    setDevices(
-      list.map((d: any) => ({
-        id: d.id,
-        name: d.name,
-        isActive: Boolean(d.is_active),
-        type: d.type,
-        isRestricted: Boolean(d.is_restricted),
-        supportsVolume: d.supports_volume !== false,
-      }))
-    );
-    const active = list.find((d: any) => d.is_active);
-    if (active?.id) {
-      setActiveDevice(active.id, active.name ?? null);
-      setActiveDeviceRestricted(Boolean(active.is_restricted));
-      setActiveDeviceSupportsVolume(active.supports_volume !== false);
-    }
-  }, [setActiveDevice]);
 
   async function handleDeviceChange(targetId: string) {
     const token = accessTokenRef.current;

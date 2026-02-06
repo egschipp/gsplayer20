@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db/client";
 import {
   users,
@@ -14,7 +13,7 @@ import {
   trackArtists,
 } from "@/lib/db/schema";
 import { sql, eq, isNotNull } from "drizzle-orm";
-import { requireAppUser } from "@/lib/api/guards";
+import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -75,7 +74,7 @@ export async function GET() {
     .map((row) => row.lastSuccessfulAt || 0)
     .reduce((a, b) => Math.max(a, b), 0);
 
-  return NextResponse.json({
+  return jsonNoStore({
     counts: {
       users: usersCount?.count ?? 0,
       oauth_tokens: tokensCount?.count ?? 0,

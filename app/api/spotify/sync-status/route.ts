@@ -1,8 +1,7 @@
-import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db/client";
 import { syncState } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { requireAppUser } from "@/lib/api/guards";
+import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -16,7 +15,7 @@ export async function GET() {
     .from(syncState)
     .where(eq(syncState.userId, session.appUserId as string));
 
-  return NextResponse.json({
+  return jsonNoStore({
     resources: rows,
     asOf: Date.now(),
   });

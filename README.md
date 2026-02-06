@@ -18,6 +18,10 @@ Optional tuning:
 - `SYNC_TRACKS_INCREMENTAL_PAGES` (default 5)
 - `SYNC_PLAYLISTS_PAGES` (default 10)
 - `SYNC_PLAYLIST_ITEMS_PAGES` (default 5)
+- `AUTH_LOG_ENABLED` (default false)
+- `TRUST_PROXY` (set to `true` when behind a trusted reverse proxy)
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
 
 Routes:
 - `/api/auth/login` (start OAuth)

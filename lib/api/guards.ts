@@ -20,12 +20,19 @@ export async function requireAppUser() {
 }
 
 export function getRequestIp(req: Request) {
-  const forwarded = req.headers.get("x-forwarded-for");
-  if (!forwarded) return "unknown";
-  return forwarded.split(",")[0]?.trim() || "unknown";
+  const trustProxy = process.env.TRUST_PROXY === "true";
+  if (trustProxy) {
+    const forwarded = req.headers.get("x-forwarded-for");
+    if (forwarded) {
+      return forwarded.split(",")[0]?.trim() || "unknown";
+    }
+  }
+  const realIp = req.headers.get("x-real-ip");
+  if (realIp) return realIp;
+  return "unknown";
 }
 
-export function rateLimitResponse(options: {
+export async function rateLimitResponse(options: {
   key: string;
   limit: number;
   windowMs: number;
@@ -33,7 +40,7 @@ export function rateLimitResponse(options: {
   status?: number;
   includeRetryAfter?: boolean;
 }) {
-  const rl = rateLimit(options.key, options.limit, options.windowMs);
+  const rl = await rateLimit(options.key, options.limit, options.windowMs);
   if (rl.allowed) return null;
   const retryAfter = Math.max(Math.ceil((rl.resetAt - Date.now()) / 1000), 1);
   const headers = options.includeRetryAfter
@@ -45,4 +52,27 @@ export function rateLimitResponse(options: {
     status: options.status ?? 429,
     headers,
   });
+}
+
+export function jsonNoStore(
+  body: Record<string, unknown> | unknown,
+  status = 200,
+  headers?: Record<string, string>
+) {
+  return NextResponse.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store", ...(headers ?? {}) },
+  });
+}
+
+export function requireSameOrigin(req: Request) {
+  const baseUrl = process.env.NEXTAUTH_URL || process.env.AUTH_URL;
+  const expectedOrigin = baseUrl
+    ? new URL(baseUrl).origin
+    : new URL(req.url).origin;
+  const origin = req.headers.get("origin") || req.headers.get("referer");
+  if (!origin || !origin.startsWith(expectedOrigin)) {
+    return jsonError("INVALID_ORIGIN", 403);
+  }
+  return null;
 }

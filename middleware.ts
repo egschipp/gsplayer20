@@ -85,7 +85,13 @@ export async function middleware(req: NextRequest) {
   const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
   const expectedPin = process.env.APP_PIN || process.env.PIN_CODE;
   if (!secret || !expectedPin) {
-    return NextResponse.next();
+    if (pathname.startsWith("/api")) {
+      return NextResponse.json(
+        { error: "SERVICE_MISCONFIGURED" },
+        { status: 503 }
+      );
+    }
+    return NextResponse.redirect(new URL("/login?error=misconfigured", req.url));
   }
 
   const token = req.cookies.get(COOKIE_NAME)?.value;

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
+import { getRequestIp, rateLimitResponse, requireSameOrigin } from "@/lib/api/guards";
+import { clearPinLock, getPinLock, recordPinFailure } from "@/lib/auth/pinLock";
 
 export const runtime = "nodejs";
 
@@ -24,6 +26,26 @@ function sign(payload: string, secret: string) {
 }
 
 export async function POST(req: Request) {
+  const originCheck = requireSameOrigin(req);
+  if (originCheck) return originCheck;
+
+  const ip = getRequestIp(req);
+  const rl = await rateLimitResponse({
+    key: `pin-login:${ip}`,
+    limit: 20,
+    windowMs: 60_000,
+    includeRetryAfter: true,
+  });
+  if (rl) return rl;
+
+  const lock = getPinLock(ip);
+  if (lock.locked) {
+    return NextResponse.json(
+      { error: "PIN_LOCKED", retryAfter: lock.retryAfterSec },
+      { status: 429, headers: { "Retry-After": String(lock.retryAfterSec) } }
+    );
+  }
+
   const body = await req.json().catch(() => ({}));
   const pin = String(body?.pin ?? "");
   const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
@@ -34,9 +56,11 @@ export async function POST(req: Request) {
   }
 
   if (!pin || pin !== expected) {
+    recordPinFailure(ip);
     return NextResponse.json({ error: "INVALID_PIN" }, { status: 401 });
   }
 
+  clearPinLock(ip);
   const ua = req.headers.get("user-agent") || "";
   const payload = JSON.stringify({
     iat: Date.now(),

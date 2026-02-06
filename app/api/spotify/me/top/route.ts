@@ -1,12 +1,11 @@
-import { NextResponse } from "next/server";
 import { spotifyFetch } from "@/lib/spotify/client";
-import { getRequestIp, rateLimitResponse } from "@/lib/api/guards";
+import { getRequestIp, rateLimitResponse, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
   const ip = getRequestIp(req);
-  const rl = rateLimitResponse({
+  const rl = await rateLimitResponse({
     key: `top:${ip}`,
     limit: 60,
     windowMs: 60_000,
@@ -20,7 +19,7 @@ export async function GET(req: Request) {
   const offset = searchParams.get("offset") ?? "0";
 
   if (!['artists', 'tracks'].includes(type)) {
-    return NextResponse.json({ error: "INVALID_TYPE" }, { status: 400 });
+    return jsonNoStore({ error: "INVALID_TYPE" }, 400);
   }
 
   try {
@@ -29,10 +28,10 @@ export async function GET(req: Request) {
       userLevel: true,
     });
 
-    return NextResponse.json(data);
+    return jsonNoStore(data);
   } catch (error) {
     const message = String(error);
     const status = message.includes("UserNotAuthenticated") ? 401 : 502;
-    return NextResponse.json({ error: message }, { status });
+    return jsonNoStore({ error: message }, status);
   }
 }

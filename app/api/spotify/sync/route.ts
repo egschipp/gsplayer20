@@ -3,8 +3,7 @@ import { getDb } from "@/lib/db/client";
 import { jobs, syncState } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { cryptoRandomId } from "@/lib/db/queries";
-import { getBaseUrl } from "@/lib/env";
-import { getRequestIp, rateLimitResponse, requireAppUser } from "@/lib/api/guards";
+import { getRequestIp, rateLimitResponse, requireAppUser, requireSameOrigin } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -19,24 +18,20 @@ const jobMap: Record<string, string> = {
 };
 
 export async function POST(req: Request) {
+  const originCheck = requireSameOrigin(req);
+  if (originCheck) return originCheck;
+
   const ip = getRequestIp(req);
   const body = await req.json().catch(() => ({}));
   const type = jobMap[body?.type] ?? null;
   const rlKey = type ? `sync:${type}:${ip}` : `sync:${ip}`;
-  const rl = rateLimitResponse({
+  const rl = await rateLimitResponse({
     key: rlKey,
     limit: 30,
     windowMs: 60_000,
     includeRetryAfter: true,
   });
   if (rl) return rl;
-
-  const baseUrl = getBaseUrl() || new URL(req.url).origin;
-  const expectedOrigin = new URL(baseUrl).origin;
-  const origin = req.headers.get("origin") || req.headers.get("referer") || "";
-  if (origin && !origin.startsWith(expectedOrigin)) {
-    return NextResponse.json({ error: "INVALID_ORIGIN" }, { status: 403 });
-  }
 
   const { session, response } = await requireAppUser();
   if (response) return response;
@@ -51,7 +46,7 @@ export async function POST(req: Request) {
 
   await db.insert(jobs).values({
     id: jobId,
-    userId: session.appUserId,
+    userId: session.appUserId as string,
     type,
     payload,
     runAfter: Date.now(),
@@ -64,7 +59,7 @@ export async function POST(req: Request) {
   await db
     .insert(syncState)
     .values({
-      userId: session.appUserId,
+      userId: session.appUserId as string,
       resource:
         type === "SYNC_PLAYLISTS"
           ? "playlists"

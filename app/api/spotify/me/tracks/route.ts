@@ -1,16 +1,15 @@
-import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db/client";
 import { userSavedTracks, tracks, syncState, trackArtists, artists } from "@/lib/db/schema";
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
-import { rateLimitResponse, requireAppUser } from "@/lib/api/guards";
+import { rateLimitResponse, requireAppUser, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
   const { session, response } = await requireAppUser();
   if (response) return response;
-  const rl = rateLimitResponse({
+  const rl = await rateLimitResponse({
     key: `tracks:${session.appUserId}`,
     limit: 600,
     windowMs: 60_000,
@@ -80,7 +79,7 @@ export async function GET(req: Request) {
     ? Math.floor((Date.now() - lastSuccessfulAt) / 1000)
     : null;
 
-  return NextResponse.json({
+  return jsonNoStore({
     items: rows.map((row) => ({
       ...row,
       coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,

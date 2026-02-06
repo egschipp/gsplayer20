@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db/client";
 import {
   artists,
@@ -9,7 +8,7 @@ import {
   userPlaylists,
 } from "@/lib/db/schema";
 import { and, eq, or } from "drizzle-orm";
-import { requireAppUser } from "@/lib/api/guards";
+import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -20,7 +19,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const name = (searchParams.get("name") ?? "").trim();
   if (!name) {
-    return NextResponse.json({ error: "MISSING_NAME" }, { status: 400 });
+    return jsonNoStore({ error: "MISSING_NAME" }, 400);
   }
 
   const db = getDb();
@@ -64,7 +63,7 @@ export async function GET(req: Request) {
   const unique = new Map<string, typeof rows[number]>();
   for (const row of rows) unique.set(row.artistId, row);
 
-  return NextResponse.json({
+  return jsonNoStore({
     items: Array.from(unique.values()),
     asOf: Date.now(),
   });

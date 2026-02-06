@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
 import { getDb } from "@/lib/db/client";
 import {
   playlistItems,
@@ -12,7 +12,7 @@ import {
 } from "@/lib/db/schema";
 import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
-import { rateLimitResponse, requireAppUser } from "@/lib/api/guards";
+import { rateLimitResponse, requireAppUser, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -22,7 +22,7 @@ export async function GET(
 ) {
   const { session, response } = await requireAppUser();
   if (response) return response;
-  const rl = rateLimitResponse({
+  const rl = await rateLimitResponse({
     key: `playlist-items:${session.appUserId}`,
     limit: 600,
     windowMs: 60_000,
@@ -31,7 +31,7 @@ export async function GET(
 
   const { playlistId } = await ctx.params;
   if (!playlistId) {
-    return NextResponse.json({ error: "MISSING_PLAYLIST" }, { status: 400 });
+    return jsonNoStore({ error: "MISSING_PLAYLIST" }, 400);
   }
 
   const { searchParams } = new URL(req.url);
@@ -159,7 +159,7 @@ export async function GET(
     ? Math.floor((Date.now() - lastSuccessfulAt) / 1000)
     : null;
 
-  return NextResponse.json({
+  return jsonNoStore({
     items: rows.map((row) => ({
       ...row,
       coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,

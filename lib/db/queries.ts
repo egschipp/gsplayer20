@@ -14,17 +14,21 @@ import { encryptToken, decryptToken } from "@/lib/crypto";
 
 export async function getOrCreateUser(spotifyUserId: string) {
   const db = getDb();
-  const existing = await db
+  const id = cryptoRandomId();
+  await db
+    .insert(users)
+    .values({ id, spotifyUserId })
+    .onConflictDoNothing()
+    .run();
+  const row = await db
     .select()
     .from(users)
     .where(eq(users.spotifyUserId, spotifyUserId))
     .get();
-
-  if (existing) return existing;
-
-  const id = cryptoRandomId();
-  await db.insert(users).values({ id, spotifyUserId }).run();
-  return { id, spotifyUserId } as const;
+  if (!row) {
+    throw new Error("UserCreateFailed");
+  }
+  return row;
 }
 
 export async function upsertTokens(params: {

@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db/client";
 import {
   tracks,
@@ -11,7 +10,7 @@ import {
 } from "@/lib/db/schema";
 import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
-import { requireAppUser } from "@/lib/api/guards";
+import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -24,7 +23,7 @@ export async function GET(
 
   const { artistId } = await ctx.params;
   if (!artistId) {
-    return NextResponse.json({ error: "MISSING_ARTIST" }, { status: 400 });
+    return jsonNoStore({ error: "MISSING_ARTIST" }, 400);
   }
 
   const { searchParams } = new URL(req.url);
@@ -125,7 +124,7 @@ export async function GET(
   const last = rows[rows.length - 1];
   const nextCursor = last ? encodeCursor(0, last.trackId) : null;
 
-  return NextResponse.json({
+  return jsonNoStore({
     items: rows.map((row) => ({
       ...row,
       coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,

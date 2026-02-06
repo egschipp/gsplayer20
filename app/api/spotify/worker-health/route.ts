@@ -1,8 +1,7 @@
-import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { workerHeartbeat } from "@/lib/db/schema";
-import { requireAppUser } from "@/lib/api/guards";
+import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -27,7 +26,7 @@ export async function GET() {
     status = now - lastHeartbeat > STALE_AFTER_MS ? "STALE" : "OK";
   }
 
-  return NextResponse.json({
+  return jsonNoStore({
     status,
     lastHeartbeat,
     staleAfterMs: STALE_AFTER_MS,

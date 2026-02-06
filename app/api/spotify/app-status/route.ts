@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 
 export async function GET(req: Request) {
   const ip = getRequestIp(req);
-  const rl = rateLimitResponse({
+  const rl = await rateLimitResponse({
     key: `app-status:${ip}`,
     limit: 30,
     windowMs: 60_000,

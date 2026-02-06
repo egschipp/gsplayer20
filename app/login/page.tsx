@@ -38,7 +38,7 @@ export default function LoginPage({
     <div className="login-shell">
       <div className="login-card">
         <img
-          src="/georgies-spotify.png"
+          src="/georgies-spotify.png?v=3"
           alt="Georgies Spotify logo"
           className="login-logo"
         />

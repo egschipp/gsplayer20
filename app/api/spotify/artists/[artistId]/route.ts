@@ -44,10 +44,18 @@ export async function GET(
   }
 
   let genres: string[] = [];
-  try {
-    genres = row.genres ? JSON.parse(row.genres) : [];
-  } catch {
-    genres = [];
+  if (row.genres) {
+    try {
+      const parsed = JSON.parse(row.genres);
+      genres = Array.isArray(parsed)
+        ? parsed.filter((value) => typeof value === "string")
+        : [];
+    } catch {
+      genres = row.genres
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+    }
   }
   let popularity = row.popularity ?? null;
 

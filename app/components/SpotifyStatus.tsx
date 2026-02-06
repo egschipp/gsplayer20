@@ -50,12 +50,24 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
         </div>
       ) : null}
       <div style={{ marginTop: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <a href="/api/auth/login" className="btn btn-primary">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => {
+            window.location.href = "/api/auth/login";
+          }}
+        >
           Connect Spotify
-        </a>
-        <a href="/api/auth/logout" className="btn btn-ghost">
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => {
+            window.location.href = "/api/auth/logout";
+          }}
+        >
           Sign out
-        </a>
+        </button>
       </div>
     </section>
   );

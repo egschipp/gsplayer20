@@ -348,6 +348,19 @@ a:focus-visible {
   display: flex;
   gap: 12px;
   align-items: center;
+  justify-content: space-between;
+}
+
+.nav-left {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.nav-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
 }
 
 .nav-link {

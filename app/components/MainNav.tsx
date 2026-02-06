@@ -1,24 +1,52 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 
 export default function MainNav() {
   const pathname = usePathname();
   const isHome = pathname === "/";
   const isStatus = pathname === "/status";
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  async function handleLogout() {
+    setLoggingOut(true);
+    try {
+      await fetch("/api/pin-logout", { method: "POST" });
+    } finally {
+      window.location.href = "/login";
+    }
+  }
 
   return (
     <nav className="nav">
-      <a href="/" className={`nav-link${isHome ? " active" : ""}`} aria-current={isHome ? "page" : undefined}>
-        GSPlayer
-      </a>
-      <a
-        href="/status"
-        className={`nav-link${isStatus ? " active" : " secondary"}`}
-        aria-current={isStatus ? "page" : undefined}
-      >
-        Status
-      </a>
+      <div className="nav-left">
+        <Link
+          href="/"
+          className={`nav-link${isHome ? " active" : ""}`}
+          aria-current={isHome ? "page" : undefined}
+        >
+          GSPlayer
+        </Link>
+        <Link
+          href="/status"
+          className={`nav-link${isStatus ? " active" : " secondary"}`}
+          aria-current={isStatus ? "page" : undefined}
+        >
+          Status
+        </Link>
+      </div>
+      <div className="nav-right">
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={handleLogout}
+          disabled={loggingOut}
+        >
+          {loggingOut ? "Logging out..." : "Logout"}
+        </button>
+      </div>
     </nav>
   );
 }

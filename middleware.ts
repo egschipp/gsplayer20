@@ -69,6 +69,8 @@ function isPublicPath(pathname: string) {
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/icon-") ||
     pathname.startsWith("/apple-touch-icon") ||
+    pathname.startsWith("/georgies-spotify.png") ||
+    pathname.startsWith("/georgies-spotify.jpg") ||
     pathname.startsWith("/site.webmanifest")
   ) {
     return true;

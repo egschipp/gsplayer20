@@ -27,14 +27,14 @@ export default function MainNav() {
           className={`nav-link${isHome ? " active" : ""}`}
           aria-current={isHome ? "page" : undefined}
         >
-          GSPlayer
+          Bibliotheek
         </Link>
         <Link
           href="/status"
           className={`nav-link${isStatus ? " active" : " secondary"}`}
           aria-current={isStatus ? "page" : undefined}
         >
-          Status
+          Diagnose
         </Link>
       </div>
       <div className="nav-right">
@@ -44,7 +44,7 @@ export default function MainNav() {
           onClick={handleLogout}
           disabled={loggingOut}
         >
-          {loggingOut ? "Logging out..." : "Logout"}
+          {loggingOut ? "Uitloggen..." : "Uitloggen"}
         </button>
       </div>
     </nav>

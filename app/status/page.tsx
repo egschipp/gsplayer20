@@ -5,6 +5,9 @@ import StatusBox from "../components/StatusBox";
 export default function StatusPage() {
   return (
     <main className="page">
+      <p className="text-body" style={{ marginBottom: 12 }}>
+        Deze pagina is bedoeld voor diagnose en handmatig bijwerken.
+      </p>
       <Image
         src="/georgies-spotify.png"
         alt="Georgies Spotify logo"

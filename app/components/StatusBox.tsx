@@ -48,6 +48,21 @@ function Badge({ label, tone }: { label: string; tone?: "ok" | "warn" }) {
   return <span className={cls}>{label}</span>;
 }
 
+const COUNT_LABELS: Record<string, string> = {
+  user_saved_tracks: "Opgeslagen tracks",
+  playlists: "Playlists",
+  tracks: "Tracks",
+  artists: "Artiesten",
+  playlist_items: "Playlist‑tracks",
+  cover_images: "Coverafbeeldingen",
+};
+
+function formatSyncStatus(running: boolean) {
+  return running
+    ? { label: "Bibliotheek wordt bijgewerkt", tone: "warn" as const }
+    : { label: "Bibliotheek up‑to‑date", tone: "ok" as const };
+}
+
 export default function StatusBox() {
   const [appStatus, setAppStatus] = useState<AppStatus>(null);
   const [userStatus, setUserStatus] = useState<UserStatus>(null);
@@ -177,9 +192,9 @@ export default function StatusBox() {
     const payload = JSON.stringify(authLog.entries ?? [], null, 2);
     try {
       await navigator.clipboard.writeText(payload);
-      setCopyStatus("Copied");
+      setCopyStatus("Gekopieerd");
     } catch {
-      setCopyStatus("Copy failed");
+      setCopyStatus("Kopiëren mislukt");
     } finally {
       setTimeout(() => setCopyStatus(null), 2000);
     }
@@ -188,7 +203,7 @@ export default function StatusBox() {
   useEffect(() => {
     refresh();
     refreshAuthStatus();
-    const fast = setInterval(refresh, 2000);
+    const fast = setInterval(refresh, 5000);
     const slow = setInterval(refreshAuthStatus, 15000);
     return () => {
       clearInterval(fast);
@@ -235,7 +250,7 @@ export default function StatusBox() {
     }
   }
 
-  const running = dbStatus?.sync?.running ? "RUNNING" : "IDLE";
+  const runningInfo = formatSyncStatus(Boolean(dbStatus?.sync?.running));
   const lastSync = dbStatus?.sync?.lastSuccessfulAt
     ? new Date(dbStatus.sync.lastSuccessfulAt).toLocaleString()
     : "n/a";
@@ -243,20 +258,32 @@ export default function StatusBox() {
   const workerLast = workerHealth?.lastHeartbeat
     ? new Date(workerHealth.lastHeartbeat).toLocaleString()
     : "n/a";
+  const importantCounts = dbStatus?.counts
+    ? Object.entries(dbStatus.counts)
+        .filter(([key]) => COUNT_LABELS[key])
+        .map(([key, value]) => ({
+          key,
+          label: COUNT_LABELS[key],
+          value,
+        }))
+    : [];
 
   return (
     <section className="card" style={{ marginTop: 24 }}>
-      <h2 className="heading-2">Status</h2>
+      <h2 className="heading-2">Diagnose</h2>
+      <div className="text-body" style={{ marginBottom: 12 }}>
+        Gebruik dit scherm als er iets niet werkt of als je handmatig wil bijwerken.
+      </div>
       <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Badge
           label={`App: ${appStatus?.status ?? "CHECKING"}`}
           tone={appStatus?.status === "OK" ? "ok" : "warn"}
         />
         <Badge
-          label={`User: ${userStatus?.status ?? "CHECKING"}`}
+          label={`Account: ${userStatus?.status ?? "CHECKING"}`}
           tone={userStatus?.status === "OK" ? "ok" : "warn"}
         />
-        <Badge label={`Sync: ${running}`} tone={running === "RUNNING" ? "warn" : "ok"} />
+        <Badge label={runningInfo.label} tone={runningInfo.tone} />
         <Badge
           label={`Worker: ${workerStatus}`}
           tone={workerStatus === "OK" ? "ok" : "warn"}
@@ -264,22 +291,19 @@ export default function StatusBox() {
       </div>
 
       <div className="text-body" style={{ marginBottom: 12 }}>
-        <div>Last sync: {lastSync}</div>
-        <div>Worker heartbeat: {workerLast}</div>
-        <div>Version: {versionInfo?.version ?? "n/a"}</div>
+        <div>Laatst bijgewerkt: {lastSync}</div>
+        <div>Worker controle: {workerLast}</div>
+        <div>Versie: {versionInfo?.version ?? "n/a"}</div>
       </div>
 
       <div className="status-grid" style={{ fontSize: 13, marginBottom: 12 }}>
-        {dbStatus?.counts
-          ? Object.entries(dbStatus.counts).map(([key, value]) => (
-              <div
-                key={key}
-                className="panel"
-              >
-                <strong>{key}</strong>: {value}
+        {importantCounts.length
+          ? importantCounts.map((row) => (
+              <div key={row.key} className="panel">
+                <strong>{row.label}</strong>: {row.value}
               </div>
             ))
-          : "DB status unavailable"}
+          : "Geen statusdata beschikbaar."}
       </div>
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
@@ -306,7 +330,7 @@ export default function StatusBox() {
           disabled={syncing}
           className="btn btn-primary"
         >
-          {syncing ? "Syncing..." : "Force sync + covers"}
+          {syncing ? "Bijwerken..." : "Bibliotheek bijwerken"}
         </button>
         <button
           onClick={async () => {
@@ -323,7 +347,7 @@ export default function StatusBox() {
                 const until = Date.now() + retrySec * 1000;
                 setSyncCooldownUntil(until);
                 setSyncCooldownMessage(
-                  `Rate limited. Try again in ${retrySec}s.`
+                  `Even geduld. Probeer het over ${retrySec}s opnieuw.`
                 );
                 return;
               }
@@ -338,68 +362,71 @@ export default function StatusBox() {
           }
           className="btn btn-secondary"
         >
-          Sync artists
+          Artiesten bijwerken
         </button>
         {syncCooldownMessage ? (
           <span className="text-body">{syncCooldownMessage}</span>
         ) : null}
         <button onClick={logoutPin} className="btn btn-ghost">
-          Logout
+          Uitloggen
         </button>
         <button
           onClick={loadAuthLog}
           disabled={authLogLoading}
           className="btn btn-secondary"
         >
-          {authLogLoading ? "Loading..." : "Load auth log"}
+          {authLogLoading ? "Laden..." : "Login‑log laden"}
         </button>
         <button
           onClick={clearAuthLog}
           disabled={authLogLoading}
           className="btn btn-ghost"
         >
-          Clear auth log
+          Login‑log wissen
         </button>
         <button
           onClick={copyAuthLog}
           disabled={!authLog || authLogLoading}
           className="btn btn-secondary"
         >
-          Copy auth log
+          Login‑log kopiëren
         </button>
         {copyStatus ? <span className="text-body">{copyStatus}</span> : null}
       </div>
 
-      <div className="panel" style={{ marginTop: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <strong>Spotify login trace</strong>
-          <span>
-            {authLog?.startedAt
-              ? new Date(authLog.startedAt).toLocaleString()
-              : "n/a"}
-          </span>
+      <details className="panel" style={{ marginTop: 16 }}>
+        <summary className="details-summary">Geavanceerde logs</summary>
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <strong>Spotify login‑trace</strong>
+            <span>
+              {authLog?.startedAt
+                ? new Date(authLog.startedAt).toLocaleString()
+                : "n/a"}
+            </span>
+          </div>
+          <div style={{ fontSize: 13, marginTop: 8 }}>
+            Regels: {authLog?.entries?.length ?? 0}
+          </div>
+          <pre
+            style={{
+              marginTop: 12,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontSize: 12,
+            }}
+          >
+            {authLog
+              ? JSON.stringify(authLog.entries, null, 2)
+              : "Geen login‑log geladen."}
+          </pre>
         </div>
-        <div style={{ fontSize: 13, marginTop: 8 }}>
-          Entries: {authLog?.entries?.length ?? 0}
-        </div>
-        <pre
-          style={{
-            marginTop: 12,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            fontSize: 12,
-          }}
-        >
-          {authLog
-            ? JSON.stringify(authLog.entries, null, 2)
-            : "No auth log loaded."}
-        </pre>
-      </div>
+      </details>
 
       {syncStatus?.resources?.length ? (
         <details className="panel" style={{ marginTop: 16 }}>
           <summary className="details-summary">
-            Resources ({syncStatus.resources.length})
+            Technische resources ({syncStatus.resources.length})
           </summary>
           <div style={{ marginTop: 12, fontSize: 13 }}>
             {syncStatus.resources
@@ -458,7 +485,7 @@ export default function StatusBox() {
                             refresh();
                           }}
                         >
-                          Refresh now
+                          Nu bijwerken
                         </button>
                       ) : null}
                     </span>

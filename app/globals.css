@@ -344,6 +344,20 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+.combo-clear:focus-visible,
+.play-btn:focus-visible,
+.track-row:focus-visible,
+.segmented-btn:focus-visible,
+.detail-btn:focus-visible {
+  outline: 2px solid var(--tide);
+  outline-offset: 2px;
+}
+
+.track-row:focus-visible {
+  border-color: rgba(29, 185, 84, 0.5);
+  background: rgba(29, 185, 84, 0.12);
+}
+
 .nav {
   display: flex;
   gap: 12px;
@@ -441,6 +455,10 @@ a:focus-visible {
   border-radius: 1rem;
   border: 1px dashed rgba(255, 255, 255, 0.18);
   background: rgba(0, 0, 0, 0.4);
+}
+
+.empty-state .text-body {
+  margin-top: 4px;
 }
 
 .playlist-chip {

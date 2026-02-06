@@ -81,11 +81,11 @@ export default function PlaylistBrowser() {
           if (!res.ok) {
             if (res.status === 401 || res.status === 403) {
               setAuthRequired(true);
-              setError("Please connect Spotify to load playlists.");
+              setError("Je bent nog niet verbonden met Spotify.");
             } else if (res.status === 429) {
-              setError("Rate limited. Please try again in a moment.");
+              setError("Je hebt even te veel aanvragen gedaan. Probeer het zo opnieuw.");
             } else {
-              setError("Failed to load playlists.");
+              setError("Playlists laden lukt nu niet.");
             }
             return;
           }
@@ -115,7 +115,7 @@ export default function PlaylistBrowser() {
           setSelectedPlaylistId((prev) => prev || LIKED_OPTION.id);
         }
       } catch {
-        if (!cancelled) setError("Failed to load playlists.");
+        if (!cancelled) setError("Playlists laden lukt nu niet.");
       } finally {
         if (!cancelled) setLoadingPlaylists(false);
       }
@@ -141,11 +141,11 @@ export default function PlaylistBrowser() {
           if (!res.ok) {
             if (res.status === 401 || res.status === 403) {
               setAuthRequired(true);
-              setError("Please connect Spotify to load artists.");
+              setError("Je bent nog niet verbonden met Spotify.");
             } else if (res.status === 429) {
-              setError("Rate limited. Please try again in a moment.");
+              setError("Je hebt even te veel aanvragen gedaan. Probeer het zo opnieuw.");
             } else {
-              setError("Failed to load artists.");
+              setError("Artiesten laden lukt nu niet.");
             }
             return;
           }
@@ -171,7 +171,7 @@ export default function PlaylistBrowser() {
           setArtistOptions(list);
           setSelectedArtistId((prev) => prev || (list[0]?.id ?? ""));
         }
-      } finally {
+        } finally {
         if (!cancelled) setLoadingArtists(false);
       }
     }
@@ -196,11 +196,11 @@ export default function PlaylistBrowser() {
           if (!res.ok) {
             if (res.status === 401 || res.status === 403) {
               setAuthRequired(true);
-              setError("Please connect Spotify to load tracks.");
+              setError("Je bent nog niet verbonden met Spotify.");
             } else if (res.status === 429) {
-              setError("Rate limited. Please try again in a moment.");
+              setError("Je hebt even te veel aanvragen gedaan. Probeer het zo opnieuw.");
             } else {
-              setError("Failed to load tracks.");
+              setError("Tracks laden lukt nu niet.");
             }
             return;
           }
@@ -257,7 +257,7 @@ export default function PlaylistBrowser() {
           setTrackItems(all);
           setSelectedTrackName((prev) => prev || (list[0]?.name ?? ""));
         }
-      } finally {
+        } finally {
         if (!cancelled) setLoadingTracksList(false);
       }
     }
@@ -484,9 +484,9 @@ export default function PlaylistBrowser() {
         const res = await fetch(url.toString());
         if (!res.ok) {
           if (res.status === 401) {
-            setError("Please connect Spotify to load tracks.");
+            setError("Je bent nog niet verbonden met Spotify.");
           } else {
-            setError("Failed to load tracks.");
+            setError("Tracks laden lukt nu niet.");
           }
           return;
         }
@@ -497,7 +497,7 @@ export default function PlaylistBrowser() {
           setNextCursor(data.nextCursor ?? null);
         }
       } catch {
-        if (!cancelled) setError("Failed to load tracks.");
+        if (!cancelled) setError("Tracks laden lukt nu niet.");
       } finally {
         if (!cancelled) setLoadingTracks(false);
       }
@@ -589,6 +589,25 @@ export default function PlaylistBrowser() {
           }}
         />
       </div>
+      <div className="panel" style={{ marginBottom: 16 }}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Snelle start</div>
+        <div className="text-body">
+          1. Verbind Spotify. 2. Kies een playlist of artiest. 3. Start afspelen.
+        </div>
+        {authRequired ? (
+          <div style={{ marginTop: 10 }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                window.location.href = "/api/auth/login";
+              }}
+            >
+              Spotify verbinden
+            </button>
+          </div>
+        ) : null}
+      </div>
       <div className="segmented" role="tablist" aria-label="Library modes">
         {(["playlists", "artists", "tracks"] as Mode[]).map((value) => (
           <button
@@ -599,14 +618,18 @@ export default function PlaylistBrowser() {
             aria-selected={mode === value}
             onClick={() => setMode(value)}
           >
-            {value.charAt(0).toUpperCase() + value.slice(1)}
+            {value === "playlists"
+              ? "Playlists"
+              : value === "artists"
+              ? "Artiesten"
+              : "Tracks"}
           </button>
         ))}
       </div>
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <div className="combo" style={{ minWidth: 260 }}>
           <label className="sr-only" htmlFor="playlist-search">
-            Select option
+            Kies selectie
           </label>
           <input
             id="playlist-search"
@@ -623,7 +646,7 @@ export default function PlaylistBrowser() {
               }, 100);
             }}
             className="combo-input"
-            aria-label="Select option"
+            aria-label="Selectie zoeken"
             role="combobox"
             aria-autocomplete="list"
             aria-expanded={open}
@@ -631,10 +654,10 @@ export default function PlaylistBrowser() {
             aria-controls="playlist-options"
             placeholder={
               mode === "playlists"
-                ? "Search playlists..."
+                ? "Zoek playlists..."
                 : mode === "artists"
-                ? "Search artists..."
-                : "Search tracks..."
+                ? "Zoek artiesten..."
+                : "Zoek tracks..."
             }
             disabled={
               mode === "playlists"
@@ -666,7 +689,7 @@ export default function PlaylistBrowser() {
           {open ? (
             <div className="combo-list" role="listbox" id="playlist-options">
               {filteredOptions.length === 0 ? (
-                <div className="combo-empty">No matches.</div>
+                <div className="combo-empty">Geen resultaten.</div>
               ) : mode === "tracks" ? (
                 (filteredOptions as TrackOption[]).map((opt) => (
                   <button
@@ -741,16 +764,40 @@ export default function PlaylistBrowser() {
       </div>
 
       {loadingPlaylists && mode === "playlists" ? (
-        <p className="text-body">Loading playlists...</p>
+        <p className="text-body" role="status">
+          Playlists laden...
+        </p>
+      ) : null}
+      {!loadingPlaylists &&
+      mode === "playlists" &&
+      playlistOptions.length <= 1 ? (
+        <div className="empty-state">
+          <div style={{ fontWeight: 600 }}>Nog geen playlists gevonden</div>
+          <div className="text-body">
+            Werk de bibliotheek bij via Diagnose en probeer opnieuw.
+          </div>
+        </div>
       ) : null}
       {loadingArtists && mode === "artists" ? (
-        <p className="text-body">Loading artists...</p>
+        <p className="text-body" role="status">
+          Artiesten laden...
+        </p>
+      ) : null}
+      {!loadingArtists && mode === "artists" && artistOptions.length === 0 ? (
+        <div className="empty-state">
+          <div style={{ fontWeight: 600 }}>Nog geen artiesten gevonden</div>
+          <div className="text-body">
+            Werk de bibliotheek bij via Diagnose en probeer opnieuw.
+          </div>
+        </div>
       ) : null}
       {loadingTracksList && mode === "tracks" ? (
-        <p className="text-body">Loading tracks...</p>
+        <p className="text-body" role="status">
+          Tracks laden...
+        </p>
       ) : null}
       {error ? (
-        <div style={{ color: "#fca5a5" }}>
+        <div style={{ color: "#fca5a5" }} role="alert">
           <p>{error}</p>
           {authRequired ? (
             <button
@@ -760,7 +807,7 @@ export default function PlaylistBrowser() {
                 window.location.href = "/api/auth/login";
               }}
             >
-              Connect Spotify
+              Spotify verbinden
             </button>
           ) : null}
         </div>
@@ -770,28 +817,36 @@ export default function PlaylistBrowser() {
         <div className="track-list" style={{ marginTop: 16 }}>
           {mode === "playlists" && !selectedPlaylist?.id ? (
             <div className="empty-state">
-              <div style={{ fontWeight: 600 }}>Select a playlist</div>
+              <div style={{ fontWeight: 600 }}>Kies een playlist</div>
               <div className="text-body">
-                Choose a playlist to see its tracks.
+                Selecteer een playlist om tracks te bekijken.
               </div>
             </div>
           ) : null}
           {mode === "artists" && !selectedArtist?.id ? (
             <div className="empty-state">
-              <div style={{ fontWeight: 600 }}>Select an artist</div>
+              <div style={{ fontWeight: 600 }}>Kies een artiest</div>
               <div className="text-body">
-                Pick an artist to see their tracks and playlists.
+                Selecteer een artiest om tracks te bekijken.
               </div>
             </div>
           ) : null}
           {mode === "playlists" && selectedPlaylist?.name ? (
             <div className="text-body" style={{ marginBottom: 6 }}>
-              Showing tracks for: <strong>{selectedPlaylist.name}</strong>
+              Tracks in: <strong>{selectedPlaylist.name}</strong>
             </div>
           ) : null}
           {mode === "artists" && selectedArtist?.name ? (
             <div className="text-body" style={{ marginBottom: 6 }}>
-              Showing tracks for: <strong>{selectedArtist.name}</strong>
+              Tracks van: <strong>{selectedArtist.name}</strong>
+            </div>
+          ) : null}
+          {!loadingTracks && !tracks.length && selectedPlaylist?.id ? (
+            <div className="empty-state">
+              <div style={{ fontWeight: 600 }}>Geen tracks gevonden</div>
+              <div className="text-body">
+                Werk de bibliotheek bij via Diagnose als dit onverwacht is.
+              </div>
             </div>
           ) : null}
           {tracks.length ? (
@@ -805,7 +860,7 @@ export default function PlaylistBrowser() {
               {mode === "artists" || mode === "playlists" ? (
                 <div>Playlists</div>
               ) : null}
-              <div>Duration / Actions</div>
+              <div>Duur / Acties</div>
             </div>
           ) : null}
           {tracks.map((track, idx) => (
@@ -834,8 +889,8 @@ export default function PlaylistBrowser() {
                 <button
                   type="button"
                   className="play-btn"
-                  aria-label="Play track"
-                  title="Play"
+                  aria-label="Track afspelen"
+                  title="Afspelen"
                   disabled={!track.trackId}
                   onClick={() => handlePlayTrack(track.trackId)}
                 >
@@ -861,9 +916,9 @@ export default function PlaylistBrowser() {
                   />
                 )}
               </div>
-              <div>
-                <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
-                  {track.name || "Unknown"}
+                <div>
+                  <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
+                  {track.name || "Onbekend"}
                   {currentTrackId && track.trackId === currentTrackId ? (
                     <span className="playing-indicator" aria-label="Now playing">
                       ▶
@@ -871,7 +926,7 @@ export default function PlaylistBrowser() {
                   ) : null}
                 </div>
                 <div className="text-body">
-                  {dedupeArtistText(track.artists || "") || "Unknown artist"}
+                  {dedupeArtistText(track.artists || "") || "Onbekende artiest"}
                 </div>
                 {track.albumName ? (
                   <div className="text-subtle">{track.albumName}</div>
@@ -902,8 +957,8 @@ export default function PlaylistBrowser() {
                     href={`https://open.spotify.com/track/${track.trackId}`}
                     target="_blank"
                     rel="noreferrer"
-                    aria-label="Open in Spotify"
-                    title="Open in Spotify"
+                    aria-label="Openen in Spotify"
+                    title="Openen in Spotify"
                     style={{ color: "var(--text-primary)", display: "inline-flex" }}
                     onClick={(event) => event.stopPropagation()}
                   >
@@ -929,7 +984,13 @@ export default function PlaylistBrowser() {
         <div className="track-list" style={{ marginTop: 16 }}>
           {selectedTrackName ? (
             <div className="text-body" style={{ marginBottom: 6 }}>
-              Tracks named: <strong>{selectedTrackName}</strong>
+              Tracks met naam: <strong>{selectedTrackName}</strong>
+            </div>
+          ) : null}
+          {!loadingTracksList && selectedTrackName && !filteredTrackItems.length ? (
+            <div className="empty-state">
+              <div style={{ fontWeight: 600 }}>Geen resultaten</div>
+              <div className="text-body">Probeer een andere titel.</div>
             </div>
           ) : null}
           {filteredTrackItems.length ? (
@@ -937,7 +998,7 @@ export default function PlaylistBrowser() {
               <div />
               <div>Track</div>
               <div>Playlists</div>
-              <div>Actions</div>
+              <div>Acties</div>
             </div>
           ) : null}
           {filteredTrackItems.map((track) => {
@@ -969,8 +1030,8 @@ export default function PlaylistBrowser() {
                   <button
                     type="button"
                     className="play-btn"
-                    aria-label="Play track"
-                    title="Play"
+                    aria-label="Track afspelen"
+                    title="Afspelen"
                     onClick={() => handlePlayTrack(track.id)}
                   >
                     ▶
@@ -1005,7 +1066,7 @@ export default function PlaylistBrowser() {
                     ) : null}
                   </div>
                   <div className="text-body">
-                    {uniqueArtistNames || "Unknown artist"}
+                    {uniqueArtistNames || "Onbekende artiest"}
                   </div>
                   {track.album?.name ? (
                     <div className="text-subtle">{track.album.name}</div>
@@ -1028,8 +1089,8 @@ export default function PlaylistBrowser() {
                     href={`https://open.spotify.com/track/${track.id}`}
                     target="_blank"
                     rel="noreferrer"
-                    aria-label="Open in Spotify"
-                    title="Open in Spotify"
+                    aria-label="Openen in Spotify"
+                    title="Openen in Spotify"
                     style={{ color: "var(--text-primary)", display: "inline-flex" }}
                     onClick={(event) => event.stopPropagation()}
                   >
@@ -1056,12 +1117,10 @@ export default function PlaylistBrowser() {
       <div style={{ marginTop: 12 }}>
         {mode === "tracks" ? (
           loadingTracksList ? (
-            <span className="text-body">Loading tracks...</span>
+            <span className="text-body">Tracks laden...</span>
           ) : null
         ) : loadingTracks ? (
-          <span className="text-body">
-            Loading tracks...
-          </span>
+          <span className="text-body">Tracks laden...</span>
         ) : null}
         {!loadingTracks && nextCursor && mode !== "tracks" ? (
           <button
@@ -1069,7 +1128,7 @@ export default function PlaylistBrowser() {
             className="btn btn-primary"
             style={{ marginLeft: 12 }}
           >
-            Load more
+            Meer laden
           </button>
         ) : null}
       </div>
@@ -1106,9 +1165,9 @@ export default function PlaylistBrowser() {
                   )}
                 </div>
                 <div>
-                  <div className="text-subtle">Track details</div>
+                  <div className="text-subtle">Trackdetails</div>
                   <div style={{ fontWeight: 700, fontSize: 20 }}>
-                    {selectedTrackDetail.name || "Unknown track"}
+                    {selectedTrackDetail.name || "Onbekende track"}
                   </div>
                   {selectedTrackDetail.artists?.length ? (
                     <div className="text-body">
@@ -1144,7 +1203,7 @@ export default function PlaylistBrowser() {
                     className="btn btn-primary"
                     onClick={(event) => event.stopPropagation()}
                   >
-                    Open in Spotify
+                    Openen in Spotify
                   </a>
                 ) : null}
                 <button
@@ -1152,25 +1211,25 @@ export default function PlaylistBrowser() {
                   className="btn btn-secondary"
                   onClick={() => setSelectedTrackDetail(null)}
                 >
-                  Close
+                  Sluiten
                 </button>
               </div>
             </div>
             <div className="track-detail-body">
               <div className="track-detail-content">
                 <div className="track-detail-section">
-                  <div className="track-detail-title">Basics</div>
+                  <div className="track-detail-title">Basis</div>
                   <div className="track-detail-grid">
                     <div className="track-detail-field">
-                      <div className="text-subtle">Duration</div>
+                      <div className="text-subtle">Duur</div>
                       <div>{formatDuration(selectedTrackDetail.durationMs)}</div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Explicit</div>
+                      <div className="text-subtle">Expliciet</div>
                       <div>{formatExplicit(selectedTrackDetail.explicit)}</div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Popularity</div>
+                      <div className="text-subtle">Populariteit</div>
                       <div>
                         {selectedTrackDetail.popularity === null ||
                         selectedTrackDetail.popularity === undefined
@@ -1179,7 +1238,7 @@ export default function PlaylistBrowser() {
                       </div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Added at</div>
+                      <div className="text-subtle">Toegevoegd op</div>
                       <div>{formatTimestamp(selectedTrackDetail.addedAt)}</div>
                     </div>
                   </div>
@@ -1196,7 +1255,7 @@ export default function PlaylistBrowser() {
                 </div>
 
                 <div className="track-detail-section">
-                  <div className="track-detail-title">Artists</div>
+                  <div className="track-detail-title">Artiesten</div>
                   <div className="track-detail-grid">
                     <div className="track-detail-field">
                       {selectedTrackDetail.artists?.length ? (
@@ -1217,7 +1276,7 @@ export default function PlaylistBrowser() {
                           ))}
                         </div>
                       ) : trackArtistsLoading ? (
-                        <div className="text-subtle">Loading artist info…</div>
+                        <div className="text-subtle">Artiestinfo laden…</div>
                       ) : (
                         <div>{selectedTrackDetail.artistsText || "—"}</div>
                       )}
@@ -1239,7 +1298,7 @@ export default function PlaylistBrowser() {
                               rel="noreferrer"
                               onClick={(event) => event.stopPropagation()}
                             >
-                              {pl.name || "Untitled playlist"}
+                              {pl.name || "Naamloze playlist"}
                             </a>
                           ))}
                         </div>
@@ -1260,7 +1319,7 @@ export default function PlaylistBrowser() {
           className="track-detail-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label="Artist details"
+            aria-label="Artiestdetails"
           onClick={() => setSelectedArtistDetail(null)}
         >
           <div
@@ -1270,16 +1329,16 @@ export default function PlaylistBrowser() {
             <div className="track-detail-header">
               <div className="track-detail-header-left">
                 <div>
-                  <div className="text-subtle">Artist details</div>
+                  <div className="text-subtle">Artiestdetails</div>
                   <div style={{ fontWeight: 700, fontSize: 20 }}>
-                    {selectedArtistDetail.name || "Unknown artist"}
+                    {selectedArtistDetail.name || "Onbekende artiest"}
                   </div>
                   {selectedArtistDetail.genres?.length ? (
                     <div className="text-body">
                       {selectedArtistDetail.genres.join(", ")}
                     </div>
                   ) : (
-                    <div className="text-subtle">No genres available</div>
+                    <div className="text-subtle">Geen genres beschikbaar</div>
                   )}
                 </div>
               </div>
@@ -1292,7 +1351,7 @@ export default function PlaylistBrowser() {
                     className="btn btn-primary"
                     onClick={(event) => event.stopPropagation()}
                   >
-                    Open in Spotify
+                    Openen in Spotify
                   </a>
                 ) : null}
                 <button
@@ -1300,17 +1359,17 @@ export default function PlaylistBrowser() {
                   className="btn btn-secondary"
                   onClick={() => setSelectedArtistDetail(null)}
                 >
-                  Back to track
+                  Terug
                 </button>
               </div>
             </div>
             <div className="track-detail-body">
               <div className="track-detail-content">
                 <div className="track-detail-section">
-                  <div className="track-detail-title">Overview</div>
+                  <div className="track-detail-title">Overzicht</div>
                   <div className="track-detail-grid">
                     <div className="track-detail-field">
-                      <div className="text-subtle">Popularity</div>
+                      <div className="text-subtle">Populariteit</div>
                       <div>
                         {selectedArtistDetail.popularity === null ||
                         selectedArtistDetail.popularity === undefined
@@ -1319,7 +1378,7 @@ export default function PlaylistBrowser() {
                       </div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Tracks in library</div>
+                      <div className="text-subtle">Tracks in bibliotheek</div>
                       <div>{selectedArtistDetail.tracksCount ?? 0}</div>
                     </div>
                   </div>
@@ -1342,7 +1401,7 @@ export default function PlaylistBrowser() {
                   </div>
                 </div>
                 {artistDetailLoading ? (
-                  <div className="text-subtle">Loading artist details...</div>
+                  <div className="text-subtle">Artiestdetails laden...</div>
                 ) : null}
               </div>
             </div>

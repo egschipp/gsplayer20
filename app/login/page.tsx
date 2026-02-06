@@ -23,13 +23,13 @@ export default function LoginPage({
         body: JSON.stringify({ pin }),
       });
       if (!res.ok) {
-        setError("Incorrect PIN. Try again.");
+        setError("Onjuiste pincode. Probeer het opnieuw.");
         return;
       }
       const next = searchParams?.next || "/";
       window.location.href = next;
     } catch {
-      setError("Login failed. Try again.");
+      setError("Inloggen mislukt. Probeer het opnieuw.");
     } finally {
       setLoading(false);
     }
@@ -47,7 +47,7 @@ export default function LoginPage({
           priority
         />
         <h1 className="login-title">Georgies Spotify</h1>
-        <p className="text-subtle">Enter your PIN to continue.</p>
+        <p className="text-subtle">Voer je pincode in om door te gaan.</p>
         <form onSubmit={handleSubmit} className="login-form">
           <input
             type="password"
@@ -55,13 +55,13 @@ export default function LoginPage({
             pattern="[0-9]*"
             autoComplete="one-time-code"
             className="input"
-            placeholder="PIN code"
+            placeholder="Pincode"
             value={pin}
             onChange={(event) => setPin(event.target.value)}
             required
           />
           <button type="submit" className="btn btn-primary" disabled={loading}>
-            {loading ? "Checking..." : "Unlock"}
+            {loading ? "Controleren..." : "Ontgrendelen"}
           </button>
         </form>
         {error ? <div className="text-subtle">{error}</div> : null}

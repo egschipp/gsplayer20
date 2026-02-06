@@ -103,7 +103,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         rateLimitRef.current.backoffMs * 2,
         60000
       );
-      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
       return;
     }
     if (!res.ok) return;
@@ -255,7 +255,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setError(message);
     });
     player.addListener("autoplay_failed", () => {
-      setError("Autoplay blocked by browser. Click Play to start.");
+      setError("Autoplay is geblokkeerd door de browser. Klik op Play.");
     });
 
     player.connect();
@@ -367,7 +367,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           rateLimitRef.current.backoffMs * 2,
           60000
         );
-        setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+        setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
         return null;
       }
       if (!res.ok) return null;
@@ -463,7 +463,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         rateLimitRef.current.backoffMs * 2,
         60000
       );
-      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
       return;
     }
     rateLimitRef.current.backoffMs = 5000;
@@ -502,7 +502,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         rateLimitRef.current.backoffMs * 2,
         60000
       );
-      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
       return;
     }
     rateLimitRef.current.backoffMs = 5000;
@@ -532,7 +532,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         rateLimitRef.current.backoffMs * 2,
         60000
       );
-      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
       return;
     }
     rateLimitRef.current.backoffMs = 5000;
@@ -562,7 +562,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         rateLimitRef.current.backoffMs * 2,
         60000
       );
-      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
       return;
     }
     rateLimitRef.current.backoffMs = 5000;
@@ -603,7 +603,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         rateLimitRef.current.backoffMs * 2,
         60000
       );
-      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
       return;
     }
     rateLimitRef.current.backoffMs = 5000;
@@ -637,7 +637,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           rateLimitRef.current.backoffMs * 2,
           30000
         );
-        setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+        setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
         return;
       }
       rateLimitRef.current.backoffMs = 2500;
@@ -663,7 +663,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         rateLimitRef.current.backoffMs * 2,
         60000
       );
-      setError(`Spotify rate limit. Retrying in ${Math.ceil(retryMs / 1000)}s`);
+      setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
       return;
     }
     rateLimitRef.current.backoffMs = 5000;
@@ -674,7 +674,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       <div className="player-card">
         <div className="player-meta">
           <div className="player-title">Spotify Player</div>
-          <div className="text-body">Connecting Spotify session...</div>
+          <div className="text-body">Spotify‑sessie verbinden...</div>
         </div>
       </div>
     );
@@ -686,7 +686,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         <div className="player-meta">
           <div className="player-title">Spotify Player</div>
           <div className="text-body">
-            Connect Spotify to enable playback in the browser.
+            Verbind Spotify om in de browser af te spelen.
           </div>
         </div>
       </div>
@@ -716,9 +716,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         {playerState?.album ? (
           <div className="text-subtle">{playerState.album}</div>
         ) : null}
-        {error ? <div className="text-subtle">Player error: {error}</div> : null}
+        {error ? <div className="text-subtle">Probleem met afspelen: {error}</div> : null}
         {activeDeviceRestricted ? (
-          <div className="text-subtle">Device is restricted for playback control.</div>
+          <div className="text-subtle">
+            Dit apparaat ondersteunt geen afstandsbediening.
+          </div>
         ) : null}
         <div className="player-progress">
           <span className="text-subtle">{formatTime(positionMs)}</span>
@@ -772,13 +774,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               ? `Spotify Connect • ${activeDeviceName}`
               : deviceId
               ? "Spotify Connect"
-              : "Connecting..."}
+              : "Verbinden..."}
           </span>
           <button
             type="button"
             className="detail-btn"
-            aria-label="Refresh devices"
-            title="Refresh devices"
+            aria-label="Apparaten vernieuwen"
+            title="Apparaten vernieuwen"
             onClick={refreshDevices}
           >
             ↻
@@ -796,17 +798,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                   deviceCloseRef.current = false;
                 }, 100);
               }}
-              aria-label="Select Spotify Connect device"
+              aria-label="Kies een Spotify‑apparaat"
               aria-haspopup="listbox"
               aria-expanded={deviceMenuOpen}
             >
               {devices.find((d) => d.id === (activeDeviceId || deviceId))?.name ||
-                "Select device"}
+                "Kies apparaat"}
             </button>
             {deviceMenuOpen ? (
               <div className="combo-list" role="listbox">
                 {devices.length === 0 ? (
-                  <div className="combo-empty">No devices found.</div>
+                  <div className="combo-empty">Geen apparaten gevonden.</div>
                 ) : (
                   devices.map((device) => (
                     <button

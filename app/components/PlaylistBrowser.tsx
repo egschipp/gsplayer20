@@ -177,6 +177,7 @@ export default function PlaylistBrowser() {
   const [selectedArtistDetail, setSelectedArtistDetail] =
     useState<ArtistDetail | null>(null);
   const [artistDetailLoading, setArtistDetailLoading] = useState(false);
+  const [trackArtistsLoading, setTrackArtistsLoading] = useState(false);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
@@ -518,17 +519,17 @@ export default function PlaylistBrowser() {
   async function openArtistDetail(artistId?: string | null, name?: string | null) {
     if (!artistId) return;
     setArtistDetailLoading(true);
+    setSelectedArtistDetail({
+      artistId,
+      name: name || "Unknown artist",
+      genres: [],
+      popularity: null,
+      tracksCount: 0,
+      spotifyUrl: `https://open.spotify.com/artist/${artistId}`,
+    });
     try {
       const res = await fetch(`/api/spotify/artists/${artistId}`);
       if (!res.ok) {
-        setSelectedArtistDetail({
-          artistId,
-          name: name || "Unknown artist",
-          genres: [],
-          popularity: null,
-          tracksCount: 0,
-          spotifyUrl: `https://open.spotify.com/artist/${artistId}`,
-        });
         return;
       }
       const data = await res.json();
@@ -567,6 +568,7 @@ export default function PlaylistBrowser() {
     let cancelled = false;
     async function loadTrackArtists() {
       try {
+        setTrackArtistsLoading(true);
         const res = await fetch(`/api/spotify/tracks/${trackId}/artists`);
         if (!res.ok) return;
         const data = await res.json();
@@ -583,6 +585,8 @@ export default function PlaylistBrowser() {
         }
       } catch {
         // ignore
+      } finally {
+        if (!cancelled) setTrackArtistsLoading(false);
       }
     }
     loadTrackArtists();
@@ -1171,7 +1175,7 @@ export default function PlaylistBrowser() {
         ) : null}
       </div>
 
-      {selectedTrackDetail ? (
+      {selectedTrackDetail && !selectedArtistDetail ? (
         <div
           className="track-detail-overlay"
           role="dialog"
@@ -1309,6 +1313,8 @@ export default function PlaylistBrowser() {
                             </div>
                           ))}
                         </div>
+                      ) : trackArtistsLoading ? (
+                        <div className="text-subtle">Loading artist info…</div>
                       ) : (
                         <div>{selectedTrackDetail.artistsText || "—"}</div>
                       )}
@@ -1391,7 +1397,7 @@ export default function PlaylistBrowser() {
                   className="btn btn-secondary"
                   onClick={() => setSelectedArtistDetail(null)}
                 >
-                  Close
+                  Back to track
                 </button>
               </div>
             </div>

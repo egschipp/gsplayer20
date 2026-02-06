@@ -22,9 +22,16 @@ const jobMap: Record<string, string> = {
 
 export async function POST(req: Request) {
   const ip = req.headers.get("x-forwarded-for") || "unknown";
-  const rl = rateLimit(`sync:${ip}`, 10, 60_000);
+  const body = await req.json().catch(() => ({}));
+  const type = jobMap[body?.type] ?? null;
+  const rlKey = type ? `sync:${type}:${ip}` : `sync:${ip}`;
+  const rl = rateLimit(rlKey, 30, 60_000);
   if (!rl.allowed) {
-    return NextResponse.json({ error: "RATE_LIMIT" }, { status: 429 });
+    const retryAfter = Math.max(Math.ceil((rl.resetAt - Date.now()) / 1000), 1);
+    return NextResponse.json(
+      { error: "RATE_LIMIT", retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } }
+    );
   }
 
   const baseUrl = getBaseUrl() || new URL(req.url).origin;
@@ -39,8 +46,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   }
 
-  const body = await req.json().catch(() => ({}));
-  const type = jobMap[body?.type] ?? null;
   if (!type) {
     return NextResponse.json({ error: "INVALID_TYPE" }, { status: 400 });
   }

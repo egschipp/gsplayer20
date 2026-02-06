@@ -563,7 +563,7 @@ export default function PlaylistBrowser() {
   useEffect(() => {
     const trackId = selectedTrackDetail?.trackId ?? null;
     if (!trackId) return;
-    if (selectedTrackDetail.artists && selectedTrackDetail.artists.length > 0) return;
+    if (selectedTrackDetail?.artists && selectedTrackDetail.artists.length > 0) return;
     let cancelled = false;
     async function loadTrackArtists() {
       try {

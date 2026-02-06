@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import SpotifyPlayer, { type PlayerApi } from "./SpotifyPlayer";
 import ChatGptButton from "./playlist/ChatGptButton";
@@ -111,9 +112,7 @@ export default function PlaylistBrowser() {
         const list: PlaylistOption[] = [LIKED_OPTION, ...playlistOptions];
         if (!cancelled) {
           setPlaylistOptions(list);
-          if (!selectedPlaylistId) {
-            setSelectedPlaylistId(LIKED_OPTION.id);
-          }
+          setSelectedPlaylistId((prev) => prev || LIKED_OPTION.id);
         }
       } catch {
         if (!cancelled) setError("Failed to load playlists.");
@@ -170,7 +169,7 @@ export default function PlaylistBrowser() {
         );
         if (!cancelled) {
           setArtistOptions(list);
-          if (!selectedArtistId && list.length) setSelectedArtistId(list[0].id);
+          setSelectedArtistId((prev) => prev || (list[0]?.id ?? ""));
         }
       } finally {
         if (!cancelled) setLoadingArtists(false);
@@ -256,7 +255,7 @@ export default function PlaylistBrowser() {
         if (!cancelled) {
           setTrackOptions(list);
           setTrackItems(all);
-          if (!selectedTrackName && list.length) setSelectedTrackName(list[0].name);
+          setSelectedTrackName((prev) => prev || (list[0]?.name ?? ""));
         }
       } finally {
         if (!cancelled) setLoadingTracksList(false);
@@ -573,11 +572,13 @@ export default function PlaylistBrowser() {
   return (
     <section style={{ marginTop: 24 }}>
       <div className="library-sticky">
-        <img
+        <Image
           src="/georgies-spotify.png"
           alt="Georgies Spotify logo"
-          loading="lazy"
+          width={240}
+          height={80}
           className="library-logo"
+          priority
         />
         <SpotifyPlayer
           onReady={(api) => {
@@ -623,8 +624,10 @@ export default function PlaylistBrowser() {
             }}
             className="combo-input"
             aria-label="Select option"
+            role="combobox"
             aria-autocomplete="list"
             aria-expanded={open}
+            aria-haspopup="listbox"
             aria-controls="playlist-options"
             placeholder={
               mode === "playlists"
@@ -683,11 +686,13 @@ export default function PlaylistBrowser() {
                   >
                     <span className="combo-track">
                       {opt.coverUrl ? (
-                        <img
-                          src={opt.coverUrl || undefined}
+                        <Image
+                          src={opt.coverUrl}
                           alt=""
-                          loading="lazy"
+                          width={28}
+                          height={28}
                           className="combo-track-cover"
+                          unoptimized
                         />
                       ) : (
                         <span className="combo-track-cover placeholder" />
@@ -837,11 +842,13 @@ export default function PlaylistBrowser() {
                   ▶
                 </button>
                 {track.coverUrl || track.albumImageUrl ? (
-                  <img
-                    src={track.coverUrl || track.albumImageUrl || undefined}
+                  <Image
+                    src={(track.coverUrl || track.albumImageUrl) as string}
                     alt={track.albumName || "Album cover"}
-                    loading="lazy"
-                    style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}
+                    width={56}
+                    height={56}
+                    unoptimized
+                    style={{ borderRadius: 12, objectFit: "cover" }}
                   />
                 ) : (
                   <div
@@ -969,11 +976,13 @@ export default function PlaylistBrowser() {
                     ▶
                   </button>
                   {coverUrl ? (
-                    <img
-                      src={coverUrl || undefined}
+                    <Image
+                      src={coverUrl}
                       alt={track.album?.name || "Album cover"}
-                      loading="lazy"
-                      style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover" }}
+                      width={56}
+                      height={56}
+                      unoptimized
+                      style={{ borderRadius: 12, objectFit: "cover" }}
                     />
                   ) : (
                     <div
@@ -1081,14 +1090,16 @@ export default function PlaylistBrowser() {
               <div className="track-detail-header-left">
                 <div className="track-detail-header-cover">
                   {selectedTrackDetail.coverUrl || selectedTrackDetail.albumImageUrl ? (
-                    <img
+                    <Image
                       src={
-                        selectedTrackDetail.coverUrl ||
-                        selectedTrackDetail.albumImageUrl ||
-                        undefined
+                        (selectedTrackDetail.coverUrl ||
+                          selectedTrackDetail.albumImageUrl) as string
                       }
                       alt={selectedTrackDetail.albumName || "Album cover"}
-                      loading="lazy"
+                      width={72}
+                      height={72}
+                      unoptimized
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
                     />
                   ) : (
                     <div className="track-detail-header-cover placeholder" />

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 
 declare global {
@@ -282,12 +283,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playerState?.paused, durationMs]);
+  }, [playerState, durationMs]);
 
   useEffect(() => {
     if (!accessToken) return;
     refreshDevices();
-  }, [accessToken, deviceId]);
+  }, [accessToken, deviceId, refreshDevices]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -385,17 +386,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [accessToken, onTrackChange]);
+  }, [accessToken, onTrackChange, setActiveDevice]);
 
-  function setActiveDevice(id: string | null, name?: string | null) {
+  const setActiveDevice = useCallback((id: string | null, name?: string | null) => {
     setActiveDeviceId(id);
     activeDeviceIdRef.current = id;
     if (name !== undefined) {
       setActiveDeviceName(name);
     }
-  }
+  }, []);
 
-  async function refreshDevices() {
+  const refreshDevices = useCallback(async () => {
     const token = accessTokenRef.current;
     if (!token) return;
     const now = Date.now();
@@ -434,7 +435,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setActiveDeviceRestricted(Boolean(active.is_restricted));
       setActiveDeviceSupportsVolume(active.supports_volume !== false);
     }
-  }
+  }, [setActiveDevice]);
 
   async function handleDeviceChange(targetId: string) {
     const token = accessTokenRef.current;
@@ -690,7 +691,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     <div className="player-card">
       <div className="player-cover">
         {playerState?.coverUrl ? (
-          <img src={playerState.coverUrl} alt={playerState.album || "Album"} />
+          <Image
+            src={playerState.coverUrl}
+            alt={playerState.album || "Album"}
+            width={64}
+            height={64}
+            unoptimized
+          />
         ) : (
           <div className="player-cover placeholder" />
         )}
@@ -800,6 +807,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                       key={device.id}
                       type="button"
                       role="option"
+                      aria-selected={device.id === (activeDeviceId || deviceId)}
                       className={`combo-item${
                         device.id === (activeDeviceId || deviceId) ? " active" : ""
                       }`}

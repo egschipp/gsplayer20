@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 
 export default function LoginPage({
@@ -37,10 +38,13 @@ export default function LoginPage({
   return (
     <div className="login-shell">
       <div className="login-card">
-        <img
+        <Image
           src="/georgies-spotify.png?v=3"
           alt="Georgies Spotify logo"
+          width={160}
+          height={160}
           className="login-logo"
+          priority
         />
         <h1 className="login-title">Georgies Spotify</h1>
         <p className="text-subtle">Enter your PIN to continue.</p>

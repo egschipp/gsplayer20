@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type AppStatus = { status: string } | null;
 type UserStatus = { status: string; scope?: string } | null;
@@ -65,7 +65,7 @@ export default function StatusBox() {
   const [syncCooldownUntil, setSyncCooldownUntil] = useState<number | null>(null);
   const [syncCooldownMessage, setSyncCooldownMessage] = useState<string | null>(null);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       const [dbRes, syncRes, workerRes] = await Promise.all([
         fetch("/api/spotify/db-status"),
@@ -127,9 +127,9 @@ export default function StatusBox() {
     } catch {
       // ignore
     }
-  }
+  }, [loadingPlaylists, playlistMap]);
 
-  async function refreshAuthStatus() {
+  const refreshAuthStatus = useCallback(async () => {
     try {
       const [appRes, userRes, versionRes] = await Promise.all([
         fetch("/api/spotify/app-status"),
@@ -143,7 +143,7 @@ export default function StatusBox() {
     } catch {
       // ignore
     }
-  }
+  }, []);
 
   async function loadAuthLog() {
     setAuthLogLoading(true);
@@ -194,7 +194,7 @@ export default function StatusBox() {
       clearInterval(fast);
       clearInterval(slow);
     };
-  }, []);
+  }, [refresh, refreshAuthStatus]);
 
   useEffect(() => {
     if (!Object.keys(playlistMap).length) return;

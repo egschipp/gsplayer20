@@ -561,14 +561,13 @@ export default function PlaylistBrowser() {
   }, [selectedTrackDetail]);
 
   useEffect(() => {
-    if (!selectedTrackDetail?.trackId) return;
+    const trackId = selectedTrackDetail?.trackId ?? null;
+    if (!trackId) return;
     if (selectedTrackDetail.artists && selectedTrackDetail.artists.length > 0) return;
     let cancelled = false;
     async function loadTrackArtists() {
       try {
-        const res = await fetch(
-          `/api/spotify/tracks/${selectedTrackDetail.trackId}/artists`
-        );
+        const res = await fetch(`/api/spotify/tracks/${trackId}/artists`);
         if (!res.ok) return;
         const data = await res.json();
         const artists = Array.isArray(data?.artists) ? data.artists : [];

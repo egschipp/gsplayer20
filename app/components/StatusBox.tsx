@@ -302,6 +302,25 @@ export default function StatusBox() {
           {syncing ? "Syncing..." : "Force sync + covers"}
         </button>
         <button
+          onClick={async () => {
+            setSyncing(true);
+            try {
+              await fetch("/api/spotify/sync", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ type: "artists" }),
+              });
+            } finally {
+              setSyncing(false);
+              refresh();
+            }
+          }}
+          disabled={syncing}
+          className="btn btn-secondary"
+        >
+          Sync artists
+        </button>
+        <button
           onClick={loadAuthLog}
           disabled={authLogLoading}
           className="btn btn-secondary"

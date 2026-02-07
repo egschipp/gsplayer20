@@ -1,0 +1,31 @@
+name: Maintenance
+
+on:
+  schedule:
+    - cron: "23 2 * * 0"
+  workflow_dispatch: {}
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune Docker artifacts on Pi
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          envs: DOCKER_REGISTRY,DOCKER_USERNAME,DOCKER_PASSWORD
+          script: |
+            set -euo pipefail
+            if [ -n "${DOCKER_PASSWORD:-}" ]; then
+              echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
+            fi
+            docker image prune -af --filter "until=168h"
+            docker container prune -f --filter "until=168h"
+            docker builder prune -af --filter "until=168h"

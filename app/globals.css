@@ -949,6 +949,21 @@ details[open] > .details-summary::after {
   color: #1db954;
 }
 
+.volume-toggle {
+  width: 28px;
+  height: 28px;
+  font-size: 0.95rem;
+}
+
+.volume-toggle.active {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.player-slider-volume:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .player-badge {
   font-size: 0.7rem;
   color: rgba(2, 154, 228, 0.9);

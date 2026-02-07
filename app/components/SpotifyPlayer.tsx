@@ -43,6 +43,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
   const [volume, setVolume] = useState(0.5);
+  const [muted, setMuted] = useState(false);
   const [devices, setDevices] = useState<
     {
       id: string;
@@ -78,6 +79,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const isScrubbingRef = useRef(false);
   const lastUserSeekAtRef = useRef(0);
   const lastUserVolumeAtRef = useRef(0);
+  const lastNonZeroVolumeRef = useRef(0.5);
 
   function formatPlayerError(message?: string | null) {
     if (!message) return null;
@@ -566,7 +568,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       if (typeof device?.volume_percent === "number") {
         if (Date.now() - lastUserVolumeAtRef.current > 1500) {
-          setVolume(device.volume_percent / 100);
+          const nextVol = device.volume_percent / 100;
+          setVolume(nextVol);
+          if (nextVol > 0) {
+            lastNonZeroVolumeRef.current = nextVol;
+            setMuted(false);
+          } else {
+            setMuted(true);
+          }
         }
       }
       if (typeof data?.shuffle_state === "boolean") {
@@ -803,6 +812,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const clamped = Math.max(0, Math.min(1, nextVolume));
     setVolume(clamped);
     lastUserVolumeAtRef.current = Date.now();
+    if (clamped > 0) {
+      lastNonZeroVolumeRef.current = clamped;
+      if (muted) setMuted(false);
+    } else {
+      if (!muted) setMuted(true);
+    }
     if (
       activeDeviceIdRef.current &&
       activeDeviceIdRef.current !== sdkDeviceIdRef.current
@@ -840,6 +855,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     volumeTimerRef.current = setTimeout(async () => {
       await playerRef.current?.setVolume?.(clamped);
     }, 120);
+  }
+
+  async function handleToggleMute() {
+    if (muted || volume === 0) {
+      const restore = Math.max(0.05, lastNonZeroVolumeRef.current || 0.5);
+      setMuted(false);
+      await handleVolume(restore);
+      return;
+    }
+    lastNonZeroVolumeRef.current = volume || lastNonZeroVolumeRef.current || 0.5;
+    setMuted(true);
+    await handleVolume(0);
   }
 
   async function transferPlayback(id: string, play = false) {
@@ -1094,7 +1121,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           </div>
         </div>
         <div className="player-volume">
-          <span className="text-subtle" aria-hidden="true">🔊</span>
+          <button
+            type="button"
+            className={`player-control player-control-ghost volume-toggle${
+              muted || volume === 0 ? " active" : ""
+            }`}
+            aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
+            title={muted || volume === 0 ? "Unmute" : "Mute"}
+            onClick={handleToggleMute}
+          >
+            {muted || volume === 0 ? "🔇" : "🔊"}
+          </button>
           <input
             type="range"
             min={0}

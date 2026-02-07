@@ -998,34 +998,55 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           </div>
         </div>
         <div className="player-controls">
-          <button
-            type="button"
+          <div
             className={`player-control player-control-ghost${shuffleOn ? " active" : ""}`}
+            role="button"
+            tabIndex={0}
             aria-label={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
             title={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
             onClick={handleToggleShuffle}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleToggleShuffle();
+              }
+            }}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M11.5 2a.5.5 0 0 0 0 1h1.086l-2.54 2.54-2.01-2.01a.5.5 0 0 0-.707 0L2 8.86a.5.5 0 1 0 .707.707l4.83-4.83 2.01 2.01a.5.5 0 0 0 .707 0L13.5 3.5V4.6a.5.5 0 0 0 1 0V2.5a.5.5 0 0 0-.5-.5h-2.5zm1 10H11.4a.5.5 0 0 0 0 1h2.1a.5.5 0 0 0 .5-.5V10a.5.5 0 0 0-1 0v1.1l-2.747-2.746a.5.5 0 0 0-.707 0l-2.01 2.01-1.83-1.83a.5.5 0 0 0-.707.707l2.183 2.183a.5.5 0 0 0 .707 0l2.01-2.01 2.6 2.6a.5.5 0 0 0 .707-.707L12.5 11.1V12z" />
             </svg>
-          </button>
-          <button
-            type="button"
+          </div>
+          <div
             className="player-control player-control-ghost"
+            role="button"
+            tabIndex={0}
             aria-label="Previous"
             title="Previous"
             onClick={handlePrevious}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handlePrevious();
+              }
+            }}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M3.5 3.5a.5.5 0 0 0-1 0v9a.5.5 0 0 0 1 0v-9zm1.6 4.1 6.2 4.1a.5.5 0 0 0 .8-.4V4.7a.5.5 0 0 0-.8-.4L5.1 8.4a.5.5 0 0 0 0 .8z" />
             </svg>
-          </button>
-          <button
-            type="button"
+          </div>
+          <div
             className="player-control player-control-play"
+            role="button"
+            tabIndex={0}
             aria-label={playerState?.paused ? "Play" : "Pause"}
             title={playerState?.paused ? "Play" : "Pause"}
             onClick={handleTogglePlay}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleTogglePlay();
+              }
+            }}
           >
             {playerState?.paused ? (
               <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -1036,18 +1057,25 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 <path d="M4.5 3.5h2.5v9H4.5zM9 3.5h2.5v9H9z" />
               </svg>
             )}
-          </button>
-          <button
-            type="button"
+          </div>
+          <div
             className="player-control player-control-ghost"
+            role="button"
+            tabIndex={0}
             aria-label="Next"
             title="Next"
             onClick={handleNext}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleNext();
+              }
+            }}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M12.5 3.5a.5.5 0 0 0-1 0v9a.5.5 0 0 0 1 0v-9zM10.9 8.4 4.7 4.3a.5.5 0 0 0-.8.4v6.6a.5.5 0 0 0 .8.4l6.2-4.1a.5.5 0 0 0 0-.8z" />
             </svg>
-          </button>
+          </div>
         </div>
       </div>
       <div className="player-connect">

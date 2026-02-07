@@ -810,6 +810,16 @@ details[open] > .details-summary::after {
 
 .player-connect {
   min-width: 0;
+  padding: 12px;
+  border-radius: 16px;
+  background: linear-gradient(
+      135deg,
+      rgba(2, 154, 228, 0.18),
+      rgba(19, 194, 161, 0.16),
+      rgba(69, 221, 97, 0.12)
+    ),
+    rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(2, 154, 228, 0.25);
 }
 
 .player-meta {
@@ -841,7 +851,7 @@ details[open] > .details-summary::after {
   margin-top: 8px;
 }
 
-.player-progress-wide {
+.player-progress-main {
   grid-column: 1 / -1;
   margin-top: 10px;
 }

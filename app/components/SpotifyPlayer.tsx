@@ -1050,6 +1050,35 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             </svg>
           </div>
         </div>
+        <div className="player-progress player-progress-main">
+          <span className="text-subtle">{formatTime(positionMs)}</span>
+          <input
+            type="range"
+            min={0}
+            max={durationMs || 1}
+            value={Math.min(positionMs, durationMs || 1)}
+            onChange={(event) => setPositionMs(Number(event.target.value))}
+            onMouseDown={() => {
+              isScrubbingRef.current = true;
+            }}
+            onTouchStart={() => {
+              isScrubbingRef.current = true;
+            }}
+            onMouseUp={() => {
+              if (!isScrubbingRef.current) return;
+              isScrubbingRef.current = false;
+              handleSeek(positionMs);
+            }}
+            onTouchEnd={() => {
+              if (!isScrubbingRef.current) return;
+              isScrubbingRef.current = false;
+              handleSeek(positionMs);
+            }}
+            className="player-slider"
+            aria-label="Seek"
+          />
+          <span className="text-subtle">{formatTime(durationMs)}</span>
+        </div>
       </div>
       <div className="player-connect">
         <div className="player-device-row">
@@ -1145,35 +1174,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             disabled={!activeDeviceSupportsVolume}
           />
         </div>
-      </div>
-      <div className="player-progress player-progress-wide">
-        <span className="text-subtle">{formatTime(positionMs)}</span>
-        <input
-          type="range"
-          min={0}
-          max={durationMs || 1}
-          value={Math.min(positionMs, durationMs || 1)}
-          onChange={(event) => setPositionMs(Number(event.target.value))}
-          onMouseDown={() => {
-            isScrubbingRef.current = true;
-          }}
-          onTouchStart={() => {
-            isScrubbingRef.current = true;
-          }}
-          onMouseUp={() => {
-            if (!isScrubbingRef.current) return;
-            isScrubbingRef.current = false;
-            handleSeek(positionMs);
-          }}
-          onTouchEnd={() => {
-            if (!isScrubbingRef.current) return;
-            isScrubbingRef.current = false;
-            handleSeek(positionMs);
-          }}
-          className="player-slider"
-          aria-label="Seek"
-        />
-        <span className="text-subtle">{formatTime(durationMs)}</span>
       </div>
     </div>
   );

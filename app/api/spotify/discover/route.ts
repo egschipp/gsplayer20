@@ -113,76 +113,90 @@ export async function POST(req: Request) {
   });
   if (rl) return rl;
 
-  const body = await req.json().catch(() => ({}));
-  const seedTracks = Array.isArray(body?.seedTracks) ? body.seedTracks : [];
-  const existingTrackIds = new Set<string>(
-    Array.isArray(body?.existingTrackIds) ? body.existingTrackIds : []
-  );
-  const playlistIdHint =
-    typeof body?.playlistId === "string" ? body.playlistId : null;
+  try {
+    const body = await req.json().catch(() => ({}));
+    const seedTracks = Array.isArray(body?.seedTracks) ? body.seedTracks : [];
+    const existingTrackIds = new Set<string>(
+      Array.isArray(body?.existingTrackIds) ? body.existingTrackIds : []
+    );
+    const playlistIdHint =
+      typeof body?.playlistId === "string" ? body.playlistId : null;
 
-  const profile = await spotifyFetch<{ id: string }>({
-    url: "https://api.spotify.com/v1/me",
-    userLevel: true,
-  });
-  const userId = profile?.id;
-  if (!userId) {
-    return jsonPrivateCache({ error: "MISSING_USER" }, 401);
-  }
+    const profile = await spotifyFetch<{ id: string }>({
+      url: "https://api.spotify.com/v1/me",
+      userLevel: true,
+    });
+    const userId = profile?.id;
+    if (!userId) {
+      return jsonPrivateCache({ error: "MISSING_USER" }, 401);
+    }
 
-  let playlist: PlaylistItem | null = null;
-  if (playlistIdHint) {
-    playlist = await getPlaylistById(playlistIdHint);
-  }
-  if (!playlist) {
-    playlist = await findPlaylistByName();
-  }
-  if (!playlist) {
-    playlist = await createPlaylist(userId);
-  }
+    let playlist: PlaylistItem | null = null;
+    if (playlistIdHint) {
+      playlist = await getPlaylistById(playlistIdHint);
+    }
+    if (!playlist) {
+      playlist = await findPlaylistByName();
+    }
+    if (!playlist) {
+      playlist = await createPlaylist(userId);
+    }
 
-  const playlistTrackIds = await getPlaylistTrackIds(playlist.id);
-  const baseSeeds = uniqueSeeds(seedTracks);
-  const fallbackSeeds = uniqueSeeds([
-    ...baseSeeds,
-    ...Array.from(existingTrackIds),
-    ...Array.from(playlistTrackIds),
-  ]);
-  const seeds = baseSeeds.length ? baseSeeds : fallbackSeeds.slice(0, 5);
+    const playlistTrackIds = await getPlaylistTrackIds(playlist.id);
+    const baseSeeds = uniqueSeeds(seedTracks);
+    const fallbackSeeds = uniqueSeeds([
+      ...baseSeeds,
+      ...Array.from(existingTrackIds),
+      ...Array.from(playlistTrackIds),
+    ]);
+    const seeds = baseSeeds.length ? baseSeeds : fallbackSeeds.slice(0, 5);
 
-  if (!seeds.length) {
-    return jsonPrivateCache({ playlist, tracks: [] });
-  }
+    if (!seeds.length) {
+      return jsonPrivateCache({ playlist, tracks: [] });
+    }
 
-  const excluded = new Set<string>([...existingTrackIds, ...playlistTrackIds]);
-  const collected: any[] = [];
+    const excluded = new Set<string>([...existingTrackIds, ...playlistTrackIds]);
+    const collected: any[] = [];
 
-  const primary = await getRecommendations(seeds, false);
-  for (const track of primary.tracks || []) {
-    if (!track?.id || excluded.has(track.id)) continue;
-    excluded.add(track.id);
-    collected.push(track);
-  }
-
-  if (collected.length < 5) {
-    const relaxed = await getRecommendations(seeds, true);
-    for (const track of relaxed.tracks || []) {
+    const primary = await getRecommendations(seeds, false);
+    for (const track of primary.tracks || []) {
       if (!track?.id || excluded.has(track.id)) continue;
       excluded.add(track.id);
       collected.push(track);
-      if (collected.length >= 20) break;
     }
+
+    if (collected.length < 5) {
+      const relaxed = await getRecommendations(seeds, true);
+      for (const track of relaxed.tracks || []) {
+        if (!track?.id || excluded.has(track.id)) continue;
+        excluded.add(track.id);
+        collected.push(track);
+        if (collected.length >= 20) break;
+      }
+    }
+
+    const mapped = collected.map((track) => ({
+      id: track.id,
+      name: track.name,
+      artists: Array.isArray(track.artists)
+        ? track.artists.map((artist: any) => artist?.name).filter(Boolean).join(", ")
+        : "",
+      coverUrl: track.album?.images?.[0]?.url ?? null,
+      uri: track.uri,
+    }));
+
+    return jsonPrivateCache({ playlist, tracks: mapped });
+  } catch (error) {
+    const message = String(error ?? "");
+    if (message.includes("SpotifyFetchError:401")) {
+      return jsonPrivateCache({ error: "SPOTIFY_UNAUTHORIZED" }, 401);
+    }
+    if (message.includes("SpotifyFetchError:403")) {
+      return jsonPrivateCache({ error: "SPOTIFY_FORBIDDEN" }, 403);
+    }
+    if (message.includes("SpotifyFetchError:429")) {
+      return jsonPrivateCache({ error: "SPOTIFY_RATE_LIMIT" }, 429);
+    }
+    return jsonPrivateCache({ error: "SPOTIFY_REQUEST_FAILED" }, 500);
   }
-
-  const mapped = collected.map((track) => ({
-    id: track.id,
-    name: track.name,
-    artists: Array.isArray(track.artists)
-      ? track.artists.map((artist: any) => artist?.name).filter(Boolean).join(", ")
-      : "",
-    coverUrl: track.album?.images?.[0]?.url ?? null,
-    uri: track.uri,
-  }));
-
-  return jsonPrivateCache({ playlist, tracks: mapped });
 }

@@ -67,6 +67,7 @@ export default function PlaylistBrowser() {
   >([]);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
   const [suggestionError, setSuggestionError] = useState<string | null>(null);
+  const [suggestionAuthNeeded, setSuggestionAuthNeeded] = useState(false);
   const [suggestionPlaylistId, setSuggestionPlaylistId] = useState<string | null>(
     null
   );
@@ -626,6 +627,7 @@ export default function PlaylistBrowser() {
     if (suggestionLoading) return;
     setSuggestionLoading(true);
     setSuggestionError(null);
+    setSuggestionAuthNeeded(false);
     try {
       const res = await fetch("/api/spotify/discover", {
         method: "POST",
@@ -636,19 +638,24 @@ export default function PlaylistBrowser() {
           playlistId: suggestionPlaylistId,
         }),
       });
+      const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
-          setSuggestionError("Je bent nog niet verbonden met Spotify.");
+          setSuggestionError("Spotify rechten ontbreken of zijn verlopen.");
+          setSuggestionAuthNeeded(true);
         } else if (res.status === 429) {
           setSuggestionError("Spotify is even druk. Probeer het zo opnieuw.");
         } else {
-          setSuggestionError("Suggesties ophalen lukt nu niet.");
+          setSuggestionError(
+            payload?.error === "SPOTIFY_REQUEST_FAILED"
+              ? "Spotify verzoek mislukt. Probeer het zo opnieuw."
+              : "Suggesties ophalen lukt nu niet."
+          );
         }
         return;
       }
-      const data = await res.json();
-      const playlist = data?.playlist;
-      const items = Array.isArray(data?.tracks) ? data.tracks : [];
+      const playlist = payload?.playlist;
+      const items = Array.isArray(payload?.tracks) ? payload.tracks : [];
       setSuggestionTracks(items);
       setSuggestionAdded({});
       if (playlist?.id) {
@@ -751,6 +758,18 @@ export default function PlaylistBrowser() {
         {suggestionError ? (
           <div className="text-subtle" style={{ marginBottom: 12 }}>
             {suggestionError}
+            {suggestionAuthNeeded ? (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ marginLeft: 8 }}
+                onClick={() => {
+                  window.location.href = "/api/auth/login";
+                }}
+              >
+                Opnieuw verbinden
+              </button>
+            ) : null}
           </div>
         ) : null}
         <div className="suggestions-list">

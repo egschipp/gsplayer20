@@ -158,6 +158,6 @@ jobs:
             TOKEN_ENCRYPTION_KEY=$TOKEN_ENCRYPTION_KEY
             DB_PATH=$DB_PATH
             EOF
-            docker-compose pull
-            docker-compose up -d --remove-orphans
+            docker compose pull
+            docker compose up -d --remove-orphans
             docker image prune -f

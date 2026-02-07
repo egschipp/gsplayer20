@@ -26,7 +26,8 @@ async function getPlaylistById(id: string) {
 async function findPlaylistByName(): Promise<PlaylistItem | null> {
   let url: string | null = "https://api.spotify.com/v1/me/playlists?limit=50";
   while (url) {
-    const data = await spotifyFetch<{
+    const data: { items: { id: string; name: string }[]; next: string | null } =
+      await spotifyFetch<{
       items: { id: string; name: string }[];
       next: string | null;
     }>({
@@ -58,7 +59,10 @@ async function getPlaylistTrackIds(playlistId: string) {
   const ids = new Set<string>();
   let url: string | null = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?fields=items(track(id)),next&limit=100`;
   while (url && ids.size < MAX_PLAYLIST_TRACKS) {
-    const data = await spotifyFetch<{
+    const data: {
+      items: { track: { id: string | null } | null }[];
+      next: string | null;
+    } = await spotifyFetch<{
       items: { track: { id: string | null } | null }[];
       next: string | null;
     }>({ url, userLevel: true });

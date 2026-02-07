@@ -1012,68 +1012,6 @@ details[open] > .details-summary::after {
   min-width: 0;
 }
 
-.discover-panel {
-  margin-bottom: 20px;
-}
-
-.discover-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-
-.discover-title {
-  font-weight: 600;
-  font-size: 1rem;
-}
-
-.discover-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.suggestions-list {
-  max-height: 320px;
-  overflow-y: auto;
-  display: grid;
-  gap: 10px;
-  padding-right: 4px;
-}
-
-.suggestion-row {
-  display: grid;
-  grid-template-columns: 48px 1fr auto;
-  gap: 12px;
-  align-items: center;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(2, 154, 228, 0.2);
-}
-
-.suggestion-cover {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  object-fit: cover;
-}
-
-.suggestion-cover.placeholder {
-  background: rgba(2, 154, 228, 0.2);
-}
-
-.suggestion-meta {
-  min-width: 0;
-}
-
-.suggestion-title {
-  font-weight: 600;
-}
 
 @media (max-width: 860px) {
   .player-card {

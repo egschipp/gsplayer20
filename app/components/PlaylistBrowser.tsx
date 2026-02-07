@@ -27,7 +27,6 @@ import {
 } from "./playlist/utils";
 
 export default function PlaylistBrowser() {
-  const SUGGESTIONS_PLAYLIST_NAME = "Georgies Spotify Suggesties";
   const [mode, setMode] = useState<Mode>("playlists");
   const [playlistOptions, setPlaylistOptions] = useState<PlaylistOption[]>([
     LIKED_OPTION,
@@ -56,24 +55,6 @@ export default function PlaylistBrowser() {
   const [artistDetailLoading, setArtistDetailLoading] = useState(false);
   const [trackArtistsLoading, setTrackArtistsLoading] = useState(false);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
-  const [suggestionTracks, setSuggestionTracks] = useState<
-    {
-      id: string;
-      name: string;
-      artists: string;
-      coverUrl: string | null;
-      uri: string;
-    }[]
-  >([]);
-  const [suggestionLoading, setSuggestionLoading] = useState(false);
-  const [suggestionError, setSuggestionError] = useState<string | null>(null);
-  const [suggestionAuthNeeded, setSuggestionAuthNeeded] = useState(false);
-  const [suggestionPlaylistId, setSuggestionPlaylistId] = useState<string | null>(
-    null
-  );
-  const [suggestionAdded, setSuggestionAdded] = useState<Record<string, boolean>>(
-    {}
-  );
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const suppressCloseRef = useRef(false);
@@ -85,11 +66,6 @@ export default function PlaylistBrowser() {
     () => playlistOptions.map((pl) => pl.name || "Untitled playlist"),
     [playlistOptions]
   );
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = window.localStorage.getItem("gsplayer.suggesties.playlistId");
-    if (stored) setSuggestionPlaylistId(stored);
-  }, []);
 
   useEffect(() => {
     function handleResize() {
@@ -357,21 +333,6 @@ export default function PlaylistBrowser() {
     return trackItems.filter((track) => track.name === selectedTrackName);
   }, [trackItems, selectedTrackName]);
 
-  const suggestionSeeds = useMemo(() => {
-    const seeds: string[] = [];
-    if (currentTrackId) seeds.push(currentTrackId);
-    const fallbackIds =
-      mode === "tracks"
-        ? filteredTrackItems.map((track) => track.id)
-        : tracks.map((track) => track.trackId);
-    for (const id of fallbackIds) {
-      if (!id) continue;
-      if (seeds.includes(id)) continue;
-      seeds.push(id);
-      if (seeds.length >= 5) break;
-    }
-    return seeds.slice(0, 5);
-  }, [currentTrackId, filteredTrackItems, mode, tracks]);
 
   function openDetailFromRow(track: TrackRow) {
     const spotifyUrl = track.trackId
@@ -623,84 +584,6 @@ export default function PlaylistBrowser() {
     await playerApiRef.current.playQueue(queue.uris, targetUri);
   }
 
-  async function handleDiscover() {
-    if (suggestionLoading) return;
-    setSuggestionLoading(true);
-    setSuggestionError(null);
-    setSuggestionAuthNeeded(false);
-    try {
-      const res = await fetch("/api/spotify/discover", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          seedTracks: suggestionSeeds,
-          existingTrackIds: suggestionTracks.map((track) => track.id),
-          playlistId: suggestionPlaylistId,
-        }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (res.status === 401 || res.status === 403) {
-          setSuggestionError("Spotify rechten ontbreken of zijn verlopen.");
-          setSuggestionAuthNeeded(true);
-        } else if (res.status === 429) {
-          setSuggestionError("Spotify is even druk. Probeer het zo opnieuw.");
-        } else {
-          setSuggestionError(
-            payload?.error === "SPOTIFY_REQUEST_FAILED"
-              ? "Spotify verzoek mislukt. Probeer het zo opnieuw."
-              : "Suggesties ophalen lukt nu niet."
-          );
-        }
-        return;
-      }
-      const playlist = payload?.playlist;
-      const items = Array.isArray(payload?.tracks) ? payload.tracks : [];
-      setSuggestionTracks(items);
-      setSuggestionAdded({});
-      if (playlist?.id) {
-        setSuggestionPlaylistId(playlist.id);
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(
-            "gsplayer.suggesties.playlistId",
-            playlist.id
-          );
-        }
-      }
-    } catch {
-      setSuggestionError("Suggesties ophalen lukt nu niet.");
-    } finally {
-      setSuggestionLoading(false);
-    }
-  }
-
-  async function handleAddSuggestion(track: {
-    id: string;
-    uri: string;
-  }) {
-    if (!suggestionPlaylistId || suggestionAdded[track.id]) return;
-    try {
-      const res = await fetch(
-        `/api/spotify/playlists/${suggestionPlaylistId}/tracks`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ uri: track.uri }),
-        }
-      );
-      if (!res.ok) {
-        if (res.status === 429) {
-          setSuggestionError("Spotify is even druk. Probeer het zo opnieuw.");
-        } else {
-          setSuggestionError("Toevoegen aan playlist lukt nu niet.");
-        }
-        return;
-      }
-      setSuggestionAdded((prev) => ({ ...prev, [track.id]: true }));
-    } catch {
-      setSuggestionError("Toevoegen aan playlist lukt nu niet.");
-    }
-  }
 
   return (
     <section style={{ marginTop: 24 }}>
@@ -721,95 +604,6 @@ export default function PlaylistBrowser() {
             setCurrentTrackId(trackId);
           }}
         />
-      </div>
-      <div className="panel discover-panel">
-        <div className="discover-header">
-          <div>
-            <div className="discover-title">Suggesties voor jou</div>
-            <div className="text-subtle">Ontdek nieuwe tracks</div>
-          </div>
-          <div className="discover-actions">
-            <div className="combo" style={{ minWidth: 240 }}>
-              <label className="sr-only" htmlFor="suggesties-playlist">
-                Playlist
-              </label>
-              <select
-                id="suggesties-playlist"
-                className="combo-input"
-                value={SUGGESTIONS_PLAYLIST_NAME}
-                onChange={() => null}
-                disabled
-              >
-                <option value={SUGGESTIONS_PLAYLIST_NAME}>
-                  {SUGGESTIONS_PLAYLIST_NAME}
-                </option>
-              </select>
-            </div>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={handleDiscover}
-              disabled={suggestionLoading || authRequired}
-            >
-              {suggestionLoading ? "Bezig..." : "Ontdek / vernieuw"}
-            </button>
-          </div>
-        </div>
-        {suggestionError ? (
-          <div className="text-subtle" style={{ marginBottom: 12 }}>
-            {suggestionError}
-            {suggestionAuthNeeded ? (
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ marginLeft: 8 }}
-                onClick={() => {
-                  window.location.href = "/api/auth/login";
-                }}
-              >
-                Opnieuw verbinden
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="suggestions-list">
-          {suggestionTracks.length === 0 ? (
-            <div className="text-subtle">
-              Klik op “Ontdek / vernieuw” om suggesties te laden.
-            </div>
-          ) : (
-            suggestionTracks.map((track) => (
-              <div key={track.id} className="suggestion-row">
-                {track.coverUrl ? (
-                  <Image
-                    src={track.coverUrl}
-                    alt=""
-                    width={48}
-                    height={48}
-                    className="suggestion-cover"
-                    unoptimized
-                  />
-                ) : (
-                  <div className="suggestion-cover placeholder" />
-                )}
-                <div className="suggestion-meta">
-                  <div className="suggestion-title">{track.name}</div>
-                  <div className="text-subtle">{track.artists}</div>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => handleAddSuggestion(track)}
-                  disabled={
-                    !suggestionPlaylistId || Boolean(suggestionAdded[track.id])
-                  }
-                >
-                  {suggestionAdded[track.id] ? "✓ toegevoegd" : "+ toevoegen"}
-                </button>
-              </div>
-            ))
-          )}
-        </div>
       </div>
       {authRequired ? (
         <div className="panel" style={{ marginBottom: 16 }}>

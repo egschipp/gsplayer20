@@ -91,6 +91,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const lastTrackIdRef = useRef<string | null>(null);
   const pendingTrackIdRef = useRef<string | null>(null);
   const trackChangeLockUntilRef = useRef(0);
+  const lastProgressSyncRef = useRef(0);
+  const lastKnownPositionRef = useRef(0);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const canUseSdk = useMemo(
     () => Boolean(accessToken) && playbackAllowed,
@@ -105,6 +108,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     return () => {
       if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
       if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current);
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     };
   }, []);
 
@@ -120,7 +124,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const token = accessTokenRef.current;
     if (!token) return;
     const now = Date.now();
-    if (now - lastDevicesRefreshRef.current < 5000) return;
+    if (now - lastDevicesRefreshRef.current < 3000) return;
     lastDevicesRefreshRef.current = now;
     if (now < rateLimitRef.current.until) return;
     const res = await fetch("https://api.spotify.com/v1/me/player/devices", {
@@ -158,6 +162,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setActiveDeviceSupportsVolume(active.supports_volume !== false);
     }
   }, [setActiveDevice]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    const interval = setInterval(() => {
+      refreshDevices();
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [accessToken, refreshDevices]);
 
   useEffect(() => {
     if (!canUseSdk) {
@@ -282,7 +294,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         durationMs: nextDuration,
       }));
       const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
-      setPositionMs(isNewTrack || !allowProgressUpdate ? 0 : nextPosition);
+      const safePosition = isNewTrack || !allowProgressUpdate ? 0 : nextPosition;
+      setPositionMs(safePosition);
+      lastKnownPositionRef.current = safePosition;
       setDurationMs(nextDuration);
       if (onTrackChange) onTrackChange(trackId);
     };
@@ -384,19 +398,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   useEffect(() => {
     if (!playerState || playerState.paused) return;
-    let raf: number;
-    let last = performance.now();
-    const tick = (now: number) => {
-      const delta = now - last;
-      last = now;
+    const interval = setInterval(() => {
       setPositionMs((prev) => {
-        const next = Math.min(prev + delta, durationMs || prev + delta);
+        const next = Math.min(prev + 500, durationMs || prev + 500);
+        lastKnownPositionRef.current = next;
         return next;
       });
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    }, 500);
+    return () => clearInterval(interval);
   }, [playerState, durationMs]);
 
   useEffect(() => {
@@ -405,9 +414,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }, [accessToken, deviceId, refreshDevices]);
 
   useEffect(() => {
+    function handleFocus() {
+      refreshDevices();
+    }
+    if (typeof window === "undefined") return;
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [refreshDevices]);
+
+  useEffect(() => {
     if (!accessToken) return;
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
 
     async function spotifyRequest(url: string, options?: RequestInit) {
       const token = accessTokenRef.current;
@@ -472,17 +489,26 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
           trackChangeLockUntilRef.current = Date.now() + 1200;
         }
+        const nextPosition = isNewTrack ? 0 : data.progress_ms ?? 0;
+        const shouldSyncPosition =
+          Math.abs(nextPosition - lastKnownPositionRef.current) > 1500 ||
+          Date.now() - lastProgressSyncRef.current > 5000;
         setPlayerState((prev) => ({
           name: item.name ?? prev?.name ?? "Unknown track",
           artists: (item.artists ?? []).map((a: any) => a.name).join(", "),
           album: item.album?.name ?? prev?.album ?? "",
           coverUrl: item.album?.images?.[0]?.url ?? prev?.coverUrl ?? null,
           paused: Boolean(!data.is_playing),
-          positionMs: isNewTrack ? 0 : data.progress_ms ?? 0,
+          positionMs: nextPosition,
           durationMs: item.duration_ms ?? 0,
         }));
         const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
-        setPositionMs(isNewTrack || !allowProgressUpdate ? 0 : data.progress_ms ?? 0);
+        if (shouldSyncPosition) {
+          lastProgressSyncRef.current = Date.now();
+          const synced = isNewTrack || !allowProgressUpdate ? 0 : nextPosition;
+          setPositionMs(synced);
+          lastKnownPositionRef.current = synced;
+        }
         setDurationMs(item.duration_ms ?? 0);
         if (onTrackChange) onTrackChange(item.id ?? null);
       }
@@ -495,17 +521,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
     function scheduleNext(isPlaying?: boolean) {
       if (cancelled) return;
-      const baseDelay = isPlaying ? 5000 : 10000;
+      const baseDelay = isPlaying ? 3500 : 8000;
       const waitExtra = Math.max(rateLimitRef.current.until - Date.now(), 0);
-      const delay = Math.min(baseDelay + waitExtra, 20000);
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(poll, delay);
+      const delay = Math.min(baseDelay + waitExtra, 15000);
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = setTimeout(poll, delay);
     }
 
     poll();
     return () => {
       cancelled = true;
-      if (timer) clearTimeout(timer);
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     };
   }, [accessToken, onTrackChange, setActiveDevice]);
 
@@ -602,6 +628,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       return;
     }
     rateLimitRef.current.backoffMs = 5000;
+    pendingTrackIdRef.current = null;
   }
 
   async function handlePrevious() {
@@ -938,10 +965,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             step={0.01}
             value={volume}
             onChange={(event) => handleVolume(Number(event.target.value))}
-            className="player-slider"
+            className="player-slider player-slider-volume"
             aria-label="Volume"
             disabled={!activeDeviceSupportsVolume}
           />
+        </div>
+        <div className="text-subtle" style={{ marginTop: 6 }}>
+          Zie je een apparaat niet? Open Spotify op dat apparaat om het te activeren.
         </div>
       </div>
     </div>

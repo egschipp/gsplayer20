@@ -841,6 +841,11 @@ details[open] > .details-summary::after {
   margin-top: 8px;
 }
 
+.player-progress-wide {
+  grid-column: 1 / -1;
+  margin-top: 10px;
+}
+
 .player-volume {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -919,6 +924,17 @@ details[open] > .details-summary::after {
   fill: currentColor;
 }
 
+.player-control-grad {
+  background: linear-gradient(
+      135deg,
+      rgba(2, 154, 228, 0.25),
+      rgba(19, 194, 161, 0.2),
+      rgba(69, 221, 97, 0.18)
+    ),
+    rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(2, 154, 228, 0.25);
+}
+
 .player-control:hover {
   color: #ffffff;
   transform: scale(1.06);
@@ -933,6 +949,17 @@ details[open] > .details-summary::after {
   height: 44px;
   background: #1db954;
   color: #111111;
+}
+
+.player-control-play.player-control-grad {
+  background: linear-gradient(
+      135deg,
+      rgba(2, 154, 228, 0.35),
+      rgba(19, 194, 161, 0.3),
+      rgba(69, 221, 97, 0.28)
+    ),
+    #1db954;
+  border: 1px solid rgba(2, 154, 228, 0.3);
 }
 
 .player-control-play svg {

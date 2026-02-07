@@ -1021,7 +1021,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             className="detail-btn"
             aria-label="Apparaten vernieuwen"
             title="Apparaten vernieuwen"
-            onClick={refreshDevices}
+            onClick={() => refreshDevices(true)}
           >
             ↻
           </button>

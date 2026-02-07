@@ -42,7 +42,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [shuffleOn, setShuffleOn] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
-  const [volume, setVolume] = useState(0.8);
+  const [volume, setVolume] = useState(0.5);
   const [devices, setDevices] = useState<
     {
       id: string;
@@ -273,7 +273,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const player = new window.Spotify.Player({
       name: "GSPlayer20 Web",
       getOAuthToken: (cb: (token: string) => void) => cb(accessToken),
-      volume: 0.8,
+      volume: 0.5,
     });
 
     const onSdkReady = async ({ device_id }: { device_id: string }) => {
@@ -896,118 +896,134 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   return (
     <div className="player-card">
-      <div className="player-cover">
-        {playerState?.coverUrl ? (
-          <Image
-            src={playerState.coverUrl}
-            alt={playerState.album || "Album"}
-            width={64}
-            height={64}
-            unoptimized
-          />
-        ) : (
-          <div className="player-cover placeholder" />
-        )}
-      </div>
-      <div className="player-meta player-meta-wide">
-        <div className="player-title">{playerState?.name || "Ready to play"}</div>
-        <div className="text-body">
-          {playerState?.artists || "Select a track to start playback"}
+      <div className="player-main">
+        <div className="player-cover">
+          {playerState?.coverUrl ? (
+            <Image
+              src={playerState.coverUrl}
+              alt={playerState.album || "Album"}
+              width={64}
+              height={64}
+              unoptimized
+            />
+          ) : (
+            <div className="player-cover placeholder" />
+          )}
         </div>
-        {playerState?.album ? (
-          <div className="text-subtle">{playerState.album}</div>
-        ) : null}
-        {playerErrorMessage ? (
-          <div className="text-subtle">
-            Probleem met afspelen: {playerErrorMessage}
-            {playerErrorMessage.includes("Koppel opnieuw") ? (
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ marginLeft: 8 }}
-                onClick={() => {
-                  window.location.href = "/api/auth/login";
-                }}
-              >
-                Opnieuw verbinden
-              </button>
-            ) : null}
+        <div className="player-meta player-meta-wide">
+          <div className="player-title">{playerState?.name || "Ready to play"}</div>
+          <div className="text-body">
+            {playerState?.artists || "Select a track to start playback"}
           </div>
-        ) : null}
-        {activeDeviceRestricted ? (
-          <div className="text-subtle">
-            Dit apparaat ondersteunt geen afstandsbediening.
+          {playerState?.album ? (
+            <div className="text-subtle">{playerState.album}</div>
+          ) : null}
+          {playerErrorMessage ? (
+            <div className="text-subtle">
+              Probleem met afspelen: {playerErrorMessage}
+              {playerErrorMessage.includes("Koppel opnieuw") ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ marginLeft: 8 }}
+                  onClick={() => {
+                    window.location.href = "/api/auth/login";
+                  }}
+                >
+                  Opnieuw verbinden
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {activeDeviceRestricted ? (
+            <div className="text-subtle">
+              Dit apparaat ondersteunt geen afstandsbediening.
+            </div>
+          ) : null}
+          <div className="player-progress">
+            <span className="text-subtle">{formatTime(positionMs)}</span>
+            <input
+              type="range"
+              min={0}
+              max={durationMs || 1}
+              value={Math.min(positionMs, durationMs || 1)}
+              onChange={(event) => setPositionMs(Number(event.target.value))}
+              onMouseDown={() => {
+                isScrubbingRef.current = true;
+              }}
+              onTouchStart={() => {
+                isScrubbingRef.current = true;
+              }}
+              onMouseUp={() => {
+                if (!isScrubbingRef.current) return;
+                isScrubbingRef.current = false;
+                handleSeek(positionMs);
+              }}
+              onTouchEnd={() => {
+                if (!isScrubbingRef.current) return;
+                isScrubbingRef.current = false;
+                handleSeek(positionMs);
+              }}
+              className="player-slider"
+              aria-label="Seek"
+            />
+            <span className="text-subtle">{formatTime(durationMs)}</span>
           </div>
-        ) : null}
-        <div className="player-progress">
-          <span className="text-subtle">{formatTime(positionMs)}</span>
-          <input
-            type="range"
-            min={0}
-            max={durationMs || 1}
-            value={Math.min(positionMs, durationMs || 1)}
-            onChange={(event) => setPositionMs(Number(event.target.value))}
-            onMouseDown={() => {
-              isScrubbingRef.current = true;
-            }}
-            onTouchStart={() => {
-              isScrubbingRef.current = true;
-            }}
-            onMouseUp={() => {
-              if (!isScrubbingRef.current) return;
-              isScrubbingRef.current = false;
-              handleSeek(positionMs);
-            }}
-            onTouchEnd={() => {
-              if (!isScrubbingRef.current) return;
-              isScrubbingRef.current = false;
-              handleSeek(positionMs);
-            }}
-            className="player-slider"
-            aria-label="Seek"
-          />
-          <span className="text-subtle">{formatTime(durationMs)}</span>
+        </div>
+        <div className="player-controls">
+          <button
+            type="button"
+            className={`player-control player-control-ghost${shuffleOn ? " active" : ""}`}
+            aria-label={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
+            title={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
+            onClick={handleToggleShuffle}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M11.5 2a.5.5 0 0 0 0 1h1.086l-2.54 2.54-2.01-2.01a.5.5 0 0 0-.707 0L2 8.86a.5.5 0 1 0 .707.707l4.83-4.83 2.01 2.01a.5.5 0 0 0 .707 0L13.5 3.5V4.6a.5.5 0 0 0 1 0V2.5a.5.5 0 0 0-.5-.5h-2.5zm1 10H11.4a.5.5 0 0 0 0 1h2.1a.5.5 0 0 0 .5-.5V10a.5.5 0 0 0-1 0v1.1l-2.747-2.746a.5.5 0 0 0-.707 0l-2.01 2.01-1.83-1.83a.5.5 0 0 0-.707.707l2.183 2.183a.5.5 0 0 0 .707 0l2.01-2.01 2.6 2.6a.5.5 0 0 0 .707-.707L12.5 11.1V12z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="player-control player-control-ghost"
+            aria-label="Previous"
+            title="Previous"
+            onClick={handlePrevious}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M3.5 3.5a.5.5 0 0 0-1 0v9a.5.5 0 0 0 1 0v-9zm1.6 4.1 6.2 4.1a.5.5 0 0 0 .8-.4V4.7a.5.5 0 0 0-.8-.4L5.1 8.4a.5.5 0 0 0 0 .8z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="player-control player-control-play"
+            aria-label={playerState?.paused ? "Play" : "Pause"}
+            title={playerState?.paused ? "Play" : "Pause"}
+            onClick={handleTogglePlay}
+          >
+            {playerState?.paused ? (
+              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M4.5 3.5v9l8-4.5-8-4.5z" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M4.5 3.5h2.5v9H4.5zM9 3.5h2.5v9H9z" />
+              </svg>
+            )}
+          </button>
+          <button
+            type="button"
+            className="player-control player-control-ghost"
+            aria-label="Next"
+            title="Next"
+            onClick={handleNext}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M12.5 3.5a.5.5 0 0 0-1 0v9a.5.5 0 0 0 1 0v-9zM10.9 8.4 4.7 4.3a.5.5 0 0 0-.8.4v6.6a.5.5 0 0 0 .8.4l6.2-4.1a.5.5 0 0 0 0-.8z" />
+            </svg>
+          </button>
         </div>
       </div>
-      <div className="player-controls">
-        <button
-          type="button"
-          className={`detail-btn shuffle-btn${shuffleOn ? " active" : ""}`}
-          aria-label={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
-          title={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
-          onClick={handleToggleShuffle}
-        >
-          🔀
-        </button>
-        <button
-          type="button"
-          className="detail-btn"
-          aria-label="Previous"
-          title="Previous"
-          onClick={handlePrevious}
-        >
-          ⏮
-        </button>
-        <button
-          type="button"
-          className="player-play"
-          aria-label={playerState?.paused ? "Play" : "Pause"}
-          title={playerState?.paused ? "Play" : "Pause"}
-          onClick={handleTogglePlay}
-        >
-          {playerState?.paused ? "▶" : "⏸"}
-        </button>
-        <button
-          type="button"
-          className="detail-btn"
-          aria-label="Next"
-          title="Next"
-          onClick={handleNext}
-        >
-          ⏭
-        </button>
-      </div>
-      <div className="player-badge player-badge-compact">
+      <div className="player-connect">
         <div className="player-device-row">
           <span>
             {activeDeviceName

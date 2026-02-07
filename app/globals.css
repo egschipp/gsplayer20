@@ -763,7 +763,7 @@ details[open] > .details-summary::after {
 
 .player-card {
   display: grid;
-  grid-template-columns: 90px 2fr auto 1fr;
+  grid-template-columns: 3fr 2fr;
   gap: 16px;
   align-items: center;
   padding: 14px 16px;
@@ -800,6 +800,18 @@ details[open] > .details-summary::after {
   height: 80px;
 }
 
+.player-main {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  gap: 16px;
+  align-items: center;
+  min-width: 0;
+}
+
+.player-connect {
+  min-width: 0;
+}
+
 .player-meta {
   min-width: 0;
 }
@@ -818,7 +830,7 @@ details[open] > .details-summary::after {
 .player-controls {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .player-progress {
@@ -887,15 +899,54 @@ details[open] > .details-summary::after {
   outline: none;
 }
 
-.player-play {
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
-  border: 1px solid rgba(2, 154, 228, 0.5);
-  background: rgba(2, 154, 228, 0.35);
-  color: #ffffff;
-  font-size: 1.1rem;
+.player-control {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+  transition: transform 0.08s ease, color 0.08s ease, background 0.08s ease;
+}
+
+.player-control svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.player-control:hover {
+  color: #ffffff;
+  transform: scale(1.06);
+}
+
+.player-control:active {
+  transform: scale(0.98);
+}
+
+.player-control-play {
+  width: 44px;
+  height: 44px;
+  background: #1db954;
+  color: #111111;
+}
+
+.player-control-play svg {
+  width: 20px;
+  height: 20px;
+}
+
+.player-control-play:hover {
+  background: #1ed760;
+  color: #111111;
+}
+
+.player-control-ghost.active {
+  color: #1db954;
 }
 
 .player-badge {
@@ -909,8 +960,76 @@ details[open] > .details-summary::after {
   min-width: 0;
 }
 
+.discover-panel {
+  margin-bottom: 20px;
+}
+
+.discover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.discover-title {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.discover-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.suggestions-list {
+  max-height: 320px;
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.suggestion-row {
+  display: grid;
+  grid-template-columns: 48px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(2, 154, 228, 0.2);
+}
+
+.suggestion-cover {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+.suggestion-cover.placeholder {
+  background: rgba(2, 154, 228, 0.2);
+}
+
+.suggestion-meta {
+  min-width: 0;
+}
+
+.suggestion-title {
+  font-weight: 600;
+}
+
 @media (max-width: 860px) {
   .player-card {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+  }
+
+  .player-main {
     grid-template-columns: 70px 1fr;
     grid-template-rows: auto auto;
   }
@@ -919,7 +1038,7 @@ details[open] > .details-summary::after {
     grid-column: 1 / -1;
   }
 
-  .player-badge {
+  .player-connect {
     grid-column: 1 / -1;
   }
 }

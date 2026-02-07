@@ -614,6 +614,12 @@ details[open] > .details-summary::after {
   outline-offset: 2px;
 }
 
+.shuffle-btn.active {
+  border-color: rgba(19, 194, 161, 0.8);
+  background: rgba(19, 194, 161, 0.35);
+  box-shadow: var(--shadow-glow);
+}
+
 .table-header {
   background: rgba(42, 42, 42, 0.8);
   text-transform: uppercase;
@@ -757,7 +763,7 @@ details[open] > .details-summary::after {
 
 .player-card {
   display: grid;
-  grid-template-columns: 90px 1fr auto auto;
+  grid-template-columns: 90px 2fr auto 1fr;
   gap: 16px;
   align-items: center;
   padding: 14px 16px;
@@ -796,6 +802,11 @@ details[open] > .details-summary::after {
 
 .player-meta {
   min-width: 0;
+}
+
+.player-meta-wide {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .player-title {
@@ -892,6 +903,10 @@ details[open] > .details-summary::after {
   color: rgba(2, 154, 228, 0.9);
   text-transform: uppercase;
   letter-spacing: 0.14em;
+}
+
+.player-badge-compact {
+  min-width: 0;
 }
 
 @media (max-width: 860px) {

@@ -39,6 +39,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     positionMs: number;
     durationMs: number;
   } | null>(null);
+  const [shuffleOn, setShuffleOn] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
   const [volume, setVolume] = useState(0.8);
@@ -515,6 +516,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (typeof device?.volume_percent === "number") {
         setVolume(device.volume_percent / 100);
       }
+      if (typeof data?.shuffle_state === "boolean") {
+        setShuffleOn(data.shuffle_state);
+      }
       setError(null);
       scheduleNext(data?.is_playing);
     }
@@ -659,6 +663,34 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       return;
     }
     rateLimitRef.current.backoffMs = 5000;
+  }
+
+  async function handleToggleShuffle() {
+    const token = accessTokenRef.current;
+    const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
+    if (!token || !currentDevice) return;
+    if (Date.now() < rateLimitRef.current.until) return;
+    const next = !shuffleOn;
+    const res = await fetch(
+      `https://api.spotify.com/v1/me/player/shuffle?state=${next ? "true" : "false"}&device_id=${currentDevice}`,
+      {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    if (res.status === 429) {
+      const retry = res.headers.get("Retry-After");
+      const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+      rateLimitRef.current.until = Date.now() + retryMs;
+      rateLimitRef.current.backoffMs = Math.min(
+        rateLimitRef.current.backoffMs * 2,
+        60000
+      );
+      setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
+      return;
+    }
+    rateLimitRef.current.backoffMs = 5000;
+    setShuffleOn(next);
   }
 
   function formatTime(ms?: number) {
@@ -814,7 +846,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           <div className="player-cover placeholder" />
         )}
       </div>
-      <div className="player-meta">
+      <div className="player-meta player-meta-wide">
         <div className="player-title">{playerState?.name || "Ready to play"}</div>
         <div className="text-body">
           {playerState?.artists || "Select a track to start playback"}
@@ -863,6 +895,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       <div className="player-controls">
         <button
           type="button"
+          className={`detail-btn shuffle-btn${shuffleOn ? " active" : ""}`}
+          aria-label={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
+          title={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
+          onClick={handleToggleShuffle}
+        >
+          🔀
+        </button>
+        <button
+          type="button"
           className="detail-btn"
           aria-label="Previous"
           title="Previous"
@@ -889,7 +930,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           ⏭
         </button>
       </div>
-      <div className="player-badge">
+      <div className="player-badge player-badge-compact">
         <div className="player-device-row">
           <span>
             {activeDeviceName

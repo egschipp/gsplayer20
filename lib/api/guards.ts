@@ -84,8 +84,15 @@ export function requireSameOrigin(req: Request) {
     ? new URL(baseUrl).origin
     : new URL(req.url).origin;
   const origin = req.headers.get("origin") || req.headers.get("referer");
-  if (!origin || !origin.startsWith(expectedOrigin)) {
-    return jsonError("INVALID_ORIGIN", 403);
+  if (!origin) return null;
+  try {
+    const originUrl = new URL(origin);
+    const expectedHost = new URL(expectedOrigin).host.replace(/^www\./, "");
+    const originHost = originUrl.host.replace(/^www\./, "");
+    const requestHost = new URL(req.url).host.replace(/^www\./, "");
+    if (originHost === expectedHost || originHost === requestHost) return null;
+  } catch {
+    // fall through
   }
-  return null;
+  return jsonError("INVALID_ORIGIN", 403);
 }

@@ -22,8 +22,17 @@ export default function LoginPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pin }),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError("Onjuiste pincode. Probeer het opnieuw.");
+        if (data?.error === "PIN_LOCKED" && data?.retryAfter) {
+          setError(`Te veel pogingen. Probeer opnieuw over ${data.retryAfter}s.`);
+        } else if (data?.error === "MISCONFIGURED") {
+          setError("Pincode niet ingesteld. Controleer APP_PIN en AUTH_SECRET.");
+        } else if (data?.error === "INVALID_ORIGIN") {
+          setError("Ongeldige origin. Controleer AUTH_URL/NEXTAUTH_URL.");
+        } else {
+          setError("Onjuiste pincode. Probeer het opnieuw.");
+        }
         return;
       }
       const next = searchParams?.next || "/";

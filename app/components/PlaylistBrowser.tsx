@@ -1235,10 +1235,13 @@ type TrackRowData = {
 function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackRowData>) {
   const track = data.items[index];
   const isGrid = data.mode === "artists" || data.mode === "playlists";
+  const isPlaying = Boolean(
+    data.currentTrackId && track.trackId === data.currentTrackId
+  );
   return (
     <div
       style={style}
-      className="track-row"
+      className={`track-row${isPlaying ? " playing" : ""}`}
       role="button"
       tabIndex={0}
       onClick={() => data.openDetailFromRow(track)}
@@ -1296,7 +1299,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
         <div>
           <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
             {track.name || "Onbekend"}
-            {data.currentTrackId && track.trackId === data.currentTrackId ? (
+            {isPlaying ? (
               <span className="playing-indicator" aria-label="Now playing">
                 ▶
               </span>
@@ -1368,6 +1371,7 @@ function TrackItemRenderer({
   data,
 }: ListChildComponentProps<TrackItemData>) {
   const track = data.items[index];
+  const isPlaying = Boolean(data.currentTrackId && track.id === data.currentTrackId);
   const coverUrl = track.album?.images?.[0]?.url ?? null;
   const artistNames = track.artists
     .map((artist) => artist?.name)
@@ -1377,7 +1381,7 @@ function TrackItemRenderer({
   return (
     <div
       style={style}
-      className="track-row"
+      className={`track-row${isPlaying ? " playing" : ""}`}
       role="button"
       tabIndex={0}
       onClick={() => data.openDetailFromItem(track)}
@@ -1434,7 +1438,7 @@ function TrackItemRenderer({
         <div>
           <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
             {track.name}
-            {data.currentTrackId && track.id === data.currentTrackId ? (
+            {isPlaying ? (
               <span className="playing-indicator" aria-label="Now playing">
                 ▶
               </span>

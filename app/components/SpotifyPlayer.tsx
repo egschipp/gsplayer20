@@ -409,8 +409,16 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const api: PlayerApi = {
       playQueue: async (uris, offsetUri) => {
         const token = accessTokenRef.current;
-        const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
-        if (!currentDevice || !token) return;
+        let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
+        if (!token) return;
+        if (!currentDevice && sdkDeviceIdRef.current) {
+          currentDevice = sdkDeviceIdRef.current;
+          setActiveDevice(currentDevice, "GSPlayer20 Web");
+        }
+        if (!currentDevice) {
+          setError("Geen Spotify‑apparaat geselecteerd. Kies een apparaat om af te spelen.");
+          return;
+        }
         if (offsetUri) {
           const id = offsetUri.split(":").pop() || null;
           pendingTrackIdRef.current = id;
@@ -420,19 +428,58 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         if (currentDevice === sdkDeviceIdRef.current) {
           await playerRef.current?.activateElement?.();
         }
-        await transferPlayback(currentDevice, false);
-        await fetch(
-          `https://api.spotify.com/v1/me/player/play?device_id=${currentDevice}`,
-          {
-            method: "PUT",
-            headers: { Authorization: `Bearer ${token}` },
-            body: JSON.stringify({
-              uris,
-              offset: offsetUri ? { uri: offsetUri } : undefined,
-              position_ms: 0,
-            }),
+
+        const payload = {
+          uris,
+          offset: offsetUri ? { uri: offsetUri } : undefined,
+          position_ms: 0,
+        };
+
+        const attemptPlay = async () => {
+          await transferPlayback(currentDevice as string, true);
+          return fetch(
+            `https://api.spotify.com/v1/me/player/play?device_id=${currentDevice}`,
+            {
+              method: "PUT",
+              headers: { Authorization: `Bearer ${token}` },
+              body: JSON.stringify(payload),
+            }
+          );
+        };
+
+        let res = await attemptPlay();
+        if (res && !res.ok) {
+          if (res.status === 404 || res.status >= 500) {
+            refreshDevices(true);
+            await new Promise((resolve) => setTimeout(resolve, 600));
+            res = await attemptPlay();
           }
-        );
+          if (res && !res.ok && res.status !== 204) {
+            const retry = res.headers.get("Retry-After");
+            const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+            if (res.status === 429) {
+              rateLimitRef.current.until = Date.now() + retryMs;
+              rateLimitRef.current.backoffMs = Math.min(
+                rateLimitRef.current.backoffMs * 2,
+                60000
+              );
+              setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
+            } else if (res.status === 403) {
+              setError("Ontbrekende Spotify‑rechten. Koppel opnieuw.");
+            } else {
+              setError("Afspelen lukt nu niet. Probeer opnieuw.");
+            }
+          }
+        }
+        if (res && res.ok) {
+          setPositionMs(0);
+          lastKnownPositionRef.current = 0;
+          if (offsetUri) {
+            const id = offsetUri.split(":").pop() || null;
+            pendingTrackIdRef.current = id;
+            trackChangeLockUntilRef.current = Date.now() + 3000;
+          }
+        }
       },
       togglePlay: async () => {
         if (!playerRef.current) return;

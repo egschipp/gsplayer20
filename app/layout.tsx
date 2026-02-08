@@ -3,7 +3,6 @@ import { Space_Grotesk, Manrope } from "next/font/google";
 import "./globals.css";
 import AuthSessionProvider from "./components/SessionProvider";
 import MainNav from "./components/MainNav";
-import { PlayerProvider } from "./components/player/PlayerProvider";
 
 const displayFont = Space_Grotesk({
   subsets: ["latin"],
@@ -47,7 +46,7 @@ export default function RootLayout({
           >
             <MainNav />
           </header>
-          <PlayerProvider>{children}</PlayerProvider>
+          {children}
         </AuthSessionProvider>
       </body>
     </html>

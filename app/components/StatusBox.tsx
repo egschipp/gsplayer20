@@ -241,9 +241,6 @@ export default function StatusBox() {
       <div className="account-header">
         <div>
           <h2 className="heading-2">Database</h2>
-          <div className="text-body">
-            Beheer je Spotify‑koppeling en werk je bibliotheek handmatig bij.
-          </div>
         </div>
         <div className="account-version">
           <div className="account-panel-title">Versie</div>
@@ -252,43 +249,6 @@ export default function StatusBox() {
       </div>
 
       <div className="account-grid">
-        <div className="panel account-panel">
-          <div className="account-panel-title">Status</div>
-          <div className="status-badges">
-            <Badge
-              label={`App: ${appStatus?.status ?? "CHECKING"}`}
-              tone={appStatus?.status === "OK" ? "ok" : "warn"}
-            />
-            <Badge
-              label={`Account: ${userStatus?.status ?? "CHECKING"}`}
-              tone={userStatus?.status === "OK" ? "ok" : "warn"}
-            />
-            <Badge label={runningInfo.label} tone={runningInfo.tone} />
-            <Badge
-              label={`Synchronisatie: ${workerStatus}`}
-              tone={workerStatus === "OK" ? "ok" : "warn"}
-            />
-          </div>
-
-          <div className="text-body status-summary">
-            <div>Laatst bijgewerkt: {lastSync}</div>
-            <div>Worker controle: {workerLast}</div>
-          </div>
-
-          <div className="status-grid compact">
-            {importantCounts.length
-              ? importantCounts.map((row) => (
-                  <div key={row.key} className="panel">
-                    <span className="count-icon" aria-hidden="true">
-                      {row.icon}
-                    </span>
-                    <strong>{row.label}</strong>: {row.value}
-                  </div>
-                ))
-              : "Geen statusdata beschikbaar."}
-          </div>
-        </div>
-
         <div className="panel account-panel">
           <div className="account-panel-title">Spotify‑koppeling</div>
           <div className="account-connection">
@@ -368,6 +328,43 @@ export default function StatusBox() {
             <button onClick={logoutPin} className="btn btn-ghost">
               Uitloggen App
             </button>
+          </div>
+        </div>
+
+        <div className="panel account-panel">
+          <div className="account-panel-title">Status</div>
+          <div className="status-badges">
+            <Badge
+              label={`App: ${appStatus?.status ?? "CHECKING"}`}
+              tone={appStatus?.status === "OK" ? "ok" : "warn"}
+            />
+            <Badge
+              label={`Account: ${userStatus?.status ?? "CHECKING"}`}
+              tone={userStatus?.status === "OK" ? "ok" : "warn"}
+            />
+            <Badge label={runningInfo.label} tone={runningInfo.tone} />
+            <Badge
+              label={`Synchronisatie: ${workerStatus}`}
+              tone={workerStatus === "OK" ? "ok" : "warn"}
+            />
+          </div>
+
+          <div className="text-body status-summary">
+            <div>Laatst bijgewerkt: {lastSync}</div>
+            <div>Worker controle: {workerLast}</div>
+          </div>
+
+          <div className="status-grid compact">
+            {importantCounts.length
+              ? importantCounts.map((row) => (
+                  <div key={row.key} className="panel">
+                    <span className="count-icon" aria-hidden="true">
+                      {row.icon}
+                    </span>
+                    <strong>{row.label}</strong>: {row.value}
+                  </div>
+                ))
+              : "Geen statusdata beschikbaar."}
           </div>
         </div>
       </div>

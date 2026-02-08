@@ -177,7 +177,6 @@ export default function PlaylistBrowser() {
         );
         if (!cancelled) {
           setArtistOptions(list);
-          setSelectedArtistId((prev) => prev || (list[0]?.id ?? ""));
         }
         } finally {
         if (!cancelled) setLoadingArtists(false);
@@ -795,14 +794,6 @@ export default function PlaylistBrowser() {
 
       {mode !== "tracks" ? (
         <div className="track-list" style={{ marginTop: 16 }}>
-          {mode === "artists" && !selectedArtist?.id ? (
-            <div className="empty-state">
-              <div style={{ fontWeight: 600 }}>Kies een artiest</div>
-              <div className="text-body">
-                Selecteer een artiest om tracks te bekijken.
-              </div>
-            </div>
-          ) : null}
           {mode === "playlists" && selectedPlaylist?.name ? (
             <div className="text-body" style={{ marginBottom: 6 }}>
               Tracks in: <strong>{selectedPlaylist.name}</strong>

@@ -1,9 +1,21 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 
 type AppStatus = { status: string } | null;
-type UserStatus = { status: string; scope?: string } | null;
+type UserStatus = {
+  status: string;
+  scope?: string;
+  profile?: {
+    id?: string;
+    display_name?: string;
+    email?: string;
+    country?: string;
+    product?: string;
+    images?: { url: string }[];
+  };
+} | null;
 type DbStatus = {
   counts: Record<string, number>;
   sync: { running: boolean; lastSuccessfulAt: number | null };
@@ -25,12 +37,15 @@ function Badge({ label, tone }: { label: string; tone?: "ok" | "warn" }) {
 }
 
 const COUNT_LABELS: Record<string, string> = {
-  user_saved_tracks: "Opgeslagen tracks",
   playlists: "Playlists",
   tracks: "Tracks",
   artists: "Artiesten",
-  playlist_items: "Playlist‑tracks",
-  cover_images: "Coverafbeeldingen",
+};
+
+const COUNT_ICONS: Record<string, string> = {
+  playlists: "📂",
+  tracks: "🎵",
+  artists: "👤",
 };
 
 function formatSyncStatus(running: boolean) {
@@ -216,6 +231,7 @@ export default function StatusBox() {
         .map(([key, value]) => ({
           key,
           label: COUNT_LABELS[key],
+          icon: COUNT_ICONS[key] ?? "•",
           value,
         }))
     : [];
@@ -224,10 +240,14 @@ export default function StatusBox() {
     <section className="card account-page" style={{ marginTop: 24 }}>
       <div className="account-header">
         <div>
-          <h2 className="heading-2">Account & Bibliotheek</h2>
+          <h2 className="heading-2">Database</h2>
           <div className="text-body">
             Beheer je Spotify‑koppeling en werk je bibliotheek handmatig bij.
           </div>
+        </div>
+        <div className="account-version">
+          <div className="account-panel-title">Versie</div>
+          <div className="account-version-value">{versionInfo?.version ?? "n/a"}</div>
         </div>
       </div>
 
@@ -253,17 +273,67 @@ export default function StatusBox() {
           <div className="text-body status-summary">
             <div>Laatst bijgewerkt: {lastSync}</div>
             <div>Worker controle: {workerLast}</div>
-            <div>Versie: {versionInfo?.version ?? "n/a"}</div>
           </div>
 
           <div className="status-grid compact">
             {importantCounts.length
               ? importantCounts.map((row) => (
                   <div key={row.key} className="panel">
+                    <span className="count-icon" aria-hidden="true">
+                      {row.icon}
+                    </span>
                     <strong>{row.label}</strong>: {row.value}
                   </div>
                 ))
               : "Geen statusdata beschikbaar."}
+          </div>
+        </div>
+
+        <div className="panel account-panel">
+          <div className="account-panel-title">Spotify‑koppeling</div>
+          <div className="account-connection">
+            {userStatus?.status === "OK" && userStatus.profile ? (
+              <div className="account-user">
+                <div className="account-user-avatar">
+                  {userStatus.profile.images?.[0]?.url ? (
+                    <Image
+                      src={userStatus.profile.images[0].url}
+                      alt={userStatus.profile.display_name ?? "Spotify user"}
+                      width={56}
+                      height={56}
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="account-user-avatar placeholder" />
+                  )}
+                </div>
+                <div className="account-user-meta">
+                  <div className="account-user-name">
+                    {userStatus.profile.display_name ?? "Spotify gebruiker"}
+                  </div>
+                  <div className="text-subtle">
+                    {userStatus.profile.email ?? "Geen e-mail"} ·{" "}
+                    {userStatus.profile.country ?? "—"} ·{" "}
+                    {userStatus.profile.product ?? "free"}
+                  </div>
+                  <div className="text-subtle">
+                    Spotify ID: {userStatus.profile.id ?? "—"}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-body">
+                {userStatus?.status === "OK"
+                  ? "Verbonden met Spotify."
+                  : "Niet verbonden met Spotify."}
+              </div>
+            )}
+            <div className="status-badges">
+              <Badge
+                label={`Account: ${userStatus?.status ?? "CHECKING"}`}
+                tone={userStatus?.status === "OK" ? "ok" : "warn"}
+              />
+            </div>
           </div>
         </div>
 
@@ -296,7 +366,7 @@ export default function StatusBox() {
               {syncing ? "Bijwerken..." : "Database bijwerken"}
             </button>
             <button onClick={logoutPin} className="btn btn-ghost">
-              Uitloggen
+              Uitloggen web
             </button>
           </div>
         </div>

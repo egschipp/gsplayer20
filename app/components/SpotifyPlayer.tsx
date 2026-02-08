@@ -146,6 +146,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         trackChangeLockUntilRef.current = Date.now() + 1200;
         setOptimisticTrack(null);
       }
+      if (current?.name) {
+        setError(null);
+      }
       setPlayerState((prev) => {
         const next = {
           name: current?.name ?? prev?.name ?? "Unknown track",
@@ -244,6 +247,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setActiveDevice(active.id, active.name ?? null);
       setActiveDeviceRestricted(Boolean(active.is_restricted));
       setActiveDeviceSupportsVolume(active.supports_volume !== false);
+    } else if (sdkDeviceIdRef.current) {
+      setActiveDevice(sdkDeviceIdRef.current, "GSPlayer20 Web");
+      setActiveDeviceRestricted(false);
+      setActiveDeviceSupportsVolume(true);
     }
   }, [setActiveDevice]);
 
@@ -303,6 +310,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       sdkDeviceIdRef.current = device_id;
       sdkReadyRef.current = true;
       lastSdkEventAtRef.current = Date.now();
+      // Default Spotify Connect selection to the web player on load.
+      setActiveDevice(device_id, "GSPlayer20 Web");
+      setActiveDeviceRestricted(false);
+      setActiveDeviceSupportsVolume(true);
       const token = accessTokenRef.current;
       if (token) {
         try {
@@ -1019,19 +1030,30 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         </div>
       <div className="player-meta player-meta-wide">
         <div className="player-title">
-          {optimisticTrack?.name || playerState?.name || "Ready to play"}
+          {optimisticTrack?.name ||
+            playerState?.name ||
+            (activeDeviceName ? `Afspelen op ${activeDeviceName}` : "Ready to play")}
         </div>
         <div className="text-body">
           {optimisticTrack?.artists ||
             playerState?.artists ||
-            "Select a track to start playback"}
+            (activeDeviceName
+              ? "Selecteer een track in Spotify"
+              : "Select a track to start playback")}
         </div>
         {optimisticTrack?.album || playerState?.album ? (
           <div className="text-subtle">
             {optimisticTrack?.album || playerState?.album}
           </div>
         ) : null}
-        {playerErrorMessage && playbackTouched && !(playerState && !playerState.paused) ? (
+        {playerErrorMessage &&
+        playbackTouched &&
+        !(playerState && !playerState.paused) &&
+        !optimisticTrack?.name &&
+        !playerState?.name &&
+        !activeDeviceName &&
+        !deviceId &&
+        !deviceMissing ? (
           <div className="text-subtle">
             Probleem met afspelen: {playerErrorMessage}
             {playerErrorMessage.includes("Koppel opnieuw") ? (

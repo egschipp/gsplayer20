@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FixedSizeList as List, type ListChildComponentProps } from "react-window";
-import SpotifyPlayer, { type PlayerApi } from "./SpotifyPlayer";
+import { usePlayer } from "./player/PlayerProvider";
 import ChatGptButton from "./playlist/ChatGptButton";
 import PlaylistChips from "./playlist/PlaylistChips";
 import {
@@ -28,17 +28,13 @@ import {
 
 export default function PlaylistBrowser() {
   const [mode, setMode] = useState<Mode>("playlists");
-  const [playlistOptions, setPlaylistOptions] = useState<PlaylistOption[]>([
-    LIKED_OPTION,
-  ]);
+  const [playlistOptions, setPlaylistOptions] = useState<PlaylistOption[]>([]);
   const [artistOptions, setArtistOptions] = useState<ArtistOption[]>([]);
   const [trackOptions, setTrackOptions] = useState<TrackOption[]>([]);
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>(
-    LIKED_OPTION.id
-  );
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>("");
   const [selectedArtistId, setSelectedArtistId] = useState<string>("");
   const [selectedTrackName, setSelectedTrackName] = useState<string>("");
-  const [query, setQuery] = useState<string>(LIKED_OPTION.name);
+  const [query, setQuery] = useState<string>("");
   const [open, setOpen] = useState(false);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [trackItems, setTrackItems] = useState<TrackItem[]>([]);
@@ -54,11 +50,10 @@ export default function PlaylistBrowser() {
     useState<ArtistDetail | null>(null);
   const [artistDetailLoading, setArtistDetailLoading] = useState(false);
   const [trackArtistsLoading, setTrackArtistsLoading] = useState(false);
-  const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const suppressCloseRef = useRef(false);
-  const playerApiRef = useRef<PlayerApi | null>(null);
+  const { api: playerApi, currentTrackId } = usePlayer();
   const MAX_PLAYLIST_CHIPS = 2;
   const [listHeight, setListHeight] = useState(560);
   const ROW_HEIGHT = 96;
@@ -123,10 +118,9 @@ export default function PlaylistBrowser() {
           (a: PlaylistOption, b: PlaylistOption) =>
             a.name.localeCompare(b.name, "en", { sensitivity: "base" })
         );
-        const list: PlaylistOption[] = [LIKED_OPTION, ...playlistOptions];
+        const list: PlaylistOption[] = playlistOptions;
         if (!cancelled) {
           setPlaylistOptions(list);
-          setSelectedPlaylistId((prev) => prev || LIKED_OPTION.id);
         }
       } catch {
         if (!cancelled) setError("Playlists laden lukt nu niet.");
@@ -283,10 +277,7 @@ export default function PlaylistBrowser() {
 
   const selectedPlaylist = useMemo(() => {
     if (!selectedPlaylistId) return null;
-    return (
-      playlistOptions.find((opt) => opt.id === selectedPlaylistId) ||
-      LIKED_OPTION
-    );
+    return playlistOptions.find((opt) => opt.id === selectedPlaylistId) || null;
   }, [playlistOptions, selectedPlaylistId]);
 
   const selectedArtist = useMemo(
@@ -577,17 +568,17 @@ export default function PlaylistBrowser() {
   }
 
   async function handlePlayTrack(trackId: string | null | undefined) {
-    if (!trackId || !playerApiRef.current) return;
+    if (!trackId || !playerApi) return;
     const queue = buildQueue();
     if (!queue.uris.length) return;
     const targetUri = `spotify:track:${trackId}`;
-    await playerApiRef.current.playQueue(queue.uris, targetUri);
+    await playerApi.playQueue(queue.uris, targetUri);
   }
 
 
   return (
     <section style={{ marginTop: 24 }}>
-      <div className="library-sticky">
+      <div style={{ marginBottom: 16 }}>
         <Image
           src="/georgies-spotify.png"
           alt="Georgies Spotify logo"
@@ -595,14 +586,6 @@ export default function PlaylistBrowser() {
           height={80}
           className="library-logo"
           priority
-        />
-        <SpotifyPlayer
-          onReady={(api) => {
-            playerApiRef.current = api;
-          }}
-          onTrackChange={(trackId) => {
-            setCurrentTrackId(trackId);
-          }}
         />
       </div>
       {authRequired ? (

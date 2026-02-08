@@ -366,7 +366,7 @@ export default function StatusBox() {
               {syncing ? "Bijwerken..." : "Database bijwerken"}
             </button>
             <button onClick={logoutPin} className="btn btn-ghost">
-              Uitloggen web
+              Uitloggen App
             </button>
           </div>
         </div>

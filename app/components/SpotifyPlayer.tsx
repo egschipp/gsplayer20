@@ -58,6 +58,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [activeDeviceName, setActiveDeviceName] = useState<string | null>(null);
   const [activeDeviceRestricted, setActiveDeviceRestricted] = useState(false);
   const [activeDeviceSupportsVolume, setActiveDeviceSupportsVolume] = useState(true);
+  const [deviceMissing, setDeviceMissing] = useState(false);
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
   const deviceCloseRef = useRef(false);
   const lastDeviceSelectRef = useRef(0);
@@ -452,6 +453,22 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, [refreshDevices]);
+
+  useEffect(() => {
+    const now = Date.now();
+    if (!canUseSdk) {
+      setDeviceMissing(false);
+      return;
+    }
+    if (now - lastDevicesRefreshRef.current < 2000) {
+      return;
+    }
+    if (!activeDeviceId && !deviceId && devices.length === 0) {
+      setDeviceMissing(true);
+    } else {
+      setDeviceMissing(false);
+    }
+  }, [activeDeviceId, deviceId, devices, canUseSdk]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -970,11 +987,16 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               ) : null}
             </div>
           ) : null}
-          {activeDeviceRestricted ? (
-            <div className="text-subtle">
-              Dit apparaat ondersteunt geen afstandsbediening.
-            </div>
-          ) : null}
+        {activeDeviceRestricted ? (
+          <div className="text-subtle">
+            Dit apparaat ondersteunt geen afstandsbediening.
+          </div>
+        ) : null}
+        {deviceMissing ? (
+          <div className="text-subtle">
+            Geen Spotify‑apparaat geselecteerd. Kies een apparaat om af te spelen.
+          </div>
+        ) : null}
         </div>
         <div className="player-controls">
           <div

@@ -795,14 +795,6 @@ export default function PlaylistBrowser() {
 
       {mode !== "tracks" ? (
         <div className="track-list" style={{ marginTop: 16 }}>
-          {mode === "playlists" && !selectedPlaylist?.id ? (
-            <div className="empty-state">
-              <div style={{ fontWeight: 600 }}>Kies een playlist</div>
-              <div className="text-body">
-                Selecteer een playlist om tracks te bekijken.
-              </div>
-            </div>
-          ) : null}
           {mode === "artists" && !selectedArtist?.id ? (
             <div className="empty-state">
               <div style={{ fontWeight: 600 }}>Kies een artiest</div>

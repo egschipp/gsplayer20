@@ -10,7 +10,7 @@ import {
   artists,
   playlists,
 } from "@/lib/db/schema";
-import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
 import { rateLimitResponse, requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
 
@@ -46,10 +46,10 @@ export async function GET(
           eq(userPlaylists.userId, session.appUserId as string),
           eq(playlistItems.playlistId, playlistId),
           or(
-            lt(playlistItems.position, decoded.addedAt),
+            gt(playlistItems.position, decoded.addedAt),
             and(
               eq(playlistItems.position, decoded.addedAt),
-              lt(playlistItems.itemId, decoded.id)
+              gt(playlistItems.itemId, decoded.id)
             )
           )
         );
@@ -103,7 +103,7 @@ export async function GET(
       playlistItems.position,
       tracks.trackId
     )
-    .orderBy(desc(playlistItems.position), desc(playlistItems.itemId))
+    .orderBy(asc(playlistItems.position), asc(playlistItems.itemId))
     .limit(limit);
 
   const trackIds = rows

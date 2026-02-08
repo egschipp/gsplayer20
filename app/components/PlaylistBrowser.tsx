@@ -908,15 +908,6 @@ export default function PlaylistBrowser() {
         ) : loadingTracks ? (
           <span className="text-body">Tracks laden...</span>
         ) : null}
-        {!loadingTracks && nextCursor && mode !== "tracks" ? (
-          <button
-            onClick={loadMore}
-            className="btn btn-primary"
-            style={{ marginLeft: 12 }}
-          >
-            Meer laden
-          </button>
-        ) : null}
       </div>
 
       {selectedTrackDetail && !selectedArtistDetail ? (

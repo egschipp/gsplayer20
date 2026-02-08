@@ -16,7 +16,6 @@ export default function StatusPage() {
         style={{ maxWidth: "210px", width: "100%", height: "auto", marginBottom: 12 }}
         priority
       />
-      <SpotifyStatus showBadges={false} />
       <StatusBox />
     </main>
   );

@@ -399,6 +399,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             body: JSON.stringify({
               uris,
               offset: offsetUri ? { uri: offsetUri } : undefined,
+              position_ms: 0,
             }),
           }
         );

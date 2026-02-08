@@ -239,9 +239,7 @@ export default function StatusBox() {
   return (
     <section className="card account-page" style={{ marginTop: 24 }}>
       <div className="account-header">
-        <div>
-          <h2 className="heading-2">Database</h2>
-        </div>
+        <div />
         <div className="account-version">
           <div className="account-panel-title">Versie</div>
           <div className="account-version-value">{versionInfo?.version ?? "n/a"}</div>

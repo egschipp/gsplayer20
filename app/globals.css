@@ -580,6 +580,23 @@ details[open] > .details-summary::after {
     rgba(0, 0, 0, 0.55);
 }
 
+.track-row-inner {
+  width: 100%;
+  border-radius: inherit;
+}
+
+.track-row-inner.playing {
+  border-radius: inherit;
+  border-left: 3px solid rgba(2, 154, 228, 0.9);
+  background: linear-gradient(
+      135deg,
+      rgba(2, 154, 228, 0.18),
+      rgba(19, 194, 161, 0.16),
+      rgba(69, 221, 97, 0.12)
+    ),
+    rgba(0, 0, 0, 0.55);
+}
+
 .track-virtual-list .track-row {
   padding: 0;
   border: 0;

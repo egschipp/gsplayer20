@@ -1253,6 +1253,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
       }}
     >
       <div
+        className={`track-row-inner${isPlaying ? " playing" : ""}`}
         style={{
           display: "grid",
           gridTemplateColumns: isGrid ? "98px 1fr 1fr auto" : "98px 1fr auto",
@@ -1393,6 +1394,7 @@ function TrackItemRenderer({
       }}
     >
       <div
+        className={`track-row-inner${isPlaying ? " playing" : ""}`}
         style={{
           display: "grid",
           gridTemplateColumns: "98px 1fr 1fr auto",

@@ -895,9 +895,6 @@ details[open] > .details-summary::after {
   border: 2px solid rgba(0, 0, 0, 0.4);
 }
 
-.player-slider-volume {
-  height: 12px;
-}
 
 .player-device-row {
   display: flex;

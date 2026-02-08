@@ -1165,6 +1165,21 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               handleSeek(positionMs);
             }}
             className="player-slider"
+            style={{
+              background: `linear-gradient(90deg, #1db954 ${Math.min(
+                100,
+                Math.max(
+                  0,
+                  durationMs ? (positionMs / durationMs) * 100 : 0
+                )
+              )}%, rgba(2, 154, 228, 0.2) ${Math.min(
+                100,
+                Math.max(
+                  0,
+                  durationMs ? (positionMs / durationMs) * 100 : 0
+                )
+              )}%)`,
+            }}
             aria-label="Seek"
           />
           <span className="text-subtle">{formatTime(durationMs)}</span>
@@ -1260,6 +1275,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             value={volume}
             onChange={(event) => handleVolume(Number(event.target.value))}
             className="player-slider player-slider-volume"
+            style={{
+              background: `linear-gradient(90deg, #1db954 ${Math.round(
+                Math.min(1, Math.max(0, volume)) * 100
+              )}%, rgba(2, 154, 228, 0.2) ${Math.round(
+                Math.min(1, Math.max(0, volume)) * 100
+              )}%)`,
+            }}
             aria-label="Volume"
             disabled={!activeDeviceSupportsVolume}
           />

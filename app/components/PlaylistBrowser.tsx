@@ -118,7 +118,7 @@ export default function PlaylistBrowser() {
           (a: PlaylistOption, b: PlaylistOption) =>
             a.name.localeCompare(b.name, "en", { sensitivity: "base" })
         );
-        const list: PlaylistOption[] = playlistOptions;
+        const list: PlaylistOption[] = [LIKED_OPTION, ...playlistOptions];
         if (!cancelled) {
           setPlaylistOptions(list);
         }

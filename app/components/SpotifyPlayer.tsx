@@ -90,6 +90,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const lastUserVolumeAtRef = useRef(0);
   const lastNonZeroVolumeRef = useRef(0.5);
   const lastSdkStateRef = useRef<any>(null);
+  const lastIsPlayingRef = useRef(false);
 
   function formatPlayerError(message?: string | null) {
     if (!message) return null;
@@ -126,6 +127,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     (state: any) => {
       if (!state) return;
       lastSdkStateRef.current = state;
+      lastIsPlayingRef.current = Boolean(!state.paused);
       lastSdkEventAtRef.current = Date.now();
       if (
         activeDeviceIdRef.current &&
@@ -233,7 +235,19 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const data = await res.json();
     const list = Array.isArray(data.devices) ? data.devices : [];
     setDevicesLoaded(true);
-    const mapped = list.map((d: any) => ({
+    const deduped = new Map<string, any>();
+    for (const d of list) {
+      if (!d?.id) continue;
+      if (!deduped.has(d.id)) {
+        deduped.set(d.id, d);
+        continue;
+      }
+      const existing = deduped.get(d.id);
+      if (existing && !existing.is_active && d.is_active) {
+        deduped.set(d.id, d);
+      }
+    }
+    const mapped = Array.from(deduped.values()).map((d: any) => ({
       id: d.id,
       name: d.name,
       isActive: Boolean(d.is_active),
@@ -242,7 +256,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       supportsVolume: d.supports_volume !== false,
     }));
     setDevices(mapped);
-    const active = list.find((d: any) => d.is_active);
+    const active = Array.from(deduped.values()).find((d: any) => d.is_active);
     if (active?.id) {
       setActiveDevice(active.id, active.name ?? null);
       setActiveDeviceRestricted(Boolean(active.is_restricted));
@@ -642,6 +656,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (typeof data?.shuffle_state === "boolean") {
         setShuffleOn(data.shuffle_state);
       }
+      if (typeof data?.is_playing === "boolean") {
+        lastIsPlayingRef.current = data.is_playing;
+      }
       setError(null);
       scheduleNext(data?.is_playing);
     }
@@ -668,12 +685,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (!token || !targetId) return;
     if (Date.now() < rateLimitRef.current.until) return;
     setActiveDevice(targetId);
+    const deviceName = devices.find((d) => d.id === targetId)?.name;
+    if (deviceName) setActiveDeviceName(deviceName);
     pendingDeviceIdRef.current = targetId;
     lastDeviceSelectRef.current = Date.now();
+    const shouldPlay = lastIsPlayingRef.current;
     const res = await fetch("https://api.spotify.com/v1/me/player", {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ device_ids: [targetId], play: false }),
+      body: JSON.stringify({ device_ids: [targetId], play: shouldPlay }),
     });
     if (res.status === 429) {
       const retry = res.headers.get("Retry-After");

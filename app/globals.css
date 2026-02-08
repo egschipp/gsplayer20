@@ -843,10 +843,6 @@ details[open] > .details-summary::after {
   gap: 10px;
 }
 
-.player-controls.disabled {
-  opacity: 0.6;
-  pointer-events: none;
-}
 
 .player-progress {
   display: grid;

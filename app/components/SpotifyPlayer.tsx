@@ -59,6 +59,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [activeDeviceRestricted, setActiveDeviceRestricted] = useState(false);
   const [activeDeviceSupportsVolume, setActiveDeviceSupportsVolume] = useState(true);
   const [deviceMissing, setDeviceMissing] = useState(false);
+  const [devicesLoaded, setDevicesLoaded] = useState(false);
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
   const deviceCloseRef = useRef(false);
   const lastDeviceSelectRef = useRef(0);
@@ -228,6 +229,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     rateLimitRef.current.backoffMs = 5000;
     const data = await res.json();
     const list = Array.isArray(data.devices) ? data.devices : [];
+    setDevicesLoaded(true);
     const mapped = list.map((d: any) => ({
       id: d.id,
       name: d.name,
@@ -478,6 +480,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setDeviceMissing(false);
       return;
     }
+    if (!devicesLoaded) {
+      return;
+    }
     if (now - lastDevicesRefreshRef.current < 2000) {
       return;
     }
@@ -486,7 +491,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     } else {
       setDeviceMissing(false);
     }
-  }, [activeDeviceId, deviceId, devices, canUseSdk]);
+  }, [activeDeviceId, deviceId, devices, canUseSdk, devicesLoaded]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -680,7 +685,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
-    if (!currentDevice || deviceMissing) return;
     if (!token || !currentDevice) {
       await playerRef.current?.togglePlay?.();
       return;
@@ -717,7 +721,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
-    if (!currentDevice || deviceMissing) return;
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
     if (currentDevice === sdkDeviceIdRef.current) {
@@ -736,7 +739,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setTimeout(async () => {
         const state = await playerRef.current?.getCurrentState?.();
         if (state) applySdkState(state);
-      }, 350);
+      }, 150);
       return;
     }
     const res = await fetch(
@@ -765,7 +768,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
-    if (!currentDevice || deviceMissing) return;
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
     if (currentDevice === sdkDeviceIdRef.current) {
@@ -784,7 +786,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setTimeout(async () => {
         const state = await playerRef.current?.getCurrentState?.();
         if (state) applySdkState(state);
-      }, 350);
+      }, 150);
       return;
     }
     const res = await fetch(
@@ -812,7 +814,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
-    if (!currentDevice || deviceMissing) return;
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
     const next = !shuffleOn;
@@ -850,7 +851,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
-    if (!currentDevice || deviceMissing) return;
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
     setPositionMs(nextMs);
@@ -1058,7 +1058,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           </div>
         ) : null}
         </div>
-        <div className={`player-controls${deviceMissing ? " disabled" : ""}`}>
+        <div className="player-controls">
           <div
             className={`player-control player-control-ghost player-control-grad${
               shuffleOn ? " active" : ""
@@ -1074,7 +1074,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 handleToggleShuffle();
               }
             }}
-            aria-disabled={deviceMissing}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M11.5 2a.5.5 0 0 0 0 1h1.086l-2.54 2.54-2.01-2.01a.5.5 0 0 0-.707 0L2 8.86a.5.5 0 1 0 .707.707l4.83-4.83 2.01 2.01a.5.5 0 0 0 .707 0L13.5 3.5V4.6a.5.5 0 0 0 1 0V2.5a.5.5 0 0 0-.5-.5h-2.5zm1 10H11.4a.5.5 0 0 0 0 1h2.1a.5.5 0 0 0 .5-.5V10a.5.5 0 0 0-1 0v1.1l-2.747-2.746a.5.5 0 0 0-.707 0l-2.01 2.01-1.83-1.83a.5.5 0 0 0-.707.707l2.183 2.183a.5.5 0 0 0 .707 0l2.01-2.01 2.6 2.6a.5.5 0 0 0 .707-.707L12.5 11.1V12z" />
@@ -1093,7 +1092,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 handlePrevious();
               }
             }}
-            aria-disabled={deviceMissing}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M3.5 3.5a.5.5 0 0 0-1 0v9a.5.5 0 0 0 1 0v-9zm1.6 4.1 6.2 4.1a.5.5 0 0 0 .8-.4V4.7a.5.5 0 0 0-.8-.4L5.1 8.4a.5.5 0 0 0 0 .8z" />
@@ -1112,7 +1110,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 handleTogglePlay();
               }
             }}
-            aria-disabled={deviceMissing}
           >
             {playerState?.paused ? (
               <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -1137,7 +1134,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 handleNext();
               }
             }}
-            aria-disabled={deviceMissing}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M12.5 3.5a.5.5 0 0 0-1 0v9a.5.5 0 0 0 1 0v-9zM10.9 8.4 4.7 4.3a.5.5 0 0 0-.8.4v6.6a.5.5 0 0 0 .8.4l6.2-4.1a.5.5 0 0 0 0-.8z" />

@@ -288,44 +288,30 @@ export default function StatusBox() {
             )}
             <div className="status-badges">
               <Badge
-                label={`Account: ${userStatus?.status ?? "CHECKING"}`}
+                label={`Koppeling: ${userStatus?.status ?? "CHECKING"}`}
                 tone={userStatus?.status === "OK" ? "ok" : "warn"}
               />
             </div>
-          </div>
-        </div>
-
-        <div className="panel account-panel">
-          <div className="account-panel-title">Acties</div>
-          <div className="account-actions">
-            <button
-              onClick={async () => {
-                setSyncing(true);
-                try {
-                  await forceSync();
-                  await fetch("/api/spotify/sync", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ type: "track_metadata" }),
-                  });
-                  await fetch("/api/spotify/sync", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ type: "covers" }),
-                  });
-                } finally {
-                  setSyncing(false);
-                  refresh();
-                }
-              }}
-              disabled={syncing}
-              className="btn btn-primary"
-            >
-              {syncing ? "Bijwerken..." : "Database bijwerken"}
-            </button>
-            <button onClick={logoutPin} className="btn btn-ghost">
-              Uitloggen App
-            </button>
+            <div className="account-actions">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  window.location.href = "/api/auth/login";
+                }}
+              >
+                Spotify login
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  window.location.href = "/api/auth/logout";
+                }}
+              >
+                Spotify logout
+              </button>
+            </div>
           </div>
         </div>
 
@@ -363,6 +349,40 @@ export default function StatusBox() {
                   </div>
                 ))
               : "Geen statusdata beschikbaar."}
+          </div>
+        </div>
+
+        <div className="panel account-panel">
+          <div className="account-panel-title">Acties</div>
+          <div className="account-actions">
+            <button
+              onClick={async () => {
+                setSyncing(true);
+                try {
+                  await forceSync();
+                  await fetch("/api/spotify/sync", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ type: "track_metadata" }),
+                  });
+                  await fetch("/api/spotify/sync", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ type: "covers" }),
+                  });
+                } finally {
+                  setSyncing(false);
+                  refresh();
+                }
+              }}
+              disabled={syncing}
+              className="btn btn-secondary account-action-primary"
+            >
+              {syncing ? "Bijwerken..." : "Database bijwerken"}
+            </button>
+            <button onClick={logoutPin} className="btn btn-secondary">
+              Uitloggen App
+            </button>
           </div>
         </div>
       </div>

@@ -792,7 +792,7 @@ export default function PlaylistBrowser() {
         <div className="empty-state">
           <div style={{ fontWeight: 600 }}>Nog geen playlists gevonden</div>
           <div className="text-body">
-            Werk de bibliotheek bij via Diagnose en probeer opnieuw.
+            Werk de bibliotheek bij via Account en probeer opnieuw.
           </div>
         </div>
       ) : null}
@@ -805,11 +805,11 @@ export default function PlaylistBrowser() {
         <div className="empty-state">
           <div style={{ fontWeight: 600 }}>Nog geen artiesten gevonden</div>
           <div className="text-body">
-            Werk de bibliotheek bij via Diagnose en probeer opnieuw.
+            Werk de bibliotheek bij via Account en probeer opnieuw.
           </div>
         </div>
       ) : null}
-      {loadingTracksList && mode === "tracks" ? (
+      {loadingTracksList && mode === "tracks" && selectedTrackName ? (
         <p className="text-body" role="status">
           Tracks laden...
         </p>
@@ -817,17 +817,6 @@ export default function PlaylistBrowser() {
       {error ? (
         <div style={{ color: "#fca5a5" }} role="alert">
           <p>{error}</p>
-          {authRequired ? (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => {
-                window.location.href = "/api/auth/login";
-              }}
-            >
-              Spotify verbinden
-            </button>
-          ) : null}
         </div>
       ) : null}
 
@@ -863,7 +852,7 @@ export default function PlaylistBrowser() {
             <div className="empty-state">
               <div style={{ fontWeight: 600 }}>Geen tracks gevonden</div>
               <div className="text-body">
-                Werk de bibliotheek bij via Diagnose als dit onverwacht is.
+                Werk de bibliotheek bij via Account als dit onverwacht is.
               </div>
             </div>
           ) : null}
@@ -1151,6 +1140,30 @@ export default function PlaylistBrowser() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      ) : null}
+      {mode === "tracks" && !selectedTrackName ? (
+        <div className="empty-state" style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 600 }}>Kies een track</div>
+          <div className="text-body">
+            Selecteer een track om resultaten te bekijken.
+          </div>
+        </div>
+      ) : null}
+      {mode === "artists" && !selectedArtistId ? (
+        <div className="empty-state" style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 600 }}>Kies een artiest</div>
+          <div className="text-body">
+            Selecteer een artiest om resultaten te bekijken.
+          </div>
+        </div>
+      ) : null}
+      {mode === "playlists" && !selectedPlaylist?.id ? (
+        <div className="empty-state" style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 600 }}>Kies een playlist</div>
+          <div className="text-body">
+            Selecteer een playlist om resultaten te bekijken.
           </div>
         </div>
       ) : null}

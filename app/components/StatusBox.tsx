@@ -19,30 +19,6 @@ type WorkerHealth = {
 } | null;
 type VersionInfo = { name: string; version: string } | null;
 type ResourceNameMap = Record<string, string>;
-type AuthLogEntry = {
-  timestamp: string;
-  level: string;
-  event: string;
-  runId?: string;
-  requestId?: string;
-  sessionId?: string;
-  route?: string;
-  method?: string;
-  url?: string;
-  spotifyEndpoint?: string;
-  status?: number;
-  durationMs?: number;
-  errorCode?: string;
-  errorMessage?: string;
-  hints?: string[];
-  data?: unknown;
-};
-type AuthLog = {
-  runId: string | null;
-  startedAt: number | null;
-  entries: AuthLogEntry[];
-} | null;
-
 function Badge({ label, tone }: { label: string; tone?: "ok" | "warn" }) {
   const cls = tone === "ok" ? "pill pill-success" : "pill pill-warn";
   return <span className={cls}>{label}</span>;
@@ -63,6 +39,14 @@ function formatSyncStatus(running: boolean) {
     : { label: "Bibliotheek up‑to‑date", tone: "ok" as const };
 }
 
+function formatResourceStatus(status: string | null | undefined) {
+  const value = String(status ?? "").toUpperCase();
+  if (value === "OK") return "Up-to-date";
+  if (value === "RUNNING") return "Bezig";
+  if (value === "FAILED") return "Mislukt";
+  return value || "Onbekend";
+}
+
 export default function StatusBox() {
   const [appStatus, setAppStatus] = useState<AppStatus>(null);
   const [userStatus, setUserStatus] = useState<UserStatus>(null);
@@ -74,11 +58,9 @@ export default function StatusBox() {
   const [syncing, setSyncing] = useState(false);
   const [loadingPlaylists, setLoadingPlaylists] = useState(false);
   const [resourceNameMap, setResourceNameMap] = useState<ResourceNameMap>({});
-  const [authLog, setAuthLog] = useState<AuthLog>(null);
-  const [authLogLoading, setAuthLogLoading] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
-  const [syncCooldownUntil, setSyncCooldownUntil] = useState<number | null>(null);
-  const [syncCooldownMessage, setSyncCooldownMessage] = useState<string | null>(null);
+  const [resourceUpdateState, setResourceUpdateState] = useState<
+    Record<string, { status: "idle" | "running" | "success" | "error"; at: number }>
+  >({});
 
   const refresh = useCallback(async () => {
     try {
@@ -160,44 +142,9 @@ export default function StatusBox() {
     }
   }, []);
 
-  async function loadAuthLog() {
-    setAuthLogLoading(true);
-    try {
-      const res = await fetch("/api/auth/log", { cache: "no-store" });
-      if (res.ok) {
-        setAuthLog(await res.json());
-      }
-    } finally {
-      setAuthLogLoading(false);
-    }
-  }
-
-  async function clearAuthLog() {
-    setAuthLogLoading(true);
-    try {
-      await fetch("/api/auth/log", { method: "DELETE" });
-      setAuthLog(null);
-    } finally {
-      setAuthLogLoading(false);
-    }
-  }
-
   async function logoutPin() {
     await fetch("/api/pin-logout", { method: "POST" });
     window.location.href = "/login";
-  }
-
-  async function copyAuthLog() {
-    if (!authLog) return;
-    const payload = JSON.stringify(authLog.entries ?? [], null, 2);
-    try {
-      await navigator.clipboard.writeText(payload);
-      setCopyStatus("Gekopieerd");
-    } catch {
-      setCopyStatus("Kopiëren mislukt");
-    } finally {
-      setTimeout(() => setCopyStatus(null), 2000);
-    }
   }
 
   useEffect(() => {
@@ -242,6 +189,11 @@ export default function StatusBox() {
       await fetch("/api/spotify/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "artists" }),
+      });
+      await fetch("/api/spotify/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "covers" }),
       });
     } finally {
@@ -270,9 +222,9 @@ export default function StatusBox() {
 
   return (
     <section className="card" style={{ marginTop: 24 }}>
-      <h2 className="heading-2">Diagnose</h2>
+      <h2 className="heading-2">Account & Bibliotheek</h2>
       <div className="text-body" style={{ marginBottom: 12 }}>
-        Gebruik dit scherm als er iets niet werkt of als je handmatig wil bijwerken.
+        Beheer je Spotify‑koppeling en werk je bibliotheek handmatig bij.
       </div>
       <div className="status-badges" style={{ marginBottom: 12 }}>
         <Badge
@@ -285,7 +237,7 @@ export default function StatusBox() {
         />
         <Badge label={runningInfo.label} tone={runningInfo.tone} />
         <Badge
-          label={`Worker: ${workerStatus}`}
+          label={`Synchronisatie: ${workerStatus}`}
           tone={workerStatus === "OK" ? "ok" : "warn"}
         />
       </div>
@@ -322,6 +274,8 @@ export default function StatusBox() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ type: "covers" }),
               });
+              setSyncCooldownMessage(null);
+              setSyncCooldownUntil(null);
             } finally {
               setSyncing(false);
               refresh();
@@ -330,103 +284,14 @@ export default function StatusBox() {
           disabled={syncing}
           className="btn btn-primary"
         >
-          {syncing ? "Bijwerken..." : "Bibliotheek bijwerken"}
+          {syncing ? "Bijwerken..." : "Database bijwerken"}
         </button>
-        <button
-          onClick={async () => {
-            setSyncing(true);
-            try {
-              const res = await fetch("/api/spotify/sync", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type: "artists" }),
-              });
-              if (res.status === 429) {
-                const retry = res.headers.get("Retry-After");
-                const retrySec = retry ? Number(retry) : 60;
-                const until = Date.now() + retrySec * 1000;
-                setSyncCooldownUntil(until);
-                setSyncCooldownMessage(
-                  `Even geduld. Probeer het over ${retrySec}s opnieuw.`
-                );
-                return;
-              }
-              setSyncCooldownMessage(null);
-            } finally {
-              setSyncing(false);
-              refresh();
-            }
-          }}
-          disabled={
-            syncing || (syncCooldownUntil !== null && Date.now() < syncCooldownUntil)
-          }
-          className="btn btn-secondary"
-        >
-          Artiesten bijwerken
-        </button>
-        {syncCooldownMessage ? (
-          <span className="text-body">{syncCooldownMessage}</span>
-        ) : null}
-        <button onClick={logoutPin} className="btn btn-ghost">
-          Uitloggen
-        </button>
-        <button
-          onClick={loadAuthLog}
-          disabled={authLogLoading}
-          className="btn btn-secondary"
-        >
-          {authLogLoading ? "Laden..." : "Login‑log laden"}
-        </button>
-        <button
-          onClick={clearAuthLog}
-          disabled={authLogLoading}
-          className="btn btn-ghost"
-        >
-          Login‑log wissen
-        </button>
-        <button
-          onClick={copyAuthLog}
-          disabled={!authLog || authLogLoading}
-          className="btn btn-secondary"
-        >
-          Login‑log kopiëren
-        </button>
-        {copyStatus ? <span className="text-body">{copyStatus}</span> : null}
       </div>
-
-      <details className="panel" style={{ marginTop: 16 }}>
-        <summary className="details-summary">Geavanceerde logs</summary>
-        <div style={{ marginTop: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <strong>Spotify login‑trace</strong>
-            <span>
-              {authLog?.startedAt
-                ? new Date(authLog.startedAt).toLocaleString()
-                : "n/a"}
-            </span>
-          </div>
-          <div style={{ fontSize: 13, marginTop: 8 }}>
-            Regels: {authLog?.entries?.length ?? 0}
-          </div>
-          <pre
-            style={{
-              marginTop: 12,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              fontSize: 12,
-            }}
-          >
-            {authLog
-              ? JSON.stringify(authLog.entries, null, 2)
-              : "Geen login‑log geladen."}
-          </pre>
-        </div>
-      </details>
 
       {syncStatus?.resources?.length ? (
         <details className="panel" style={{ marginTop: 16 }}>
           <summary className="details-summary">
-            Technische resources ({syncStatus.resources.length})
+            Playlists bijwerken ({syncStatus.resources.length})
           </summary>
           <div style={{ marginTop: 12, fontSize: 13 }}>
             {syncStatus.resources
@@ -461,28 +326,75 @@ export default function StatusBox() {
                     <span>{displayName}</span>
                     <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <span>
-                        {row.status}
-                        {row.lastErrorCode ? ` • ${row.lastErrorCode}` : ""}
+                        {formatResourceStatus(row.status)}
+                        {row.lastErrorCode ? ` • foutcode ${row.lastErrorCode}` : ""}
                       </span>
+                      {playlistId ? (
+                        <span className="text-subtle">
+                          {resourceUpdateState[playlistId]?.status === "running"
+                            ? "Bezig..."
+                            : resourceUpdateState[playlistId]?.status === "success"
+                            ? "Afgerond"
+                            : resourceUpdateState[playlistId]?.status === "error"
+                            ? "Mislukt"
+                            : ""}
+                        </span>
+                      ) : null}
                       {playlistId ? (
                         <button
                           className="btn btn-secondary"
                           onClick={async () => {
-                            await fetch("/api/spotify/sync", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                type: "playlist_items",
-                                payload: {
-                                  playlistId,
-                                  offset: 0,
-                                  limit: 50,
-                                  maxPagesPerRun: 20,
-                                  runId: `manual-${Date.now()}`,
-                                },
-                              }),
-                            });
-                            refresh();
+                            setResourceUpdateState((prev) => ({
+                              ...prev,
+                              [playlistId]: { status: "running", at: Date.now() },
+                            }));
+                            try {
+                              const res = await fetch("/api/spotify/sync", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  type: "playlist_items",
+                                  payload: {
+                                    playlistId,
+                                    offset: 0,
+                                    limit: 50,
+                                    maxPagesPerRun: 20,
+                                    runId: `manual-${Date.now()}`,
+                                  },
+                                }),
+                              });
+                              if (!res.ok) {
+                                throw new Error(`SYNC_FAILED_${res.status}`);
+                              }
+                              refresh();
+                              setResourceUpdateState((prev) => ({
+                                ...prev,
+                                [playlistId]: { status: "success", at: Date.now() },
+                              }));
+                            setTimeout(() => {
+                              setResourceUpdateState((prev) => {
+                                const next = { ...prev };
+                                if (next[playlistId]?.status === "success") {
+                                  delete next[playlistId];
+                                }
+                                return next;
+                              });
+                            }, 12000);
+                          } catch {
+                            setResourceUpdateState((prev) => ({
+                              ...prev,
+                              [playlistId]: { status: "error", at: Date.now() },
+                            }));
+                            setTimeout(() => {
+                                setResourceUpdateState((prev) => {
+                                  const next = { ...prev };
+                                  if (next[playlistId]?.status === "error") {
+                                    delete next[playlistId];
+                                  }
+                                  return next;
+                                });
+                              }, 12000);
+                            }
                           }}
                         >
                           Nu bijwerken

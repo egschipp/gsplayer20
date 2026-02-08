@@ -330,6 +330,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
     const onStateChanged = (state: any) => {
       applySdkState(state);
+      if (state && !state.paused) {
+        setError(null);
+      }
     };
 
     const onInitError = ({ message }: { message: string }) => {
@@ -970,7 +973,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           {playerState?.album ? (
             <div className="text-subtle">{playerState.album}</div>
           ) : null}
-        {playerErrorMessage && playbackTouched ? (
+        {playerErrorMessage && playbackTouched && !(playerState && !playerState.paused) ? (
           <div className="text-subtle">
             Probleem met afspelen: {playerErrorMessage}
             {playerErrorMessage.includes("Koppel opnieuw") ? (

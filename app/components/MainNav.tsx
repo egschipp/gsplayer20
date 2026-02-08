@@ -27,7 +27,7 @@ export default function MainNav() {
           className={`nav-link${isHome ? " active" : ""}`}
           aria-current={isHome ? "page" : undefined}
         >
-          Bibliotheek
+          GSPlayer
         </Link>
         <Link
           href="/status"

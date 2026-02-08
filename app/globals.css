@@ -972,6 +972,84 @@ details[open] > .details-summary::after {
   border: 1px solid rgba(2, 154, 228, 0.3);
 }
 
+.account-page {
+  display: grid;
+  gap: 18px;
+}
+
+.account-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.account-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.account-panel-title {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.account-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.account-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.account-resource-list {
+  display: grid;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.account-resource-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(2, 154, 228, 0.18);
+}
+
+.account-resource-name {
+  min-width: 0;
+  font-weight: 600;
+}
+
+.account-resource-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 980px) {
+  .account-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .player-control-play svg {
   width: 20px;
   height: 20px;

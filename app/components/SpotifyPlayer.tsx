@@ -63,6 +63,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const lastDeviceSelectRef = useRef(0);
   const pendingDeviceIdRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [playbackTouched, setPlaybackTouched] = useState(false);
   const playerRef = useRef<any>(null);
   const deviceIdRef = useRef<string | null>(null);
   const accessTokenRef = useRef<string | undefined>(accessToken);
@@ -632,6 +633,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }
 
   async function handleTogglePlay() {
+    setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) {
@@ -667,6 +669,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }
 
   async function handleNext() {
+    setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
@@ -702,6 +705,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }
 
   async function handlePrevious() {
+    setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
@@ -736,6 +740,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }
 
   async function handleToggleShuffle() {
+    setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
@@ -772,6 +777,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }
 
   async function handleSeek(nextMs: number) {
+    setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
@@ -809,6 +815,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }
 
   async function handleVolume(nextVolume: number) {
+    setPlaybackTouched(true);
     const clamped = Math.max(0, Math.min(1, nextVolume));
     setVolume(clamped);
     lastUserVolumeAtRef.current = Date.now();
@@ -858,6 +865,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }
 
   async function handleToggleMute() {
+    setPlaybackTouched(true);
     if (muted || volume === 0) {
       const restore = Math.max(0.05, lastNonZeroVolumeRef.current || 0.5);
       setMuted(false);
@@ -945,10 +953,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           {playerState?.album ? (
             <div className="text-subtle">{playerState.album}</div>
           ) : null}
-          {playerErrorMessage ? (
-            <div className="text-subtle">
-              Probleem met afspelen: {playerErrorMessage}
-              {playerErrorMessage.includes("Koppel opnieuw") ? (
+        {playerErrorMessage && playbackTouched ? (
+          <div className="text-subtle">
+            Probleem met afspelen: {playerErrorMessage}
+            {playerErrorMessage.includes("Koppel opnieuw") ? (
                 <button
                   type="button"
                   className="btn btn-ghost"

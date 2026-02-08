@@ -221,77 +221,97 @@ export default function StatusBox() {
     : [];
 
   return (
-    <section className="card" style={{ marginTop: 24 }}>
-      <h2 className="heading-2">Account & Bibliotheek</h2>
-      <div className="text-body" style={{ marginBottom: 12 }}>
-        Beheer je Spotify‑koppeling en werk je bibliotheek handmatig bij.
-      </div>
-      <div className="status-badges" style={{ marginBottom: 12 }}>
-        <Badge
-          label={`App: ${appStatus?.status ?? "CHECKING"}`}
-          tone={appStatus?.status === "OK" ? "ok" : "warn"}
-        />
-        <Badge
-          label={`Account: ${userStatus?.status ?? "CHECKING"}`}
-          tone={userStatus?.status === "OK" ? "ok" : "warn"}
-        />
-        <Badge label={runningInfo.label} tone={runningInfo.tone} />
-        <Badge
-          label={`Synchronisatie: ${workerStatus}`}
-          tone={workerStatus === "OK" ? "ok" : "warn"}
-        />
+    <section className="card account-page" style={{ marginTop: 24 }}>
+      <div className="account-header">
+        <div>
+          <h2 className="heading-2">Account & Bibliotheek</h2>
+          <div className="text-body">
+            Beheer je Spotify‑koppeling en werk je bibliotheek handmatig bij.
+          </div>
+        </div>
       </div>
 
-      <div className="text-body status-summary" style={{ marginBottom: 12 }}>
-        <div>Laatst bijgewerkt: {lastSync}</div>
-        <div>Worker controle: {workerLast}</div>
-        <div>Versie: {versionInfo?.version ?? "n/a"}</div>
+      <div className="account-grid">
+        <div className="panel account-panel">
+          <div className="account-panel-title">Status</div>
+          <div className="status-badges">
+            <Badge
+              label={`App: ${appStatus?.status ?? "CHECKING"}`}
+              tone={appStatus?.status === "OK" ? "ok" : "warn"}
+            />
+            <Badge
+              label={`Account: ${userStatus?.status ?? "CHECKING"}`}
+              tone={userStatus?.status === "OK" ? "ok" : "warn"}
+            />
+            <Badge label={runningInfo.label} tone={runningInfo.tone} />
+            <Badge
+              label={`Synchronisatie: ${workerStatus}`}
+              tone={workerStatus === "OK" ? "ok" : "warn"}
+            />
+          </div>
+
+          <div className="text-body status-summary">
+            <div>Laatst bijgewerkt: {lastSync}</div>
+            <div>Worker controle: {workerLast}</div>
+            <div>Versie: {versionInfo?.version ?? "n/a"}</div>
+          </div>
+
+          <div className="status-grid compact">
+            {importantCounts.length
+              ? importantCounts.map((row) => (
+                  <div key={row.key} className="panel">
+                    <strong>{row.label}</strong>: {row.value}
+                  </div>
+                ))
+              : "Geen statusdata beschikbaar."}
+          </div>
+        </div>
+
+        <div className="panel account-panel">
+          <div className="account-panel-title">Acties</div>
+          <div className="account-actions">
+            <button
+              onClick={async () => {
+                setSyncing(true);
+                try {
+                  await forceSync();
+                  await fetch("/api/spotify/sync", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ type: "track_metadata" }),
+                  });
+                  await fetch("/api/spotify/sync", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ type: "covers" }),
+                  });
+                } finally {
+                  setSyncing(false);
+                  refresh();
+                }
+              }}
+              disabled={syncing}
+              className="btn btn-primary"
+            >
+              {syncing ? "Bijwerken..." : "Database bijwerken"}
+            </button>
+            <button onClick={logoutPin} className="btn btn-ghost">
+              Uitloggen
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="status-grid compact" style={{ marginBottom: 12 }}>
-        {importantCounts.length
-          ? importantCounts.map((row) => (
-              <div key={row.key} className="panel">
-                <strong>{row.label}</strong>: {row.value}
-              </div>
-            ))
-          : "Geen statusdata beschikbaar."}
-      </div>
+      <div className="account-divider" />
 
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <button
-          onClick={async () => {
-            setSyncing(true);
-            try {
-              await forceSync();
-              await fetch("/api/spotify/sync", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type: "track_metadata" }),
-              });
-              await fetch("/api/spotify/sync", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type: "covers" }),
-              });
-            } finally {
-              setSyncing(false);
-              refresh();
-            }
-          }}
-          disabled={syncing}
-          className="btn btn-primary"
-        >
-          {syncing ? "Bijwerken..." : "Database bijwerken"}
-        </button>
-      </div>
+      <div className="panel account-panel">
+        <div className="account-panel-title">Playlists bijwerken</div>
+        <div className="text-body" style={{ marginBottom: 12 }}>
+          Werk individuele playlists bij als er iets ontbreekt.
+        </div>
 
-      {syncStatus?.resources?.length ? (
-        <details className="panel" style={{ marginTop: 16 }}>
-          <summary className="details-summary">
-            Playlists bijwerken ({syncStatus.resources.length})
-          </summary>
-          <div style={{ marginTop: 12, fontSize: 13 }}>
+        {syncStatus?.resources?.length ? (
+          <div className="account-resource-list">
             {syncStatus.resources
               .slice()
               .sort((a: any, b: any) => {
@@ -311,18 +331,9 @@ export default function StatusBox() {
                 const displayName =
                   resourceNameMap[String(row.resource)] ?? row.resource;
                 return (
-                  <div
-                    key={row.resource}
-                    className="panel"
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginBottom: 6,
-                    }}
-                  >
-                    <span>{displayName}</span>
-                    <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <div key={row.resource} className="account-resource-row">
+                    <div className="account-resource-name">{displayName}</div>
+                    <div className="account-resource-meta">
                       <span>
                         {formatResourceStatus(row.status)}
                         {row.lastErrorCode ? ` • foutcode ${row.lastErrorCode}` : ""}
@@ -369,21 +380,21 @@ export default function StatusBox() {
                                 ...prev,
                                 [playlistId]: { status: "success", at: Date.now() },
                               }));
-                            setTimeout(() => {
-                              setResourceUpdateState((prev) => {
-                                const next = { ...prev };
-                                if (next[playlistId]?.status === "success") {
-                                  delete next[playlistId];
-                                }
-                                return next;
-                              });
-                            }, 12000);
-                          } catch {
-                            setResourceUpdateState((prev) => ({
-                              ...prev,
-                              [playlistId]: { status: "error", at: Date.now() },
-                            }));
-                            setTimeout(() => {
+                              setTimeout(() => {
+                                setResourceUpdateState((prev) => {
+                                  const next = { ...prev };
+                                  if (next[playlistId]?.status === "success") {
+                                    delete next[playlistId];
+                                  }
+                                  return next;
+                                });
+                              }, 12000);
+                            } catch {
+                              setResourceUpdateState((prev) => ({
+                                ...prev,
+                                [playlistId]: { status: "error", at: Date.now() },
+                              }));
+                              setTimeout(() => {
                                 setResourceUpdateState((prev) => {
                                   const next = { ...prev };
                                   if (next[playlistId]?.status === "error") {
@@ -398,13 +409,15 @@ export default function StatusBox() {
                           Nu bijwerken
                         </button>
                       ) : null}
-                    </span>
+                    </div>
                   </div>
                 );
               })}
           </div>
-        </details>
-      ) : null}
+        ) : (
+          <div className="text-subtle">Geen playlists gevonden.</div>
+        )}
+      </div>
     </section>
   );
 }

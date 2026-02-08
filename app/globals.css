@@ -558,35 +558,21 @@ details[open] > .details-summary::after {
 }
 
 .track-row {
-  display: grid;
-  grid-template-columns: 56px 1fr auto;
-  gap: 12px;
-  align-items: center;
-  padding: 12px;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.track-row-inner {
+  width: 100%;
   border-radius: 1.25rem;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(0, 0, 0, 0.4);
 }
 
-.track-row.playing {
-  border-color: rgba(2, 154, 228, 0.5);
-  border-left: 3px solid rgba(2, 154, 228, 0.9);
-  background: linear-gradient(
-      135deg,
-      rgba(2, 154, 228, 0.18),
-      rgba(19, 194, 161, 0.16),
-      rgba(69, 221, 97, 0.12)
-    ),
-    rgba(0, 0, 0, 0.55);
-}
-
-.track-row-inner {
-  width: 100%;
-  border-radius: inherit;
-}
-
 .track-row-inner.playing {
-  border-radius: inherit;
+  border-color: rgba(2, 154, 228, 0.5);
   border-left: 3px solid rgba(2, 154, 228, 0.9);
   background: linear-gradient(
       135deg,
@@ -604,22 +590,8 @@ details[open] > .details-summary::after {
   display: block;
 }
 
-.track-virtual-list .track-row > div {
+.track-virtual-list .track-row-inner {
   border-radius: 1.25rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.4);
-}
-
-.track-virtual-list .track-row.playing > div {
-  border-color: rgba(2, 154, 228, 0.5);
-  border-left: 3px solid rgba(2, 154, 228, 0.9);
-  background: linear-gradient(
-      135deg,
-      rgba(2, 154, 228, 0.18),
-      rgba(19, 194, 161, 0.16),
-      rgba(69, 221, 97, 0.12)
-    ),
-    rgba(0, 0, 0, 0.55);
 }
 
 .detail-btn {
@@ -664,9 +636,16 @@ details[open] > .details-summary::after {
 }
 
 .shuffle-btn.active {
-  border-color: rgba(19, 194, 161, 0.8);
-  background: rgba(19, 194, 161, 0.35);
-  box-shadow: var(--shadow-glow);
+  color: #ffffff;
+  border-color: rgba(29, 185, 84, 0.9);
+  background: linear-gradient(
+      135deg,
+      rgba(29, 185, 84, 0.65),
+      rgba(19, 194, 161, 0.45)
+    ),
+    rgba(0, 0, 0, 0.25);
+  box-shadow: 0 0 0 1px rgba(29, 185, 84, 0.5),
+    0 0 16px rgba(29, 185, 84, 0.45);
 }
 
 .table-header {

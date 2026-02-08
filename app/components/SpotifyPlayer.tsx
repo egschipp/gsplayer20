@@ -92,6 +92,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const lastSdkStateRef = useRef<any>(null);
   const lastIsPlayingRef = useRef(false);
   const playerStateRef = useRef<typeof playerState>(null);
+  const lastShuffleSyncRef = useRef(0);
 
   function formatPlayerError(message?: string | null) {
     if (!message) return null;
@@ -613,7 +614,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (
         sdkActive &&
         playerStateRef.current?.name &&
-        now - lastSdkEventAtRef.current < 15000
+        now - lastSdkEventAtRef.current < 15000 &&
+        now - lastShuffleSyncRef.current < 8000
       ) {
         scheduleNext(false, 12000);
         return;
@@ -718,6 +720,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       if (typeof data?.shuffle_state === "boolean") {
         setShuffleOn(data.shuffle_state);
+        lastShuffleSyncRef.current = Date.now();
       }
       if (typeof data?.is_playing === "boolean") {
         lastIsPlayingRef.current = data.is_playing;
@@ -911,7 +914,23 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
-    const next = !shuffleOn;
+    let current = shuffleOn;
+    try {
+      const res = await fetch("https://api.spotify.com/v1/me/player", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data?.shuffle_state === "boolean") {
+          current = data.shuffle_state;
+          setShuffleOn(current);
+          lastShuffleSyncRef.current = Date.now();
+        }
+      }
+    } catch {
+      // ignore
+    }
+    const next = !current;
     const res = await fetch(
       `https://api.spotify.com/v1/me/player/shuffle?state=${next ? "true" : "false"}&device_id=${currentDevice}`,
       {
@@ -932,6 +951,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     }
     rateLimitRef.current.backoffMs = 5000;
     setShuffleOn(next);
+    lastShuffleSyncRef.current = Date.now();
   }
 
   function formatTime(ms?: number) {
@@ -1166,7 +1186,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         </div>
         <div className="player-controls">
           <div
-            className={`player-control player-control-ghost player-control-grad${
+            className={`player-control player-control-ghost player-control-grad shuffle-btn${
               shuffleOn ? " active" : ""
             }`}
             role="button"

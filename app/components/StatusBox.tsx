@@ -274,8 +274,6 @@ export default function StatusBox() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ type: "covers" }),
               });
-              setSyncCooldownMessage(null);
-              setSyncCooldownUntil(null);
             } finally {
               setSyncing(false);
               refresh();

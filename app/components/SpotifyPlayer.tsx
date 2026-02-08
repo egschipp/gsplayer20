@@ -91,6 +91,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const lastNonZeroVolumeRef = useRef(0.5);
   const lastSdkStateRef = useRef<any>(null);
   const lastIsPlayingRef = useRef(false);
+  const playerStateRef = useRef<typeof playerState>(null);
 
   function formatPlayerError(message?: string | null) {
     if (!message) return null;
@@ -122,6 +123,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     () => Boolean(accessToken) && playbackAllowed,
     [accessToken, playbackAllowed]
   );
+
+  useEffect(() => {
+    playerStateRef.current = playerState;
+  }, [playerState]);
 
   const applySdkState = useCallback(
     (state: any) => {
@@ -558,7 +563,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         sdkReadyRef.current &&
         activeDeviceIdRef.current &&
         activeDeviceIdRef.current === sdkDeviceIdRef.current;
-      if (sdkActive && now - lastSdkEventAtRef.current < 15000) {
+      if (
+        sdkActive &&
+        playerStateRef.current?.name &&
+        now - lastSdkEventAtRef.current < 15000
+      ) {
         scheduleNext(false, 12000);
         return;
       }
@@ -581,6 +590,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         setActiveDeviceSupportsVolume(device.supports_volume !== false);
         if (device.id === pendingDeviceIdRef.current) {
           pendingDeviceIdRef.current = null;
+        }
+        if (
+          sdkDeviceIdRef.current &&
+          device.id !== sdkDeviceIdRef.current &&
+          playerRef.current
+        ) {
+          playerRef.current.pause().catch(() => undefined);
         }
       }
       const item = data.item;

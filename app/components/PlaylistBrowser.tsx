@@ -578,16 +578,6 @@ export default function PlaylistBrowser() {
 
   return (
     <section style={{ marginTop: 24 }}>
-      <div style={{ marginBottom: 16 }}>
-        <Image
-          src="/georgies-spotify.png"
-          alt="Georgies Spotify logo"
-          width={240}
-          height={80}
-          className="library-logo"
-          priority
-        />
-      </div>
       {authRequired ? (
         <div className="panel" style={{ marginBottom: 16 }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>

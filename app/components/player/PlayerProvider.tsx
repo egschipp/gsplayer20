@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { createContext, useContext, useMemo, useState } from "react";
 import SpotifyPlayer, { type PlayerApi } from "../SpotifyPlayer";
 
@@ -21,6 +22,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   return (
     <PlayerContext.Provider value={value}>
       <div className="library-sticky">
+        <Image
+          src="/georgies-spotify.png"
+          alt="Georgies Spotify logo"
+          width={240}
+          height={80}
+          className="library-logo"
+          priority
+        />
         <SpotifyPlayer onReady={setApi} onTrackChange={setCurrentTrackId} />
       </div>
       {children}

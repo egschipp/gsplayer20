@@ -295,7 +295,11 @@ export default function StatusBox() {
             <div className="account-actions">
               <button
                 type="button"
-                className="btn btn-primary"
+                className={`btn ${
+                  userStatus?.status === "OK"
+                    ? "btn-outline-green"
+                    : "btn-solid-green"
+                }`}
                 onClick={() => {
                   window.location.href = "/api/auth/login";
                 }}
@@ -304,7 +308,7 @@ export default function StatusBox() {
               </button>
               <button
                 type="button"
-                className="btn btn-ghost"
+                className="btn btn-outline-green"
                 onClick={() => {
                   window.location.href = "/api/auth/logout";
                 }}
@@ -376,11 +380,11 @@ export default function StatusBox() {
                 }
               }}
               disabled={syncing}
-              className="btn btn-secondary account-action-primary"
+              className="btn btn-outline-green account-action-primary"
             >
               {syncing ? "Bijwerken..." : "Database bijwerken"}
             </button>
-            <button onClick={logoutPin} className="btn btn-secondary">
+            <button onClick={logoutPin} className="btn btn-outline-green">
               Uitloggen App
             </button>
           </div>

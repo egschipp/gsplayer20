@@ -1077,6 +1077,23 @@ details[open] > .details-summary::after {
   border-radius: 999px;
 }
 
+.btn-outline-green {
+  background: transparent;
+  border: 1px solid rgba(29, 185, 84, 0.9);
+  color: #ffffff;
+}
+
+.btn-outline-green:hover {
+  background: rgba(29, 185, 84, 0.1);
+}
+
+.btn-solid-green {
+  background: rgba(29, 185, 84, 0.95);
+  border: 1px solid rgba(29, 185, 84, 0.9);
+  color: #0b0b0b;
+  box-shadow: var(--shadow-glow);
+}
+
 .account-divider {
   height: 1px;
   background: rgba(255, 255, 255, 0.08);

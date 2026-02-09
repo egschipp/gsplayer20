@@ -436,6 +436,32 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           position_ms: 0,
         };
 
+        try {
+          const res = await fetch(
+            `https://api.spotify.com/v1/me/player/shuffle?state=${
+              shuffleOn ? "true" : "false"
+            }&device_id=${currentDevice}`,
+            {
+              method: "PUT",
+              headers: { Authorization: `Bearer ${token}` },
+            }
+          );
+          if (res.status === 429) {
+            const retry = res.headers.get("Retry-After");
+            const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
+            rateLimitRef.current.until = Date.now() + retryMs;
+            rateLimitRef.current.backoffMs = Math.min(
+              rateLimitRef.current.backoffMs * 2,
+              60000
+            );
+            setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
+          } else if (res.ok) {
+            lastShuffleSyncRef.current = Date.now();
+          }
+        } catch {
+          // ignore
+        }
+
         const attemptPlay = async () => {
           await transferPlayback(currentDevice as string, true);
           return fetch(
@@ -755,26 +781,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (deviceName) setActiveDeviceName(deviceName);
     pendingDeviceIdRef.current = targetId;
     lastDeviceSelectRef.current = Date.now();
-    const shouldPlay = lastIsPlayingRef.current;
-    const res = await fetch("https://api.spotify.com/v1/me/player", {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ device_ids: [targetId], play: shouldPlay }),
-    });
-    if (res.status === 429) {
-      const retry = res.headers.get("Retry-After");
-      const retryMs = retry ? Number(retry) * 1000 : rateLimitRef.current.backoffMs;
-      rateLimitRef.current.until = Date.now() + retryMs;
-      rateLimitRef.current.backoffMs = Math.min(
-        rateLimitRef.current.backoffMs * 2,
-        60000
-      );
-      setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
-      return;
-    }
-    rateLimitRef.current.backoffMs = 5000;
     setDeviceId(targetId);
     deviceIdRef.current = targetId;
+    const shouldPlay = lastIsPlayingRef.current;
+    await transferPlayback(targetId, shouldPlay);
     refreshDevices(true);
     setTimeout(() => refreshDevices(true), 800);
   }

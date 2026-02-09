@@ -566,8 +566,28 @@ export default function PlaylistBrowser() {
     return { uris, byId: new Set(tracks.map((t) => t.trackId || "")) };
   }
 
-  async function handlePlayTrack(trackId: string | null | undefined) {
-    if (!trackId || !playerApi) return;
+  async function handlePlayTrack(track: TrackRow | TrackItem | null | undefined) {
+    if (!track || !playerApi) return;
+    const trackId = "trackId" in track ? track.trackId : track.id;
+    if (!trackId) return;
+
+    if (mode === "playlists" && selectedPlaylist?.id) {
+      const contextUri =
+        selectedPlaylist.type === "liked"
+          ? "spotify:collection:tracks"
+          : `spotify:playlist:${selectedPlaylist.id}`;
+      const offsetPosition =
+        "position" in track && typeof track.position === "number"
+          ? track.position
+          : null;
+      await playerApi.playContext(
+        contextUri,
+        offsetPosition,
+        `spotify:track:${trackId}`
+      );
+      return;
+    }
+
     const queue = buildQueue();
     if (!queue.uris.length) return;
     const targetUri = `spotify:track:${trackId}`;
@@ -1218,7 +1238,7 @@ type TrackRowData = {
   mode: Mode;
   currentTrackId: string | null;
   openDetailFromRow: (track: TrackRow) => void;
-  handlePlayTrack: (trackId: string | null | undefined) => Promise<void>;
+  handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
   allPlaylistNames: string[];
   MAX_PLAYLIST_CHIPS: number;
 };
@@ -1264,7 +1284,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             aria-label="Track afspelen"
             title="Afspelen"
             disabled={!track.trackId}
-            onClick={() => data.handlePlayTrack(track.trackId)}
+            onClick={() => data.handlePlayTrack(track)}
           >
             ▶
           </button>
@@ -1352,7 +1372,7 @@ type TrackItemData = {
   items: TrackItem[];
   currentTrackId: string | null;
   openDetailFromItem: (track: TrackItem) => void;
-  handlePlayTrack: (trackId: string | null | undefined) => Promise<void>;
+  handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
   allPlaylistNames: string[];
   MAX_PLAYLIST_CHIPS: number;
 };
@@ -1404,7 +1424,7 @@ function TrackItemRenderer({
             className="play-btn"
             aria-label="Track afspelen"
             title="Afspelen"
-            onClick={() => data.handlePlayTrack(track.id)}
+            onClick={() => data.handlePlayTrack(track)}
           >
             ▶
           </button>

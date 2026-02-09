@@ -33,7 +33,7 @@ export default function PlaylistBrowser() {
   const [trackOptions, setTrackOptions] = useState<TrackOption[]>([]);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>("");
   const [selectedArtistId, setSelectedArtistId] = useState<string>("");
-  const [selectedTrackName, setSelectedTrackName] = useState<string>("");
+  const [selectedTrackId, setSelectedTrackId] = useState<string>("");
   const [query, setQuery] = useState<string>("");
   const [open, setOpen] = useState(false);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
@@ -234,7 +234,7 @@ export default function PlaylistBrowser() {
         const unique = new Map<string, TrackOption>();
         for (const track of all) {
           const name = String(track.name ?? "").trim();
-          const key = name.toLowerCase();
+          const key = track.id || track.trackId || "";
           if (!key) continue;
           const artistNames = track.artists
             .map((artist) => artist?.name)
@@ -262,7 +262,7 @@ export default function PlaylistBrowser() {
         if (!cancelled) {
           setTrackOptions(list);
           setTrackItems(all);
-          setSelectedTrackName((prev) => prev || (list[0]?.name ?? ""));
+          // keep tracks list unselected until the user chooses a track
         }
         } finally {
         if (!cancelled) setLoadingTracksList(false);
@@ -285,9 +285,9 @@ export default function PlaylistBrowser() {
   );
 
   const selectedTrack = useMemo(() => {
-    if (!selectedTrackName) return null;
-    return trackOptions.find((opt) => opt.name === selectedTrackName) || null;
-  }, [trackOptions, selectedTrackName]);
+    if (!selectedTrackId) return null;
+    return trackOptions.find((opt) => opt.id === selectedTrackId) || null;
+  }, [trackOptions, selectedTrackId]);
 
   const selectedOption =
     mode === "playlists"
@@ -314,14 +314,14 @@ export default function PlaylistBrowser() {
     if (mode === "playlists") setSelectedPlaylistId("");
     if (mode === "artists") setSelectedArtistId("");
     if (mode === "tracks") {
-      setSelectedTrackName("");
+      setSelectedTrackId("");
     }
   }, [mode]);
 
   const filteredTrackItems = useMemo(() => {
-    if (!selectedTrackName) return [];
-    return trackItems.filter((track) => track.name === selectedTrackName);
-  }, [trackItems, selectedTrackName]);
+    if (!selectedTrackId) return [];
+    return trackItems.filter((track) => track.id === selectedTrackId);
+  }, [trackItems, selectedTrackId]);
 
 
   function openDetailFromRow(track: TrackRow) {
@@ -472,34 +472,40 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadTracks(cursor?: string | null, append = false) {
+    async function loadTracks() {
       setLoadingTracks(true);
       setError(null);
       try {
-    const baseUrl =
-      mode === "playlists"
-        ? selectedPlaylist?.type === "liked"
-          ? "/api/spotify/me/tracks"
-          : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
-        : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
-        const url = new URL(baseUrl, window.location.origin);
-        url.searchParams.set("limit", "50");
-        if (cursor) url.searchParams.set("cursor", cursor);
-
-        const res = await fetch(url.toString());
-        if (!res.ok) {
-          if (res.status === 401) {
-            setError("Je bent nog niet verbonden met Spotify.");
-          } else {
-            setError("Tracks laden lukt nu niet.");
+        const baseUrl =
+          mode === "playlists"
+            ? selectedPlaylist?.type === "liked"
+              ? "/api/spotify/me/tracks"
+              : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
+            : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
+        let cursor: string | null = null;
+        const allItems: TrackRow[] = [];
+        do {
+          const url = new URL(baseUrl, window.location.origin);
+          url.searchParams.set("limit", "50");
+          if (cursor) url.searchParams.set("cursor", cursor);
+          const res = await fetch(url.toString());
+          if (!res.ok) {
+            if (res.status === 401) {
+              setError("Je bent nog niet verbonden met Spotify.");
+            } else {
+              setError("Tracks laden lukt nu niet.");
+            }
+            return;
           }
-          return;
-        }
-        const data = await res.json();
-        const items = Array.isArray(data.items) ? data.items : [];
+          const data = await res.json();
+          const items = Array.isArray(data.items) ? data.items : [];
+          allItems.push(...items);
+          cursor = data.nextCursor ?? null;
+          if (cancelled) return;
+        } while (cursor);
         if (!cancelled) {
-          setTracks((prev) => (append ? prev.concat(items) : items));
-          setNextCursor(data.nextCursor ?? null);
+          setTracks(allItems);
+          setNextCursor(null);
         }
       } catch {
         if (!cancelled) setError("Tracks laden lukt nu niet.");
@@ -516,7 +522,7 @@ export default function PlaylistBrowser() {
 
     setTracks([]);
     setNextCursor(null);
-    loadTracks(null, false);
+    loadTracks();
 
     return () => {
       cancelled = true;
@@ -694,7 +700,7 @@ export default function PlaylistBrowser() {
                 if (mode === "playlists") setSelectedPlaylistId("");
                 if (mode === "artists") setSelectedArtistId("");
                 if (mode === "tracks") {
-                  setSelectedTrackName("");
+                  setSelectedTrackId("");
                 }
               }}
             >
@@ -711,13 +717,13 @@ export default function PlaylistBrowser() {
                     key={opt.id}
                     type="button"
                     role="option"
-                    aria-selected={opt.name === selectedTrackName}
+                    aria-selected={opt.id === selectedTrackId}
                     className={`combo-item${
-                      opt.name === selectedTrackName ? " active" : ""
+                      opt.id === selectedTrackId ? " active" : ""
                     }`}
                     onMouseDown={() => {
                       suppressCloseRef.current = true;
-                      setSelectedTrackName(opt.name);
+                      setSelectedTrackId(opt.id);
                       setQuery(opt.name);
                       setOpen(false);
                     }}
@@ -806,7 +812,7 @@ export default function PlaylistBrowser() {
           </div>
         </div>
       ) : null}
-      {loadingTracksList && mode === "tracks" && selectedTrackName ? (
+      {loadingTracksList && mode === "tracks" && selectedTrackId ? (
         <p className="text-body" role="status">
           Tracks laden...
         </p>
@@ -879,12 +885,12 @@ export default function PlaylistBrowser() {
         </div>
       ) : (
         <div className="track-list" style={{ marginTop: 16 }}>
-          {selectedTrackName ? (
+          {selectedTrack?.name ? (
             <div className="text-body" style={{ marginBottom: 6 }}>
-              Tracks met naam: <strong>{selectedTrackName}</strong>
+              Tracks met naam: <strong>{selectedTrack?.name}</strong>
             </div>
           ) : null}
-          {!loadingTracksList && selectedTrackName && !filteredTrackItems.length ? (
+          {!loadingTracksList && selectedTrackId && !filteredTrackItems.length ? (
             <div className="empty-state">
               <div style={{ fontWeight: 600 }}>Geen resultaten</div>
               <div className="text-body">Probeer een andere titel.</div>
@@ -1115,7 +1121,7 @@ export default function PlaylistBrowser() {
           </div>
         </div>
       ) : null}
-      {mode === "tracks" && !selectedTrackName ? (
+      {mode === "tracks" && !selectedTrackId ? (
         <div className="empty-state" style={{ marginTop: 16 }}>
           <div style={{ fontWeight: 600 }}>Kies een track</div>
           <div className="text-body">

@@ -568,7 +568,12 @@ export default function PlaylistBrowser() {
 
   async function handlePlayTrack(track: TrackRow | TrackItem | null | undefined) {
     if (!track || !playerApi) return;
-    const trackId = "trackId" in track ? track.trackId : track.id;
+    let trackId: string | null = null;
+    if ("trackId" in track && track.trackId) {
+      trackId = track.trackId;
+    } else if ("id" in track && track.id) {
+      trackId = track.id;
+    }
     if (!trackId) return;
 
     if (mode === "playlists" && selectedPlaylist?.id) {

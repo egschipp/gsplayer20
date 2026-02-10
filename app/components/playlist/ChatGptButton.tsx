@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  CHATGPT_PROMPT_TEMPLATE,
+  fillChatGptPrompt,
+  normalizePromptTemplate,
+} from "@/lib/chatgpt/prompt";
+
 type ChatGptButtonProps = {
   trackUrl: string | null;
   playlistNames: string[];

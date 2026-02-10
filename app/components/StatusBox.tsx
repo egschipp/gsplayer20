@@ -2,6 +2,11 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
+import {
+  CHATGPT_PROMPT_TEMPLATE,
+  CHATGPT_PROMPT_TOKENS,
+  normalizePromptTemplate,
+} from "@/lib/chatgpt/prompt";
 
 type AppStatus = { status: string } | null;
 type UserStatus = {
@@ -76,6 +81,8 @@ export default function StatusBox() {
   const [resourceUpdateState, setResourceUpdateState] = useState<
     Record<string, { status: "idle" | "running" | "success" | "error"; at: number }>
   >({});
+  const [promptTemplate, setPromptTemplate] = useState("");
+  const [promptSaved, setPromptSaved] = useState<null | "saved" | "error">(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -172,6 +179,54 @@ export default function StatusBox() {
       clearInterval(slow);
     };
   }, [refresh, refreshAuthStatus]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem("gs_chatgpt_prompt");
+    const base = stored ? normalizePromptTemplate(stored) : CHATGPT_PROMPT_TEMPLATE;
+    setPromptTemplate(base);
+  }, []);
+
+  function enforceTokens(value: string) {
+    let next = value ?? "";
+    // Remove any bracketed text that isn't a known token.
+    next = next.replace(/\[[^\]]+\]/g, (match) => {
+      if ((CHATGPT_PROMPT_TOKENS as readonly string[]).includes(match)) {
+        return match;
+      }
+      return match.replace("[", "").replace("]", "");
+    });
+    return normalizePromptTemplate(next);
+  }
+
+  function handlePromptChange(value: string) {
+    setPromptSaved(null);
+    setPromptTemplate(enforceTokens(value));
+  }
+
+  function savePrompt() {
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("gs_chatgpt_prompt", promptTemplate);
+      }
+      setPromptSaved("saved");
+    } catch {
+      setPromptSaved("error");
+    }
+  }
+
+  function resetPrompt() {
+    const base = CHATGPT_PROMPT_TEMPLATE;
+    setPromptTemplate(base);
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("gs_chatgpt_prompt", base);
+      }
+      setPromptSaved("saved");
+    } catch {
+      setPromptSaved("error");
+    }
+  }
 
   useEffect(() => {
     if (!Object.keys(playlistMap).length) return;
@@ -389,6 +444,40 @@ export default function StatusBox() {
             </button>
           </div>
         </div>
+
+        <details className="panel account-panel">
+          <summary className="details-summary">ChatGPT prompt</summary>
+          <div className="text-body" style={{ marginTop: 12 }}>
+            Pas de prompt aan die naar het klembord wordt gekopieerd.
+          </div>
+          <div className="text-subtle" style={{ marginTop: 8 }}>
+            Variabelen (niet te bewerken):{" "}
+            {CHATGPT_PROMPT_TOKENS.map((token) => (
+              <code key={token} style={{ marginRight: 8 }}>
+                {token}
+              </code>
+            ))}
+          </div>
+          <textarea
+            className="input"
+            style={{ marginTop: 12, minHeight: 220, width: "100%" }}
+            value={promptTemplate}
+            onChange={(event) => handlePromptChange(event.target.value)}
+          />
+          <div className="account-actions" style={{ marginTop: 12 }}>
+            <button type="button" className="btn btn-outline-green" onClick={savePrompt}>
+              Opslaan
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={resetPrompt}>
+              Herstellen
+            </button>
+            {promptSaved === "saved" ? (
+              <span className="text-subtle">Opgeslagen</span>
+            ) : promptSaved === "error" ? (
+              <span className="text-subtle">Opslaan mislukt</span>
+            ) : null}
+          </div>
+        </details>
       </div>
 
       <div className="account-divider" />

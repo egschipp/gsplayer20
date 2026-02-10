@@ -507,6 +507,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           position_ms: 0,
         };
 
+        const ready = await ensureActiveDevice(currentDevice as string, token, true);
+        if (!ready) {
+          setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+          return;
+        }
+
         try {
           const res = await fetch(
             `https://api.spotify.com/v1/me/player/shuffle?state=${
@@ -520,15 +526,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           if (applyRateLimit(res)) return;
           if (res.ok) {
             lastShuffleSyncRef.current = Date.now();
+            const confirmed = await confirmShuffle(token);
+            if (typeof confirmed === "boolean") {
+              setShuffleOn(confirmed);
+            }
           }
         } catch {
           // ignore
-        }
-
-        const ready = await ensureActiveDevice(currentDevice as string, token, true);
-        if (!ready) {
-          setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-          return;
         }
 
         const attemptPlay = async () => {
@@ -601,6 +605,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           await playerRef.current?.activateElement?.();
         }
 
+        const ready = await ensureActiveDevice(currentDevice as string, token, true);
+        if (!ready) {
+          setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+          return;
+        }
+
         try {
           const res = await fetch(
             `https://api.spotify.com/v1/me/player/shuffle?state=${
@@ -614,15 +624,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           if (applyRateLimit(res)) return;
           if (res.ok) {
             lastShuffleSyncRef.current = Date.now();
+            const confirmed = await confirmShuffle(token);
+            if (typeof confirmed === "boolean") {
+              setShuffleOn(confirmed);
+            }
           }
         } catch {
           // ignore
-        }
-
-        const ready = await ensureActiveDevice(currentDevice as string, token, true);
-        if (!ready) {
-          setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-          return;
         }
 
         const body = {

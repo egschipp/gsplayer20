@@ -34,7 +34,7 @@ export default function MainNav() {
           className={`nav-link${isStatus ? " active" : " secondary"}`}
           aria-current={isStatus ? "page" : undefined}
         >
-          Account
+          Settings
         </Link>
       </div>
       <div className="nav-right">

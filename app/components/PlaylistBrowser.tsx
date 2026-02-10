@@ -57,10 +57,12 @@ export default function PlaylistBrowser() {
   const MAX_PLAYLIST_CHIPS = 2;
   const [listHeight, setListHeight] = useState(560);
   const ROW_HEIGHT = 96;
-  const allPlaylistNames = useMemo(
-    () => playlistOptions.map((pl) => pl.name || "Untitled playlist"),
-    [playlistOptions]
-  );
+  const allPlaylistNames = useMemo(() => {
+    const emojiStart = /^\s*\p{Extended_Pictographic}/u;
+    return playlistOptions
+      .map((pl) => pl.name || "Untitled playlist")
+      .filter((name) => emojiStart.test(name));
+  }, [playlistOptions]);
 
   useEffect(() => {
     function handleResize() {

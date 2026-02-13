@@ -1,5 +1,6 @@
 import NextAuth from "next-auth";
 import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { getAuthOptions } from "@/lib/auth/options";
 import {
   cookieFlags,
@@ -16,6 +17,30 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 async function authHandler(req: NextRequest) {
+  if (!process.env.NEXTAUTH_URL) {
+    process.env.NEXTAUTH_URL =
+      process.env.AUTH_URL || new URL(req.url).origin;
+  }
+  const missing: string[] = [];
+  if (!process.env.SPOTIFY_CLIENT_ID) missing.push("SPOTIFY_CLIENT_ID");
+  if (!process.env.SPOTIFY_CLIENT_SECRET) missing.push("SPOTIFY_CLIENT_SECRET");
+  if (!process.env.AUTH_SECRET && !process.env.NEXTAUTH_SECRET) {
+    missing.push("AUTH_SECRET|NEXTAUTH_SECRET");
+  }
+  if (missing.length) {
+    const message = `AUTH_MISCONFIGURED: ${missing.join(", ")}`;
+    if (isAuthLogEnabled()) {
+      logAuthEvent({
+        level: "error",
+        event: "nextauth_env_missing",
+        route: "/api/auth/[...nextauth]",
+        method: req.method,
+        url: req.nextUrl.toString(),
+        data: { missing },
+      });
+    }
+    return NextResponse.json({ error: message }, { status: 503 });
+  }
   const handler = NextAuth(getAuthOptions());
   if (isAuthLogEnabled()) {
     const url = req.nextUrl.toString();
@@ -42,7 +67,24 @@ async function authHandler(req: NextRequest) {
       },
     });
   }
-  return handler(req as any);
+  try {
+    return handler(req as any);
+  } catch (error) {
+    if (isAuthLogEnabled()) {
+      logAuthEvent({
+        level: "error",
+        event: "nextauth_handler_error",
+        route: "/api/auth/[...nextauth]",
+        method: req.method,
+        url: req.nextUrl.toString(),
+        data: { message: (error as Error)?.message ?? "Unknown error" },
+      });
+    }
+    return NextResponse.json(
+      { error: "NEXTAUTH_HANDLER_FAILED" },
+      { status: 500 }
+    );
+  }
 }
 
 export { authHandler as GET, authHandler as POST };

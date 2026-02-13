@@ -16,7 +16,12 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function authHandler(req: NextRequest) {
+type AuthRouteContext = {
+  params: Promise<{ nextauth: string[] }>;
+};
+
+async function authHandler(req: NextRequest, ctx: AuthRouteContext) {
+  const params = await ctx.params;
   if (!process.env.NEXTAUTH_URL) {
     process.env.NEXTAUTH_URL =
       process.env.AUTH_URL || new URL(req.url).origin;
@@ -68,7 +73,7 @@ async function authHandler(req: NextRequest) {
     });
   }
   try {
-    return handler(req as any);
+    return handler(req as any, { params } as any);
   } catch (error) {
     if (isAuthLogEnabled()) {
       logAuthEvent({

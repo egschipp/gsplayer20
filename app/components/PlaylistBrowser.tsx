@@ -74,6 +74,50 @@ export default function PlaylistBrowser() {
       .filter((name) => emojiStart.test(name));
   }, [playlistOptions]);
 
+  function formatTrackMeta(meta: {
+    id?: string | null;
+    name?: string | null;
+    artistIds?: string[];
+    artistNames?: string[];
+    albumId?: string | null;
+    albumReleaseDate?: string | null;
+    durationMs?: number | null;
+    isrc?: string | null;
+    explicit?: boolean | number | null;
+    popularity?: number | null;
+  }) {
+    const explicitValue =
+      meta.explicit === true || meta.explicit === 1
+        ? "ja"
+        : meta.explicit === false || meta.explicit === 0
+        ? "nee"
+        : "Onbekend";
+    const popularityValue =
+      meta.popularity === null || meta.popularity === undefined
+        ? "Onbekend"
+        : String(meta.popularity);
+    return [
+      `Primaire verificatie-ID: ${meta.id ?? "Onbekend"}`,
+      `Tracknaam validatie: ${meta.name ?? "Onbekend"}`,
+      `Unieke artiest-ID validatie: ${
+        meta.artistIds?.length ? meta.artistIds.join(", ") : "Onbekend"
+      }`,
+      `Cross-check met verwachte artiest: ${
+        meta.artistNames?.length ? meta.artistNames.join(", ") : "Onbekend"
+      }`,
+      `Albumvalidatie: ${meta.albumId ?? "Onbekend"}`,
+      `Chronologische verificatie: ${meta.albumReleaseDate ?? "Onbekend"}`,
+      `Exacte technische verificatie: ${
+        meta.durationMs === null || meta.durationMs === undefined
+          ? "Onbekend"
+          : `${meta.durationMs}`
+      }`,
+      `Sterke unieke identificator (indien aanwezig): ${meta.isrc ?? "Onbekend"}`,
+      `Consistentiecontrole: ${explicitValue}`,
+      `Plausibiliteitscontrole: ${popularityValue}`,
+    ].join("\n");
+  }
+
   useEffect(() => {
     function handleResize() {
       if (typeof window === "undefined") return;
@@ -1552,6 +1596,20 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
               track.trackId ? `https://open.spotify.com/track/${track.trackId}` : null
             }
             playlistNames={data.allPlaylistNames}
+            trackMeta={formatTrackMeta({
+              id: track.trackId ?? null,
+              name: track.name ?? null,
+              artistNames: track.artists
+                ? dedupeArtistText(track.artists)
+                    ?.split(",")
+                    .map((value) => value.trim())
+                    .filter(Boolean)
+                : undefined,
+              albumId: track.albumId ?? null,
+              durationMs: track.durationMs ?? null,
+              explicit: track.explicit ?? null,
+              popularity: track.popularity ?? null,
+            })}
           />
           {track.trackId ? (
             <a
@@ -1683,6 +1741,16 @@ function TrackItemRenderer({
           <ChatGptButton
             trackUrl={track.id ? `https://open.spotify.com/track/${track.id}` : null}
             playlistNames={data.allPlaylistNames}
+            trackMeta={formatTrackMeta({
+              id: track.id ?? track.trackId ?? null,
+              name: track.name ?? null,
+              artistIds: track.artists?.map((artist) => artist.id).filter(Boolean),
+              artistNames: track.artists?.map((artist) => artist.name).filter(Boolean),
+              albumId: track.album?.id ?? null,
+              durationMs: track.durationMs ?? null,
+              explicit: track.explicit ?? null,
+              popularity: track.popularity ?? null,
+            })}
           />
           <a
             href={`https://open.spotify.com/track/${track.id}`}

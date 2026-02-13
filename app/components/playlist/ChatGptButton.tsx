@@ -9,11 +9,13 @@ import {
 type ChatGptButtonProps = {
   trackUrl: string | null;
   playlistNames: string[];
+  trackMeta?: string;
 };
 
 export default function ChatGptButton({
   trackUrl,
   playlistNames,
+  trackMeta,
 }: ChatGptButtonProps) {
   async function handleClick(event: React.MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
@@ -22,7 +24,7 @@ export default function ChatGptButton({
       const stored = window.localStorage.getItem("gs_chatgpt_prompt");
       if (stored) template = normalizePromptTemplate(stored);
     }
-    const prompt = fillChatGptPrompt(template, trackUrl, playlistNames);
+    const prompt = fillChatGptPrompt(template, trackUrl, playlistNames, trackMeta);
     if (navigator.clipboard?.writeText) {
       try {
         await navigator.clipboard.writeText(prompt);

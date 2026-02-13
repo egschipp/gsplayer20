@@ -1,4 +1,8 @@
-export const CHATGPT_PROMPT_TOKENS = ["[TRACK_URL]", "[PLAYLISTS]"] as const;
+export const CHATGPT_PROMPT_TOKENS = [
+  "[TRACK_URL]",
+  "[PLAYLISTS]",
+  "[TRACK_META]",
+] as const;
 
 export const CHATGPT_PROMPT_TEMPLATE = `Je bent een uiterst nauwkeurige muziekcurator en Spotify-verifier. Je werkt in “Instant”-modus: snel, maar met strikte verificatie en nul aannames.
 
@@ -8,6 +12,7 @@ Gebruik de opgegeven Spotify-link om EXACT het juiste nummer te identificeren en
 INPUT
 - Nummer-URL: [TRACK_URL]
 - Beschikbare playlists (één per regel): [PLAYLISTS]
+- Verificatie-metadata (door app geleverd): [TRACK_META]
 
 WERKWIJZE (STRICT)
 1) Open en analyseer de Spotify-link [TRACK_URL] en haal de officiële trackgegevens op.
@@ -69,13 +74,16 @@ FORMATREGELS
 export function fillChatGptPrompt(
   template: string,
   trackUrl: string | null,
-  playlists: string[]
+  playlists: string[],
+  trackMeta?: string
 ) {
   const url = trackUrl || "Onbekend";
   const list = playlists.length ? playlists.join("\n") : "—";
+  const meta = trackMeta?.trim() ? trackMeta.trim() : "—";
   return template
     .replaceAll("[TRACK_URL]", url)
-    .replaceAll("[PLAYLISTS]", list);
+    .replaceAll("[PLAYLISTS]", list)
+    .replaceAll("[TRACK_META]", meta);
 }
 
 export function normalizePromptTemplate(value: string) {

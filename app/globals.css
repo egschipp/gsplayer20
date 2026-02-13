@@ -749,6 +749,11 @@ details[open] > .details-summary::after {
     0 0 16px rgba(29, 185, 84, 0.45);
 }
 
+.shuffle-btn.pending {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
 .table-header {
   background: rgba(42, 42, 42, 0.8);
   text-transform: uppercase;

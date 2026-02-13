@@ -112,6 +112,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const queuePosRef = useRef(0);
   const queueModeRef = useRef<"queue" | "context" | null>(null);
   const [deviceReady, setDeviceReady] = useState(false);
+  const [shufflePending, setShufflePending] = useState(false);
+  const shuffleOnRef = useRef(shuffleOn);
+  const shufflePendingRef = useRef(false);
   const { enqueue: enqueueCommand, busy: commandBusy } = usePlaybackCommandQueue();
   const lastCommandAtRef = useRef(0);
   const playbackRecoveryRef = useRef(false);
@@ -150,6 +153,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   useEffect(() => {
     playerStateRef.current = playerState;
   }, [playerState]);
+
+  useEffect(() => {
+    shuffleOnRef.current = shuffleOn;
+  }, [shuffleOn]);
 
   function applyRateLimit(res: Response) {
     if (res.status !== 429) return false;
@@ -190,8 +197,35 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     targetId: string,
     token: string,
     shouldPlay = false,
-    enforceShuffle = true
+    enforceShuffle = true,
+    desiredShuffleState?: boolean
   ) {
+    const shuffleStateToApply = desiredShuffleState ?? shuffleOnRef.current;
+    try {
+      const currentRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
+      if (currentRes?.ok) {
+        const current = await currentRes.json();
+        if (current?.device?.id === targetId) {
+          setDeviceReady(true);
+          if (enforceShuffle) {
+            try {
+              await spotifyApiFetch(
+                `https://api.spotify.com/v1/me/player/shuffle?state=${
+                  shuffleStateToApply ? "true" : "false"
+                }&device_id=${targetId}`,
+                { method: "PUT" }
+              );
+            } catch {
+              // ignore
+            }
+          }
+          return true;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
     await transferPlayback(targetId, shouldPlay);
     const delays = [250, 500, 900, 1400, 2000];
     for (let attempt = 0; attempt < delays.length; attempt += 1) {
@@ -206,7 +240,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               try {
                 await spotifyApiFetch(
                   `https://api.spotify.com/v1/me/player/shuffle?state=${
-                    shuffleOn ? "true" : "false"
+                    shuffleStateToApply ? "true" : "false"
                   }&device_id=${targetId}`,
                   { method: "PUT" }
                 );
@@ -226,7 +260,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     return false;
   }
 
-  async function confirmShuffle(token: string) {
+  async function confirmShuffle() {
     try {
       const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
       if (res?.ok) {
@@ -259,6 +293,26 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     }
     return [startIndex, ...rest];
   }
+
+  function rebuildQueueOrder(nextShuffle: boolean) {
+    if (queueModeRef.current !== "queue" || !queueUrisRef.current?.length) return;
+    const uris = queueUrisRef.current;
+    const activeTrackId = pendingTrackIdRef.current || lastTrackIdRef.current;
+    const currentIndex = getIndexFromTrackId(uris, activeTrackId);
+    const startIndex = currentIndex >= 0 ? currentIndex : queueIndexRef.current;
+    queueIndexRef.current = Math.max(0, startIndex);
+    if (nextShuffle) {
+      queueOrderRef.current = buildShuffleOrder(uris.length, queueIndexRef.current);
+      queuePosRef.current = 0;
+    } else {
+      queueOrderRef.current = null;
+      queuePosRef.current = queueIndexRef.current;
+    }
+  }
+
+  useEffect(() => {
+    rebuildQueueOrder(shuffleOn);
+  }, [shuffleOn]);
 
   async function playUrisAtIndex(
     uris: string[],
@@ -721,13 +775,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             offset: offsetUri ? { uri: offsetUri } : undefined,
             position_ms: 0,
           };
+          const useShuffle = shuffleOnRef.current;
           queueModeRef.current = "queue";
           queueUrisRef.current = uris;
           const startIndex = offsetUri
             ? Math.max(0, uris.indexOf(offsetUri))
             : Math.max(0, getIndexFromTrackId(uris, pendingTrackIdRef.current));
           queueIndexRef.current = startIndex;
-          if (shuffleOn) {
+          if (useShuffle) {
             queueOrderRef.current = buildShuffleOrder(uris.length, startIndex);
             queuePosRef.current = 0;
           } else {
@@ -742,21 +797,21 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
 
           try {
-            const forceShuffleOff = Boolean(offsetUri);
-            const desiredShuffle = forceShuffleOff ? false : shuffleOn;
             const res = await spotifyApiFetch(
               `https://api.spotify.com/v1/me/player/shuffle?state=${
-                desiredShuffle ? "true" : "false"
+                useShuffle ? "true" : "false"
               }&device_id=${currentDevice}`,
               { method: "PUT" }
             );
             if (res?.ok) {
-              if (forceShuffleOff && shuffleOn) {
-                setShuffleOn(false);
+              lastShuffleSyncRef.current = Date.now();
+              const confirmed = await confirmShuffle();
+              if (typeof confirmed === "boolean") {
+                shuffleOnRef.current = confirmed;
+                setShuffleOn(confirmed);
               } else {
-                lastShuffleSyncRef.current = Date.now();
-                const confirmed = await confirmShuffle(token);
-                if (typeof confirmed === "boolean") setShuffleOn(confirmed);
+                shuffleOnRef.current = useShuffle;
+                setShuffleOn(useShuffle);
               }
             }
           } catch {
@@ -839,22 +894,22 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
 
           try {
-            const forceShuffleOff =
-              Boolean(offsetUri) || typeof offsetPosition === "number";
-            const desiredShuffle = forceShuffleOff ? false : shuffleOn;
+            const useShuffle = shuffleOnRef.current;
             const res = await spotifyApiFetch(
               `https://api.spotify.com/v1/me/player/shuffle?state=${
-                desiredShuffle ? "true" : "false"
+                useShuffle ? "true" : "false"
               }&device_id=${currentDevice}`,
               { method: "PUT" }
             );
             if (res?.ok) {
-              if (forceShuffleOff && shuffleOn) {
-                setShuffleOn(false);
+              lastShuffleSyncRef.current = Date.now();
+              const confirmed = await confirmShuffle();
+              if (typeof confirmed === "boolean") {
+                shuffleOnRef.current = confirmed;
+                setShuffleOn(confirmed);
               } else {
-                lastShuffleSyncRef.current = Date.now();
-                const confirmed = await confirmShuffle(token);
-                if (typeof confirmed === "boolean") setShuffleOn(confirmed);
+                shuffleOnRef.current = useShuffle;
+                setShuffleOn(useShuffle);
               }
             }
           } catch {
@@ -1214,33 +1269,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
     await enqueuePlaybackCommand(async () => {
-      if (currentDevice === sdkDeviceIdRef.current) {
-        const nextTrack = lastSdkStateRef.current?.track_window?.next_tracks?.[0];
-        if (nextTrack) {
-          setOptimisticTrack({
-            name: nextTrack.name ?? "Unknown track",
-            artists: (nextTrack.artists ?? [])
-              .map((a: any) => a.name)
-              .join(", "),
-            album: nextTrack.album?.name ?? "",
-            coverUrl: nextTrack.album?.images?.[0]?.url ?? null,
-          });
-        }
-        await playerRef.current?.nextTrack?.();
-        setTimeout(async () => {
-          const state = await playerRef.current?.getCurrentState?.();
-          if (state) applySdkState(state);
-        }, 150);
-        return;
-      }
-      const ready = await ensureActiveDevice(currentDevice, token, true);
-      if (!ready) {
-        setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-        return;
-      }
       if (queueModeRef.current === "queue" && queueUrisRef.current?.length) {
+        const ready = await ensureActiveDevice(currentDevice, token, true);
+        if (!ready) {
+          setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+          return;
+        }
         const uris = queueUrisRef.current;
-        if (shuffleOn && queueOrderRef.current?.length) {
+        if (shuffleOnRef.current && queueOrderRef.current?.length) {
           queuePosRef.current = Math.min(
             queuePosRef.current + 1,
             queueOrderRef.current.length - 1
@@ -1253,6 +1289,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           queueIndexRef.current = nextIndex;
           await playUrisAtIndex(uris, nextIndex, currentDevice, token);
         }
+        return;
+      }
+      const ready = await ensureActiveDevice(currentDevice, token, true);
+      if (!ready) {
+        setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
         return;
       }
       await spotifyApiFetch(
@@ -1270,23 +1311,23 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
     await enqueuePlaybackCommand(async () => {
-      if (currentDevice === sdkDeviceIdRef.current) {
-        const prevTrack = lastSdkStateRef.current?.track_window?.previous_tracks?.[0];
-        if (prevTrack) {
-          setOptimisticTrack({
-            name: prevTrack.name ?? "Unknown track",
-            artists: (prevTrack.artists ?? [])
-              .map((a: any) => a.name)
-              .join(", "),
-            album: prevTrack.album?.name ?? "",
-            coverUrl: prevTrack.album?.images?.[0]?.url ?? null,
-          });
+      if (queueModeRef.current === "queue" && queueUrisRef.current?.length) {
+        const ready = await ensureActiveDevice(currentDevice, token, true);
+        if (!ready) {
+          setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+          return;
         }
-        await playerRef.current?.previousTrack?.();
-        setTimeout(async () => {
-          const state = await playerRef.current?.getCurrentState?.();
-          if (state) applySdkState(state);
-        }, 150);
+        const uris = queueUrisRef.current;
+        if (shuffleOnRef.current && queueOrderRef.current?.length) {
+          queuePosRef.current = Math.max(queuePosRef.current - 1, 0);
+          const prevIndex = queueOrderRef.current[queuePosRef.current];
+          queueIndexRef.current = prevIndex;
+          await playUrisAtIndex(uris, prevIndex, currentDevice, token);
+        } else {
+          const prevIndex = Math.max(queueIndexRef.current - 1, 0);
+          queueIndexRef.current = prevIndex;
+          await playUrisAtIndex(uris, prevIndex, currentDevice, token);
+        }
         return;
       }
       const ready = await ensureActiveDevice(currentDevice, token, true);
@@ -1305,57 +1346,61 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
-    if (!token || !currentDevice) return;
+    if (!token || !currentDevice || shufflePendingRef.current) return;
     if (Date.now() < rateLimitRef.current.until) return;
     await enqueuePlaybackCommand(async () => {
-      const ready = await ensureActiveDevice(currentDevice, token, false, false);
-      if (!ready) {
-        setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-        return;
-      }
-      let current = shuffleOn;
+      if (shufflePendingRef.current) return;
+      shufflePendingRef.current = true;
+      setShufflePending(true);
       try {
-        const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
-        if (res?.ok) {
-          const data = await res.json();
-          if (typeof data?.shuffle_state === "boolean") {
-            current = data.shuffle_state;
-            setShuffleOn(current);
-            lastShuffleSyncRef.current = Date.now();
+        const ready = await ensureActiveDevice(currentDevice, token, false, false);
+        if (!ready) {
+          setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+          return;
+        }
+        let current = shuffleOnRef.current;
+        try {
+          const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
+          if (res?.ok) {
+            const data = await res.json();
+            if (typeof data?.shuffle_state === "boolean") {
+              current = data.shuffle_state;
+            }
           }
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
-      }
-      const next = !current;
-      setShuffleOn(next);
-      lastShuffleSyncRef.current = Date.now();
-      if (queueModeRef.current === "queue" && queueUrisRef.current?.length) {
-        const uris = queueUrisRef.current;
-        const currentIndex = getIndexFromTrackId(uris, pendingTrackIdRef.current);
-        const startIndex = currentIndex >= 0 ? currentIndex : queueIndexRef.current;
-        queueIndexRef.current = startIndex;
-        if (next) {
-          queueOrderRef.current = buildShuffleOrder(uris.length, startIndex);
-          queuePosRef.current = 0;
+        const next = !current;
+        const updateRes = await spotifyApiFetch(
+          `https://api.spotify.com/v1/me/player/shuffle?state=${
+            next ? "true" : "false"
+          }&device_id=${currentDevice}`,
+          { method: "PUT" }
+        );
+        if (!updateRes?.ok) {
+          setError("Shuffle wijzigen lukt nu niet. Probeer opnieuw.");
+          return;
+        }
+        const confirmed = await confirmShuffle();
+        if (typeof confirmed === "boolean") {
+          shuffleOnRef.current = confirmed;
+          setShuffleOn(confirmed);
+          lastShuffleSyncRef.current = Date.now();
+          rebuildQueueOrder(confirmed);
         } else {
-          queueOrderRef.current = null;
-          queuePosRef.current = startIndex;
+          // Endpoint succeeded but readback can lag briefly on Connect devices.
+          shuffleOnRef.current = next;
+          setShuffleOn(next);
+          lastShuffleSyncRef.current = Date.now();
+          rebuildQueueOrder(next);
+          setTimeout(() => {
+            syncPlaybackState().catch(() => undefined);
+          }, 700);
         }
-      }
-      await spotifyApiFetch(
-        `https://api.spotify.com/v1/me/player/shuffle?state=${
-          next ? "true" : "false"
-        }&device_id=${currentDevice}`,
-        { method: "PUT" }
-      );
-      const confirmed = await confirmShuffle(token);
-      if (typeof confirmed === "boolean") {
-        setShuffleOn(confirmed);
-        lastShuffleSyncRef.current = Date.now();
-      } else {
-        setShuffleOn(next);
-        lastShuffleSyncRef.current = Date.now();
+        setError(null);
+      } finally {
+        shufflePendingRef.current = false;
+        setShufflePending(false);
       }
     });
   }
@@ -1581,13 +1626,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           <div
             className={`player-control player-control-ghost player-control-grad shuffle-btn${
               shuffleOn ? " active" : ""
-            }`}
+            }${shufflePending ? " pending" : ""}`}
             role="button"
-            tabIndex={0}
+            tabIndex={shufflePending ? -1 : 0}
+            aria-disabled={shufflePending}
+            aria-busy={shufflePending}
             aria-label={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
             title={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
-            onClick={handleToggleShuffle}
+            onClick={() => {
+              if (!shufflePending) handleToggleShuffle();
+            }}
             onKeyDown={(event) => {
+              if (shufflePending) return;
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
                 handleToggleShuffle();

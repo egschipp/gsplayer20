@@ -70,6 +70,7 @@ export default function PlaylistBrowser() {
   const [listHeight, setListHeight] = useState(560);
   const ROW_HEIGHT = 64;
   const hydratedSelectionRef = useRef(false);
+  const skipModeResetRef = useRef(true);
   const allPlaylistNames = useMemo(() => {
     const emojiStart = /^\s*\p{Extended_Pictographic}/u;
     return playlistOptions
@@ -94,6 +95,7 @@ export default function PlaylistBrowser() {
     const stored = window.localStorage.getItem("gs_playlist_selection");
     if (!stored) {
       hydratedSelectionRef.current = true;
+      skipModeResetRef.current = false;
       return;
     }
     try {
@@ -111,6 +113,7 @@ export default function PlaylistBrowser() {
       // ignore
     } finally {
       hydratedSelectionRef.current = true;
+      skipModeResetRef.current = false;
     }
   }, []);
 
@@ -403,6 +406,7 @@ export default function PlaylistBrowser() {
   }, [sortedPlaylists, artistOptions, trackOptions, debouncedQuery, mode]);
 
   useEffect(() => {
+    if (skipModeResetRef.current) return;
     setOpen(false);
     setQuery("");
     setDebouncedQuery("");

@@ -71,6 +71,12 @@ export default function PlaylistBrowser() {
   const ROW_HEIGHT = 64;
   const hydratedSelectionRef = useRef(false);
   const skipModeResetRef = useRef(true);
+  const [tracksContextKey, setTracksContextKey] = useState<string | null>(null);
+  const [cacheHydrated, setCacheHydrated] = useState(false);
+  const hasCachedPlaylistsRef = useRef(false);
+  const hasCachedArtistsRef = useRef(false);
+  const hasCachedTrackOptionsRef = useRef(false);
+  const CACHE_KEY = "gs_library_cache_v1";
   const allPlaylistNames = useMemo(() => {
     const emojiStart = /^\s*\p{Extended_Pictographic}/u;
     return playlistOptions
@@ -119,6 +125,98 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const raw = window.sessionStorage.getItem(CACHE_KEY);
+    try {
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        playlistOptions?: PlaylistOption[];
+        artistOptions?: ArtistOption[];
+        trackOptions?: TrackOption[];
+        trackItems?: TrackItem[];
+        tracks?: TrackRow[];
+        nextCursor?: string | null;
+        playlistCursor?: string | null;
+        artistCursor?: string | null;
+        trackCursor?: string | null;
+        tracksContextKey?: string | null;
+      };
+      if (Array.isArray(parsed.playlistOptions)) {
+        hasCachedPlaylistsRef.current = parsed.playlistOptions.length > 0;
+        setPlaylistOptions(parsed.playlistOptions);
+        setLoadingPlaylists(false);
+      }
+      if (Array.isArray(parsed.artistOptions)) {
+        hasCachedArtistsRef.current = parsed.artistOptions.length > 0;
+        setArtistOptions(parsed.artistOptions);
+        setLoadingArtists(false);
+      }
+      if (Array.isArray(parsed.trackOptions)) {
+        hasCachedTrackOptionsRef.current = parsed.trackOptions.length > 0;
+        setTrackOptions(parsed.trackOptions);
+        setLoadingTracksList(false);
+      }
+      if (Array.isArray(parsed.trackItems)) setTrackItems(parsed.trackItems);
+      if (Array.isArray(parsed.tracks)) setTracks(parsed.tracks);
+      if (typeof parsed.nextCursor === "string" || parsed.nextCursor === null) {
+        setNextCursor(parsed.nextCursor ?? null);
+      }
+      if (
+        typeof parsed.playlistCursor === "string" ||
+        parsed.playlistCursor === null
+      ) {
+        setPlaylistCursor(parsed.playlistCursor ?? null);
+      }
+      if (typeof parsed.artistCursor === "string" || parsed.artistCursor === null) {
+        setArtistCursor(parsed.artistCursor ?? null);
+      }
+      if (typeof parsed.trackCursor === "string" || parsed.trackCursor === null) {
+        setTrackCursor(parsed.trackCursor ?? null);
+      }
+      if (
+        typeof parsed.tracksContextKey === "string" ||
+        parsed.tracksContextKey === null
+      ) {
+        setTracksContextKey(parsed.tracksContextKey ?? null);
+      }
+    } catch {
+      // ignore invalid cache
+    } finally {
+      setCacheHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!cacheHydrated) return;
+    const payload = {
+      playlistOptions,
+      artistOptions,
+      trackOptions,
+      trackItems,
+      tracks,
+      nextCursor,
+      playlistCursor,
+      artistCursor,
+      trackCursor,
+      tracksContextKey,
+    };
+    window.sessionStorage.setItem(CACHE_KEY, JSON.stringify(payload));
+  }, [
+    artistCursor,
+    artistOptions,
+    cacheHydrated,
+    nextCursor,
+    playlistCursor,
+    playlistOptions,
+    trackCursor,
+    trackItems,
+    trackOptions,
+    tracks,
+    tracksContextKey,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     const payload = JSON.stringify({
       mode,
       playlistId: selectedPlaylistId,
@@ -131,6 +229,10 @@ export default function PlaylistBrowser() {
   useEffect(() => {
     let cancelled = false;
     async function loadPlaylists() {
+      if (hasCachedPlaylistsRef.current) {
+        setLoadingPlaylists(false);
+        return;
+      }
       setLoadingPlaylists(true);
       setError(null);
       setAuthRequired(false);
@@ -197,14 +299,18 @@ export default function PlaylistBrowser() {
   }, []);
 
   useEffect(() => {
-    if (!selectedPlaylistId) return;
+    if (!selectedPlaylistId || loadingPlaylists) return;
     const exists = playlistOptions.some((option) => option.id === selectedPlaylistId);
     if (!exists) setSelectedPlaylistId("");
-  }, [playlistOptions, selectedPlaylistId]);
+  }, [loadingPlaylists, playlistOptions, selectedPlaylistId]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadArtists() {
+      if (hasCachedArtistsRef.current) {
+        setLoadingArtists(false);
+        return;
+      }
       setLoadingArtists(true);
       try {
         const url = new URL("/api/spotify/artists", window.location.origin);
@@ -247,14 +353,18 @@ export default function PlaylistBrowser() {
   }, []);
 
   useEffect(() => {
-    if (!selectedArtistId) return;
+    if (!selectedArtistId || loadingArtists) return;
     const exists = artistOptions.some((option) => option.id === selectedArtistId);
     if (!exists) setSelectedArtistId("");
-  }, [artistOptions, selectedArtistId]);
+  }, [artistOptions, loadingArtists, selectedArtistId]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadTracksList() {
+      if (hasCachedTrackOptionsRef.current) {
+        setLoadingTracksList(false);
+        return;
+      }
       setLoadingTracksList(true);
       try {
         const url = new URL("/api/spotify/tracks", window.location.origin);
@@ -352,10 +462,10 @@ export default function PlaylistBrowser() {
   }, []);
 
   useEffect(() => {
-    if (!selectedTrackId) return;
+    if (!selectedTrackId || loadingTracksList) return;
     const exists = trackOptions.some((option) => option.id === selectedTrackId);
     if (!exists) setSelectedTrackId("");
-  }, [trackOptions, selectedTrackId]);
+  }, [loadingTracksList, trackOptions, selectedTrackId]);
 
   const selectedPlaylist = useMemo(() => {
     if (!selectedPlaylistId) return null;
@@ -756,6 +866,16 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     let cancelled = false;
+    const nextContextKey =
+      mode === "playlists"
+        ? selectedPlaylist?.id
+          ? `playlist:${selectedPlaylist.type}:${selectedPlaylist.id}`
+          : null
+        : mode === "artists"
+        ? selectedArtist?.id
+          ? `artist:${selectedArtist.id}`
+          : null
+        : null;
     async function loadTracks() {
       setLoadingTracks(true);
       setError(null);
@@ -782,6 +902,7 @@ export default function PlaylistBrowser() {
         if (!cancelled) {
           setTracks(items);
           setNextCursor(data.nextCursor ?? null);
+          if (nextContextKey) setTracksContextKey(nextContextKey);
         }
       } catch {
         if (!cancelled) setError("Tracks laden lukt nu niet.");
@@ -796,14 +917,34 @@ export default function PlaylistBrowser() {
 
     if (mode === "playlists" && !selectedPlaylist?.id) return;
 
-    setTracks([]);
-    setNextCursor(null);
+    const contextChanged = nextContextKey !== tracksContextKey;
+    const hasCachedTracksForContext = Boolean(
+      nextContextKey &&
+        nextContextKey === tracksContextKey &&
+        tracks.length > 0
+    );
+    if (!contextChanged && hasCachedTracksForContext) {
+      setLoadingTracks(false);
+      return;
+    }
+    if (contextChanged) {
+      setTracks([]);
+      setNextCursor(null);
+      setTracksContextKey(nextContextKey);
+    }
     loadTracks();
 
     return () => {
       cancelled = true;
     };
-  }, [mode, selectedPlaylist?.id, selectedPlaylist?.type, selectedArtist?.id]);
+  }, [
+    mode,
+    selectedPlaylist?.id,
+    selectedPlaylist?.type,
+    selectedArtist?.id,
+    tracks.length,
+    tracksContextKey,
+  ]);
 
   async function loadMore() {
     if (!nextCursor || loadingMoreTracksRef.current) return;

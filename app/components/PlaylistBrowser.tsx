@@ -203,7 +203,13 @@ export default function PlaylistBrowser() {
           id: String(track.id ?? track.trackId ?? ""),
           trackId: track.trackId ?? null,
           name: String(track.name ?? ""),
-          artists: Array.isArray(track.artists) ? track.artists : [],
+          artists: Array.isArray(track.artists)
+            ? track.artists
+                .filter((artist): artist is { id: string; name: string } => {
+                  return Boolean(artist?.id && artist?.name);
+                })
+                .map((artist) => ({ id: artist.id, name: artist.name }))
+            : [],
           album: track.album ?? { id: null, name: null, images: [] },
           durationMs: track.durationMs ?? null,
           explicit: track.explicit ?? null,
@@ -410,7 +416,13 @@ export default function PlaylistBrowser() {
         id: String(track.id ?? track.trackId ?? ""),
         trackId: track.trackId ?? null,
         name: String(track.name ?? ""),
-        artists: Array.isArray(track.artists) ? track.artists : [],
+        artists: Array.isArray(track.artists)
+          ? track.artists
+              .filter((artist): artist is { id: string; name: string } => {
+                return Boolean(artist?.id && artist?.name);
+              })
+              .map((artist) => ({ id: artist.id, name: artist.name }))
+          : [],
         album: track.album ?? { id: null, name: null, images: [] },
         durationMs: track.durationMs ?? null,
         explicit: track.explicit ?? null,

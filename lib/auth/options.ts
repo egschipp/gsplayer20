@@ -12,6 +12,9 @@ import {
 import { endAuthLog, logAuthEvent } from "@/lib/auth/authLog";
 
 export function getAuthOptions(): NextAuthOptions {
+  if (!process.env.NEXTAUTH_URL && process.env.AUTH_URL) {
+    process.env.NEXTAUTH_URL = process.env.AUTH_URL;
+  }
   return {
     secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
     session: { strategy: "jwt" },

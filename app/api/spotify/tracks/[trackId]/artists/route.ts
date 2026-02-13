@@ -84,7 +84,7 @@ export async function GET(
       }
       for (let i = 0; i < ids.length; i += 50) {
         const batch = ids.slice(i, i + 50);
-        const data = await spotifyFetch({
+        const data = await spotifyFetch<{ artists?: { id?: string; genres?: string[]; popularity?: number }[] }>({
           url: `https://api.spotify.com/v1/artists?ids=${batch.join(",")}`,
           userLevel: false,
         });

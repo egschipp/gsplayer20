@@ -1,31 +1,29 @@
-import type { NextApiRequest, NextApiResponse } from "next";
 import NextAuth from "next-auth";
+import type { NextRequest } from "next/server";
 import { getAuthOptions } from "@/lib/auth/options";
 import {
   cookieFlags,
   cookieHashes,
   cookieKeys,
   isAuthLogActive,
+  isAuthLogEnabled,
   logAuthEvent,
   redactHeaders,
   startAuthLog,
 } from "@/lib/auth/authLog";
 
-export default async function authHandler(req: NextApiRequest, res: NextApiResponse) {
-  const url = req.url ?? "";
-  if (url.startsWith("/api/auth/")) {
+const handler = NextAuth(getAuthOptions());
+
+async function authHandler(req: NextRequest) {
+  if (isAuthLogEnabled()) {
+    const url = req.nextUrl.toString();
     const isLoginRelated =
       url.includes("/signin") || url.includes("/callback") || url.includes("/error");
     if (isLoginRelated && !isAuthLogActive()) {
       startAuthLog("nextauth_request", { url });
     }
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(req.headers)) {
-      if (typeof value === "string") headers.set(key, value);
-    }
-    const query = req.query ?? {};
-    const error = typeof query.error === "string" ? query.error : undefined;
-
+    const headers = new Headers(req.headers);
+    const error = req.nextUrl.searchParams.get("error") ?? undefined;
     logAuthEvent({
       level: error ? "error" : "info",
       event: error ? "nextauth_callback_error" : "nextauth_request",
@@ -34,7 +32,7 @@ export default async function authHandler(req: NextApiRequest, res: NextApiRespo
       url,
       errorCode: error,
       data: {
-        query,
+        query: Object.fromEntries(req.nextUrl.searchParams.entries()),
         headers: redactHeaders(headers),
         cookieKeys: cookieKeys(headers),
         cookieFlags: cookieFlags(headers),
@@ -42,5 +40,7 @@ export default async function authHandler(req: NextApiRequest, res: NextApiRespo
       },
     });
   }
-  return NextAuth(req, res, getAuthOptions());
+  return handler(req as any);
 }
+
+export { authHandler as GET, authHandler as POST };

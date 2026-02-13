@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAppAccessToken } from "@/lib/spotify/tokens";
+import { spotifyFetch } from "@/lib/spotify/client";
 import { assertSpotifyEnv } from "@/lib/env";
 import { getRequestIp, rateLimitResponse } from "@/lib/api/guards";
 
@@ -17,27 +17,19 @@ export async function GET(req: Request) {
 
   try {
     assertSpotifyEnv();
-    const token = await getAppAccessToken();
-
-    const res = await fetch(
-      "https://api.spotify.com/v1/search?q=a&type=artist&limit=1",
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
-
-    if (!res.ok) {
-      return NextResponse.json(
-        { status: "ERROR_AUTH", detail: res.status },
-        { status: 401 }
-      );
-    }
-
+    await spotifyFetch({
+      url: "https://api.spotify.com/v1/search?q=a&type=artist&limit=1",
+      userLevel: false,
+    });
     return NextResponse.json({ status: "OK" });
   } catch (error) {
     const message = String(error);
     if (message.includes("Missing environment variable")) {
       return NextResponse.json({ status: "ERROR_MISSING_ENV" }, { status: 500 });
+    }
+
+    if (message.includes("SpotifyFetchError:401")) {
+      return NextResponse.json({ status: "ERROR_AUTH" }, { status: 401 });
     }
 
     return NextResponse.json({ status: "ERROR_NETWORK" }, { status: 502 });

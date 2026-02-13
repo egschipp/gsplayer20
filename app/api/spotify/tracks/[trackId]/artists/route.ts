@@ -7,7 +7,7 @@ import {
   userPlaylists,
 } from "@/lib/db/schema";
 import { and, eq, or } from "drizzle-orm";
-import { getAppAccessToken } from "@/lib/spotify/tokens";
+import { spotifyFetch } from "@/lib/spotify/client";
 import { requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
@@ -78,22 +78,16 @@ export async function GET(
 
   if (missing.length) {
     try {
-      const token = await getAppAccessToken();
       const ids = missing.map((artist) => artist.artistId).filter(Boolean);
       if (!ids.length) {
         return jsonPrivateCache({ items, asOf: Date.now() });
       }
       for (let i = 0; i < ids.length; i += 50) {
         const batch = ids.slice(i, i + 50);
-        const res = await fetch(
-          `https://api.spotify.com/v1/artists?ids=${batch.join(",")}`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-          }
-        );
-        if (res.status === 429) break;
-        if (!res.ok) continue;
-        const data = await res.json();
+        const data = await spotifyFetch({
+          url: `https://api.spotify.com/v1/artists?ids=${batch.join(",")}`,
+          userLevel: false,
+        });
         for (const artist of data.artists || []) {
           if (!artist?.id) continue;
           await db

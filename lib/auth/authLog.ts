@@ -43,6 +43,7 @@ const MASK_KEYS = /state|code_challenge/i;
 const COOKIE_ALLOW_KEYS = new Set(["cookieKeys", "cookieFlags"]);
 const LOG_PATH =
   process.env.AUTH_LOG_PATH || path.join(process.cwd(), ".auth-login.log");
+const AUTH_LOG_ENABLED = process.env.AUTH_LOG_ENABLED === "true";
 
 function sha256(value: string) {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -162,6 +163,9 @@ function flush(entry: AuthLogEntry) {
 }
 
 export function startAuthLog(reason: string, data?: Record<string, unknown>) {
+  if (!AUTH_LOG_ENABLED) {
+    return null;
+  }
   authLogState.runId = crypto.randomUUID();
   authLogState.startedAt = Date.now();
   authLogState.active = true;
@@ -182,6 +186,9 @@ export function startAuthLog(reason: string, data?: Record<string, unknown>) {
 export function logAuthEvent(entry: Omit<AuthLogEntry, "timestamp" | "runId"> & {
   runId?: string;
 }) {
+  if (!AUTH_LOG_ENABLED) {
+    return;
+  }
   if (!authLogState.active && entry.event !== "login_start") {
     return;
   }
@@ -243,4 +250,8 @@ export function clearAuthLog() {
 
 export function isAuthLogActive() {
   return authLogState.active;
+}
+
+export function isAuthLogEnabled() {
+  return AUTH_LOG_ENABLED;
 }

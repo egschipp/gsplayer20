@@ -25,6 +25,7 @@ import {
   formatExplicit,
   formatTimestamp,
 } from "./playlist/utils";
+import { mapSpotifyApiError } from "./playlist/errors";
 
 export default function PlaylistBrowser() {
   const [mode, setMode] = useState<Mode>("playlists");
@@ -39,6 +40,13 @@ export default function PlaylistBrowser() {
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [trackItems, setTrackItems] = useState<TrackItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [playlistCursor, setPlaylistCursor] = useState<string | null>(null);
+  const [artistCursor, setArtistCursor] = useState<string | null>(null);
+  const [trackCursor, setTrackCursor] = useState<string | null>(null);
+  const [loadingMorePlaylists, setLoadingMorePlaylists] = useState(false);
+  const [loadingMoreArtists, setLoadingMoreArtists] = useState(false);
+  const [loadingMoreTracksList, setLoadingMoreTracksList] = useState(false);
+  const [loadingMoreTracks, setLoadingMoreTracks] = useState(false);
   const [loadingPlaylists, setLoadingPlaylists] = useState(true);
   const [loadingArtists, setLoadingArtists] = useState(false);
   const [loadingTracksList, setLoadingTracksList] = useState(false);
@@ -54,6 +62,8 @@ export default function PlaylistBrowser() {
   const [authRequired, setAuthRequired] = useState(false);
   const suppressCloseRef = useRef(false);
   const { api: playerApi, currentTrackId } = usePlayer();
+  const comboListRef = useRef<HTMLDivElement | null>(null);
+  const loadingMoreTracksRef = useRef(false);
   const MAX_PLAYLIST_CHIPS = 2;
   const [listHeight, setListHeight] = useState(560);
   const ROW_HEIGHT = 96;
@@ -82,47 +92,38 @@ export default function PlaylistBrowser() {
       setError(null);
       setAuthRequired(false);
       try {
-        const all: PlaylistOption[] = [];
-        let cursor: string | null = null;
-        do {
-          const url = new URL("/api/spotify/me/playlists", window.location.origin);
-          url.searchParams.set("limit", "50");
-          if (cursor) url.searchParams.set("cursor", cursor);
-          const res = await fetch(url.toString());
-          if (!res.ok) {
-            if (res.status === 401 || res.status === 403) {
-              setAuthRequired(true);
-              setError("Je bent nog niet verbonden met Spotify.");
-            } else if (res.status === 429) {
-              setError("Je hebt even te veel aanvragen gedaan. Probeer het zo opnieuw.");
-            } else {
-              setError("Playlists laden lukt nu niet.");
-            }
-            return;
+        const url = new URL("/api/spotify/me/playlists", window.location.origin);
+        url.searchParams.set("limit", "50");
+        const res = await fetch(url.toString());
+        if (!res.ok) {
+          const mapped = mapSpotifyApiError(res.status, "Playlists laden lukt nu niet.");
+          if (!cancelled) {
+            setAuthRequired(Boolean(mapped.authRequired));
+            setError(mapped.message);
           }
-          const data = await res.json();
-          const items = Array.isArray(data.items) ? data.items : [];
-          all.push(
-            ...items.map(
-              (p: any): PlaylistOption => ({
-                id: p.playlistId,
-                name: p.name,
-                type: "playlist",
-                spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
-              })
-            )
-          );
-          cursor = data.nextCursor ?? null;
-        } while (cursor);
-        const unique = new Map<string, PlaylistOption>();
-        for (const option of all) unique.set(option.id, option);
-        const playlistOptions: PlaylistOption[] = Array.from(unique.values()).sort(
-          (a: PlaylistOption, b: PlaylistOption) =>
-            a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+          return;
+        }
+        const data = (await res.json()) as CursorResponse<PlaylistApiItem>;
+        const items = Array.isArray(data.items) ? data.items : [];
+        const mappedItems = items.map(
+          (p): PlaylistOption => ({
+            id: p.playlistId,
+            name: p.name,
+            type: "playlist",
+            spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
+          })
         );
-        const list: PlaylistOption[] = [LIKED_OPTION, ...playlistOptions];
+        const unique = new Map<string, PlaylistOption>();
+        for (const option of [LIKED_OPTION, ...mappedItems]) {
+          unique.set(option.id, option);
+        }
+        const sorted: PlaylistOption[] = Array.from(unique.values())
+          .filter((item) => item.id !== LIKED_OPTION.id)
+          .sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+        const list: PlaylistOption[] = [LIKED_OPTION, ...sorted];
         if (!cancelled) {
           setPlaylistOptions(list);
+          setPlaylistCursor(data.nextCursor ?? null);
         }
       } catch {
         if (!cancelled) setError("Playlists laden lukt nu niet.");
@@ -141,44 +142,34 @@ export default function PlaylistBrowser() {
     async function loadArtists() {
       setLoadingArtists(true);
       try {
-        const all: ArtistOption[] = [];
-        let cursor: string | null = null;
-        do {
-          const url = new URL("/api/spotify/artists", window.location.origin);
-          url.searchParams.set("limit", "100");
-          if (cursor) url.searchParams.set("cursor", cursor);
-          const res = await fetch(url.toString());
-          if (!res.ok) {
-            if (res.status === 401 || res.status === 403) {
-              setAuthRequired(true);
-              setError("Je bent nog niet verbonden met Spotify.");
-            } else if (res.status === 429) {
-              setError("Je hebt even te veel aanvragen gedaan. Probeer het zo opnieuw.");
-            } else {
-              setError("Artiesten laden lukt nu niet.");
-            }
-            return;
+        const url = new URL("/api/spotify/artists", window.location.origin);
+        url.searchParams.set("limit", "100");
+        const res = await fetch(url.toString());
+        if (!res.ok) {
+          const mapped = mapSpotifyApiError(res.status, "Artiesten laden lukt nu niet.");
+          if (!cancelled) {
+            setAuthRequired(Boolean(mapped.authRequired));
+            setError(mapped.message);
           }
-          const data = await res.json();
-          const items = Array.isArray(data.items) ? data.items : [];
-          all.push(
-            ...items.map(
-              (artist: any): ArtistOption => ({
-                id: artist.artistId,
-                name: artist.name,
-                spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
-              })
-            )
-          );
-          cursor = data.nextCursor ?? null;
-        } while (cursor);
+          return;
+        }
+        const data = (await res.json()) as CursorResponse<ArtistApiItem>;
+        const items = Array.isArray(data.items) ? data.items : [];
+        const mappedItems = items.map(
+          (artist): ArtistOption => ({
+            id: artist.artistId,
+            name: artist.name,
+            spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
+          })
+        );
         const unique = new Map<string, ArtistOption>();
-        for (const option of all) unique.set(option.id, option);
+        for (const option of mappedItems) unique.set(option.id, option);
         const list = Array.from(unique.values()).sort((a, b) =>
           a.name.localeCompare(b.name, "en", { sensitivity: "base" })
         );
         if (!cancelled) {
           setArtistOptions(list);
+          setArtistCursor(data.nextCursor ?? null);
         }
         } finally {
         if (!cancelled) setLoadingArtists(false);
@@ -195,46 +186,33 @@ export default function PlaylistBrowser() {
     async function loadTracksList() {
       setLoadingTracksList(true);
       try {
-        const all: TrackItem[] = [];
-        let cursor: string | null = null;
-        do {
-          const url = new URL("/api/spotify/tracks", window.location.origin);
-          url.searchParams.set("limit", "100");
-          if (cursor) url.searchParams.set("cursor", cursor);
-          const res = await fetch(url.toString());
-          if (!res.ok) {
-            if (res.status === 401 || res.status === 403) {
-              setAuthRequired(true);
-              setError("Je bent nog niet verbonden met Spotify.");
-            } else if (res.status === 429) {
-              setError("Je hebt even te veel aanvragen gedaan. Probeer het zo opnieuw.");
-            } else {
-              setError("Tracks laden lukt nu niet.");
-            }
-            return;
+        const url = new URL("/api/spotify/tracks", window.location.origin);
+        url.searchParams.set("limit", "100");
+        const res = await fetch(url.toString());
+        if (!res.ok) {
+          const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
+          if (!cancelled) {
+            setAuthRequired(Boolean(mapped.authRequired));
+            setError(mapped.message);
           }
-          const data = await res.json();
-          const items = Array.isArray(data.items) ? data.items : [];
-          all.push(
-            ...items.map(
-              (track: any): TrackItem => ({
-                id: String(track.id ?? track.trackId ?? ""),
-                trackId: track.trackId ?? null,
-                name: String(track.name ?? ""),
-                artists: Array.isArray(track.artists) ? track.artists : [],
-                album: track.album ?? { id: null, name: null, images: [] },
-                durationMs: track.durationMs ?? null,
-                explicit: track.explicit ?? null,
-                popularity: track.popularity ?? null,
-                albumImageUrl: track.albumImageUrl ?? null,
-                playlists: Array.isArray(track.playlists) ? track.playlists : [],
-              })
-            )
-          );
-          cursor = data.nextCursor ?? null;
-        } while (cursor);
+          return;
+        }
+        const data = (await res.json()) as CursorResponse<TrackApiItem>;
+        const items = Array.isArray(data.items) ? data.items : [];
+        const mappedItems: TrackItem[] = items.map((track): TrackItem => ({
+          id: String(track.id ?? track.trackId ?? ""),
+          trackId: track.trackId ?? null,
+          name: String(track.name ?? ""),
+          artists: Array.isArray(track.artists) ? track.artists : [],
+          album: track.album ?? { id: null, name: null, images: [] },
+          durationMs: track.durationMs ?? null,
+          explicit: track.explicit ?? null,
+          popularity: track.popularity ?? null,
+          albumImageUrl: track.albumImageUrl ?? null,
+          playlists: Array.isArray(track.playlists) ? track.playlists : [],
+        }));
         const unique = new Map<string, TrackOption>();
-        for (const track of all) {
+        for (const track of mappedItems) {
           const name = String(track.name ?? "").trim();
           const key = track.id || track.trackId || "";
           if (!key) continue;
@@ -263,8 +241,8 @@ export default function PlaylistBrowser() {
         );
         if (!cancelled) {
           setTrackOptions(list);
-          setTrackItems(all);
-          // keep tracks list unselected until the user chooses a track
+          setTrackItems(mappedItems);
+          setTrackCursor(data.nextCursor ?? null);
         }
         } finally {
         if (!cancelled) setLoadingTracksList(false);
@@ -320,10 +298,166 @@ export default function PlaylistBrowser() {
     }
   }, [mode]);
 
+  useEffect(() => {
+    if (!open) return;
+    if (!query.trim()) return;
+    if (mode === "playlists" && playlistCursor && !loadingMorePlaylists) {
+      loadMorePlaylists();
+    }
+    if (mode === "artists" && artistCursor && !loadingMoreArtists) {
+      loadMoreArtists();
+    }
+    if (mode === "tracks" && trackCursor && !loadingMoreTracksList) {
+      loadMoreTracksList();
+    }
+  }, [
+    query,
+    open,
+    mode,
+    playlistCursor,
+    artistCursor,
+    trackCursor,
+    loadingMorePlaylists,
+    loadingMoreArtists,
+    loadingMoreTracksList,
+  ]);
+
   const filteredTrackItems = useMemo(() => {
     if (!selectedTrackId) return [];
     return trackItems.filter((track) => track.id === selectedTrackId);
   }, [trackItems, selectedTrackId]);
+
+  async function loadMorePlaylists() {
+    if (!playlistCursor || loadingMorePlaylists) return;
+    setLoadingMorePlaylists(true);
+    try {
+      const url = new URL("/api/spotify/me/playlists", window.location.origin);
+      url.searchParams.set("limit", "50");
+      url.searchParams.set("cursor", playlistCursor);
+      const res = await fetch(url.toString());
+      if (!res.ok) return;
+      const data = (await res.json()) as CursorResponse<PlaylistApiItem>;
+      const items = Array.isArray(data.items) ? data.items : [];
+      const mappedItems = items.map(
+        (p): PlaylistOption => ({
+          id: p.playlistId,
+          name: p.name,
+          type: "playlist",
+          spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
+        })
+      );
+      setPlaylistOptions((prev) => {
+        const unique = new Map<string, PlaylistOption>();
+        for (const option of prev) unique.set(option.id, option);
+        for (const option of mappedItems) unique.set(option.id, option);
+        const sorted: PlaylistOption[] = Array.from(unique.values())
+          .filter((item) => item.id !== LIKED_OPTION.id)
+          .sort((a, b) =>
+            a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+          );
+        return [LIKED_OPTION, ...sorted];
+      });
+      setPlaylistCursor(data.nextCursor ?? null);
+    } finally {
+      setLoadingMorePlaylists(false);
+    }
+  }
+
+  async function loadMoreArtists() {
+    if (!artistCursor || loadingMoreArtists) return;
+    setLoadingMoreArtists(true);
+    try {
+      const url = new URL("/api/spotify/artists", window.location.origin);
+      url.searchParams.set("limit", "100");
+      url.searchParams.set("cursor", artistCursor);
+      const res = await fetch(url.toString());
+      if (!res.ok) return;
+      const data = (await res.json()) as CursorResponse<ArtistApiItem>;
+      const items = Array.isArray(data.items) ? data.items : [];
+      const mappedItems = items.map(
+        (artist): ArtistOption => ({
+          id: artist.artistId,
+          name: artist.name,
+          spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
+        })
+      );
+      setArtistOptions((prev) => {
+        const unique = new Map<string, ArtistOption>();
+        for (const option of prev) unique.set(option.id, option);
+        for (const option of mappedItems) unique.set(option.id, option);
+        return Array.from(unique.values()).sort((a, b) =>
+          a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+        );
+      });
+      setArtistCursor(data.nextCursor ?? null);
+    } finally {
+      setLoadingMoreArtists(false);
+    }
+  }
+
+  async function loadMoreTracksList() {
+    if (!trackCursor || loadingMoreTracksList) return;
+    setLoadingMoreTracksList(true);
+    try {
+      const url = new URL("/api/spotify/tracks", window.location.origin);
+      url.searchParams.set("limit", "100");
+      url.searchParams.set("cursor", trackCursor);
+      const res = await fetch(url.toString());
+      if (!res.ok) return;
+      const data = (await res.json()) as CursorResponse<TrackApiItem>;
+      const items = Array.isArray(data.items) ? data.items : [];
+      const mappedItems: TrackItem[] = items.map((track): TrackItem => ({
+        id: String(track.id ?? track.trackId ?? ""),
+        trackId: track.trackId ?? null,
+        name: String(track.name ?? ""),
+        artists: Array.isArray(track.artists) ? track.artists : [],
+        album: track.album ?? { id: null, name: null, images: [] },
+        durationMs: track.durationMs ?? null,
+        explicit: track.explicit ?? null,
+        popularity: track.popularity ?? null,
+        albumImageUrl: track.albumImageUrl ?? null,
+        playlists: Array.isArray(track.playlists) ? track.playlists : [],
+      }));
+      setTrackItems((prev) => {
+        const next = prev.concat(mappedItems);
+        return next;
+      });
+      setTrackOptions((prev) => {
+        const unique = new Map<string, TrackOption>();
+        for (const option of prev) unique.set(option.id, option);
+        for (const track of mappedItems) {
+          const name = String(track.name ?? "").trim();
+          const key = track.id || track.trackId || "";
+          if (!key) continue;
+          const artistNames = track.artists
+            .map((artist) => artist?.name)
+            .filter(Boolean)
+            .join(", ");
+          const coverUrl = track.album?.images?.[0]?.url ?? null;
+          const option: TrackOption = {
+            id: key,
+            name,
+            spotifyUrl: `https://open.spotify.com/track/${track.id}`,
+            coverUrl,
+            trackId: track.id ?? null,
+            artistNames: artistNames || null,
+          };
+          const existing = unique.get(key);
+          if (!existing) {
+            unique.set(key, option);
+          } else if (!existing.coverUrl && option.coverUrl) {
+            unique.set(key, option);
+          }
+        }
+        return Array.from(unique.values()).sort((a, b) =>
+          a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+        );
+      });
+      setTrackCursor(data.nextCursor ?? null);
+    } finally {
+      setLoadingMoreTracksList(false);
+    }
+  }
 
 
   function openDetailFromRow(track: TrackRow) {
@@ -484,30 +618,22 @@ export default function PlaylistBrowser() {
               ? "/api/spotify/me/tracks"
               : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
             : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
-        let cursor: string | null = null;
-        const allItems: TrackRow[] = [];
-        do {
-          const url = new URL(baseUrl, window.location.origin);
-          url.searchParams.set("limit", "50");
-          if (cursor) url.searchParams.set("cursor", cursor);
-          const res = await fetch(url.toString());
-          if (!res.ok) {
-            if (res.status === 401) {
-              setError("Je bent nog niet verbonden met Spotify.");
-            } else {
-              setError("Tracks laden lukt nu niet.");
-            }
-            return;
+        const url = new URL(baseUrl, window.location.origin);
+        url.searchParams.set("limit", "50");
+        const res = await fetch(url.toString());
+        if (!res.ok) {
+          const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
+          if (!cancelled) {
+            setAuthRequired(Boolean(mapped.authRequired));
+            setError(mapped.message);
           }
-          const data = await res.json();
-          const items = Array.isArray(data.items) ? data.items : [];
-          allItems.push(...items);
-          cursor = data.nextCursor ?? null;
-          if (cancelled) return;
-        } while (cursor);
+          return;
+        }
+        const data = (await res.json()) as CursorResponse<TrackRow>;
+        const items = Array.isArray(data.items) ? data.items : [];
         if (!cancelled) {
-          setTracks(allItems);
-          setNextCursor(null);
+          setTracks(items);
+          setNextCursor(data.nextCursor ?? null);
         }
       } catch {
         if (!cancelled) setError("Tracks laden lukt nu niet.");
@@ -532,7 +658,7 @@ export default function PlaylistBrowser() {
   }, [mode, selectedPlaylist?.id, selectedPlaylist?.type, selectedArtist?.id]);
 
   async function loadMore() {
-    if (!nextCursor) return;
+    if (!nextCursor || loadingMoreTracksRef.current) return;
     if (mode === "playlists" && !selectedPlaylist?.id) return;
     if (mode === "artists" && !selectedArtist?.id) return;
     const cursor = nextCursor;
@@ -546,16 +672,18 @@ export default function PlaylistBrowser() {
     url.searchParams.set("limit", "50");
     url.searchParams.set("cursor", cursor);
 
-    setLoadingTracks(true);
+    loadingMoreTracksRef.current = true;
+    setLoadingMoreTracks(true);
     try {
       const res = await fetch(url.toString());
       if (!res.ok) return;
-      const data = await res.json();
+      const data = (await res.json()) as CursorResponse<TrackRow>;
       const items = Array.isArray(data.items) ? data.items : [];
       setTracks((prev) => prev.concat(items));
       setNextCursor(data.nextCursor ?? null);
     } finally {
-      setLoadingTracks(false);
+      loadingMoreTracksRef.current = false;
+      setLoadingMoreTracks(false);
     }
   }
 
@@ -710,7 +838,20 @@ export default function PlaylistBrowser() {
             </button>
           ) : null}
           {open ? (
-            <div className="combo-list" role="listbox" id="playlist-options">
+            <div
+              className="combo-list"
+              role="listbox"
+              id="playlist-options"
+              ref={comboListRef}
+              onScroll={(event) => {
+                const target = event.currentTarget;
+                if (target.scrollHeight - target.scrollTop - target.clientHeight < 80) {
+                  if (mode === "playlists") loadMorePlaylists();
+                  if (mode === "artists") loadMoreArtists();
+                  if (mode === "tracks") loadMoreTracksList();
+                }
+              }}
+            >
               {filteredOptions.length === 0 ? (
                 <div className="combo-empty">Geen resultaten.</div>
               ) : mode === "tracks" ? (
@@ -781,6 +922,15 @@ export default function PlaylistBrowser() {
                   </button>
                 ))
               )}
+              {mode === "playlists" && loadingMorePlaylists ? (
+                <div className="combo-loading">Meer playlists laden...</div>
+              ) : null}
+              {mode === "artists" && loadingMoreArtists ? (
+                <div className="combo-loading">Meer artiesten laden...</div>
+              ) : null}
+              {mode === "tracks" && loadingMoreTracksList ? (
+                <div className="combo-loading">Meer tracks laden...</div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -797,7 +947,7 @@ export default function PlaylistBrowser() {
         <div className="empty-state">
           <div style={{ fontWeight: 600 }}>Nog geen playlists gevonden</div>
           <div className="text-body">
-            Werk de bibliotheek bij via Account en probeer opnieuw.
+            Werk de bibliotheek bij via Settings en probeer opnieuw.
           </div>
         </div>
       ) : null}
@@ -810,7 +960,7 @@ export default function PlaylistBrowser() {
         <div className="empty-state">
           <div style={{ fontWeight: 600 }}>Nog geen artiesten gevonden</div>
           <div className="text-body">
-            Werk de bibliotheek bij via Account en probeer opnieuw.
+            Werk de bibliotheek bij via Settings en probeer opnieuw.
           </div>
         </div>
       ) : null}
@@ -818,6 +968,11 @@ export default function PlaylistBrowser() {
         <p className="text-body" role="status">
           Tracks laden...
         </p>
+      ) : null}
+      {mode === "tracks" && selectedTrack?.artistNames ? (
+        <div className="text-subtle" style={{ marginTop: 6 }}>
+          Geselecteerd: {selectedTrack.name} • {selectedTrack.artistNames}
+        </div>
       ) : null}
       {error ? (
         <div style={{ color: "#fca5a5" }} role="alert">
@@ -841,7 +996,7 @@ export default function PlaylistBrowser() {
             <div className="empty-state">
               <div style={{ fontWeight: 600 }}>Geen tracks gevonden</div>
               <div className="text-body">
-                Werk de bibliotheek bij via Account als dit onverwacht is.
+                Werk de bibliotheek bij via Settings als dit onverwacht is.
               </div>
             </div>
           ) : null}
@@ -866,6 +1021,11 @@ export default function PlaylistBrowser() {
               itemSize={ROW_HEIGHT}
               width="100%"
               overscanCount={6}
+              onItemsRendered={({ visibleStopIndex }) => {
+                if (nextCursor && visibleStopIndex >= tracks.length - 4) {
+                  loadMore();
+                }
+              }}
               itemKey={(index: number, data: TrackRowData) => {
                 const item = data.items[index];
                 return item.itemId || item.trackId || index;
@@ -935,10 +1095,10 @@ export default function PlaylistBrowser() {
 
       <div style={{ marginTop: 12 }}>
         {mode === "tracks" ? (
-          loadingTracksList ? (
+          loadingTracksList || loadingMoreTracksList ? (
             <span className="text-body">Tracks laden...</span>
           ) : null
-        ) : loadingTracks ? (
+        ) : loadingTracks || loadingMoreTracks ? (
           <span className="text-body">Tracks laden...</span>
         ) : null}
       </div>
@@ -1245,6 +1405,34 @@ export default function PlaylistBrowser() {
     </section>
   );
 }
+
+type CursorResponse<T> = {
+  items?: T[];
+  nextCursor?: string | null;
+};
+
+type PlaylistApiItem = {
+  playlistId: string;
+  name: string;
+};
+
+type ArtistApiItem = {
+  artistId: string;
+  name: string;
+};
+
+type TrackApiItem = {
+  id?: string;
+  trackId?: string;
+  name?: string;
+  artists?: { id?: string; name?: string }[];
+  album?: { id?: string | null; name?: string | null; images?: { url: string }[] };
+  durationMs?: number | null;
+  explicit?: boolean | null;
+  popularity?: number | null;
+  albumImageUrl?: string | null;
+  playlists?: { id: string; name: string; spotifyUrl?: string }[];
+};
 
 type TrackRowData = {
   items: TrackRow[];

@@ -1,7 +1,7 @@
 import { getDb } from "@/lib/db/client";
 import { artists, trackArtists, tracks } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
-import { getAppAccessToken } from "@/lib/spotify/tokens";
+import { spotifyFetch } from "@/lib/spotify/client";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
 import { requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
@@ -59,24 +59,23 @@ export async function GET(
 
   if (!genres || genres.length === 0 || popularity === null) {
     try {
-      const token = await getAppAccessToken();
-      let res = await fetch(`https://api.spotify.com/v1/artists/${artistId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
+      let data: any = null;
+      try {
+        data = await spotifyFetch({
+          url: `https://api.spotify.com/v1/artists/${artistId}`,
+          userLevel: false,
+        });
+      } catch {
+        // fallback to user token if available
         const session = await getServerSession(getAuthOptions());
-        const userToken = session?.accessToken as string | undefined;
-        if (userToken) {
-          res = await fetch(
-            `https://api.spotify.com/v1/artists/${artistId}`,
-            {
-              headers: { Authorization: `Bearer ${userToken}` },
-            }
-          );
+        if (session?.accessToken) {
+          data = await spotifyFetch({
+            url: `https://api.spotify.com/v1/artists/${artistId}`,
+            userLevel: true,
+          });
         }
       }
-      if (res.ok) {
-        const data = await res.json();
+      if (data) {
         genres = Array.isArray(data?.genres) ? data.genres : [];
         popularity =
           data?.popularity === null || data?.popularity === undefined
@@ -91,37 +90,6 @@ export async function GET(
           })
           .where(eq(artists.artistId, artistId))
           .run();
-      }
-      if ((!genres || genres.length === 0) || popularity === null) {
-        const session = await getServerSession(getAuthOptions());
-        const userToken = session?.accessToken as string | undefined;
-        if (userToken) {
-          const userRes = await fetch(
-            `https://api.spotify.com/v1/artists/${artistId}`,
-            {
-              headers: { Authorization: `Bearer ${userToken}` },
-            }
-          );
-          if (userRes.ok) {
-            const data = await userRes.json();
-            const nextGenres = Array.isArray(data?.genres) ? data.genres : [];
-            const nextPopularity =
-              data?.popularity === null || data?.popularity === undefined
-                ? null
-                : Number(data.popularity);
-            genres = nextGenres;
-            popularity = nextPopularity;
-            await db
-              .update(artists)
-              .set({
-                genres: genres.length ? JSON.stringify(genres) : null,
-                popularity,
-                updatedAt: Date.now(),
-              })
-              .where(eq(artists.artistId, artistId))
-              .run();
-          }
-        }
       }
     } catch {
       // best-effort enrichment; keep existing values

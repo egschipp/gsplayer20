@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
 import { hasAllScopes } from "@/lib/spotify/scopes";
 import { getRequestIp, rateLimitResponse, jsonNoStore } from "@/lib/api/guards";
+import { spotifyFetch } from "@/lib/spotify/client";
 
 export const runtime = "nodejs";
 
@@ -25,18 +26,17 @@ export async function GET(req: Request) {
     return jsonNoStore({ status: "ERROR_SCOPES", scope }, 403);
   }
 
-  const res = await fetch("https://api.spotify.com/v1/me", {
-    headers: { Authorization: `Bearer ${session.accessToken}` },
-  });
-
-  if (res.status === 401) {
-    return jsonNoStore({ status: "ERROR_REVOKED" }, 401);
+  try {
+    const profile = await spotifyFetch({
+      url: "https://api.spotify.com/v1/me",
+      userLevel: true,
+    });
+    return jsonNoStore({ status: "OK", profile });
+  } catch (error) {
+    const message = String(error);
+    if (message.includes("401")) {
+      return jsonNoStore({ status: "ERROR_REVOKED" }, 401);
+    }
+    return jsonNoStore({ status: "ERROR_NETWORK" }, 502);
   }
-
-  if (!res.ok) {
-    return jsonNoStore({ status: "ERROR_NETWORK", detail: res.status }, 502);
-  }
-
-  const profile = await res.json();
-  return jsonNoStore({ status: "OK", profile });
 }

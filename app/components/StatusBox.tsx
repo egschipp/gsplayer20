@@ -82,6 +82,7 @@ export default function StatusBox() {
     Record<string, { status: "idle" | "running" | "success" | "error"; at: number }>
   >({});
   const [promptTemplate, setPromptTemplate] = useState("");
+  const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [promptSaved, setPromptSaved] = useState<null | "saved" | "error">(null);
 
   const refresh = useCallback(async () => {
@@ -189,6 +190,14 @@ export default function StatusBox() {
 
   function enforceTokens(value: string) {
     let next = value ?? "";
+    const unknown = next.match(/\[[^\]]+\]/g)?.filter(
+      (match) => !(CHATGPT_PROMPT_TOKENS as readonly string[]).includes(match)
+    );
+    if (unknown?.length) {
+      setPromptWarning(`Onbekende variabelen verwijderd: ${unknown.join(", ")}`);
+    } else {
+      setPromptWarning(null);
+    }
     // Remove any bracketed text that isn't a known token.
     next = next.replace(/\[[^\]]+\]/g, (match) => {
       if ((CHATGPT_PROMPT_TOKENS as readonly string[]).includes(match)) {
@@ -458,6 +467,11 @@ export default function StatusBox() {
               </code>
             ))}
           </div>
+          {promptWarning ? (
+            <div className="text-subtle" style={{ marginTop: 6, color: "#facc15" }}>
+              {promptWarning}
+            </div>
+          ) : null}
           <textarea
             className="input"
             style={{ marginTop: 12, minHeight: 220, width: "100%" }}

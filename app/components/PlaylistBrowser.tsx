@@ -410,11 +410,6 @@ export default function PlaylistBrowser() {
     setOpen(false);
     setQuery("");
     setDebouncedQuery("");
-    if (mode === "playlists") setSelectedPlaylistId("");
-    if (mode === "artists") setSelectedArtistId("");
-    if (mode === "tracks") {
-      setSelectedTrackId("");
-    }
   }, [mode]);
 
   useEffect(() => {
@@ -957,11 +952,21 @@ export default function PlaylistBrowser() {
           <input
             id="playlist-search"
             value={query}
+            onMouseDown={() => {
+              suppressCloseRef.current = true;
+              setQuery("");
+              setDebouncedQuery("");
+              setOpen(true);
+            }}
             onChange={(e) => {
               setQuery(e.target.value);
               setOpen(true);
             }}
-            onFocus={() => setOpen(true)}
+            onFocus={() => {
+              setQuery("");
+              setDebouncedQuery("");
+              setOpen(true);
+            }}
             onBlur={() => {
               setTimeout(() => {
                 if (!suppressCloseRef.current) setOpen(false);
@@ -1039,7 +1044,8 @@ export default function PlaylistBrowser() {
                     onMouseDown={() => {
                       suppressCloseRef.current = true;
                       setSelectedTrackId(opt.id);
-                      setQuery(opt.name);
+                      setQuery("");
+                      setDebouncedQuery("");
                       setOpen(false);
                     }}
                   >
@@ -1086,7 +1092,8 @@ export default function PlaylistBrowser() {
                       suppressCloseRef.current = true;
                       if (mode === "playlists") setSelectedPlaylistId(opt.id);
                       if (mode === "artists") setSelectedArtistId(opt.id);
-                      setQuery(opt.name);
+                      setQuery("");
+                      setDebouncedQuery("");
                       setOpen(false);
                     }}
                   >

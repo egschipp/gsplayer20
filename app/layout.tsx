@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Space_Grotesk, Manrope } from "next/font/google";
 import "./globals.css";
 import AuthSessionProvider from "./components/SessionProvider";
@@ -28,6 +28,9 @@ export const metadata: Metadata = {
       { url: "/apple-touch-icon.png?v=3", sizes: "180x180", type: "image/png" },
     ],
   },
+};
+
+export const viewport: Viewport = {
   themeColor: "#12bfa2",
 };
 

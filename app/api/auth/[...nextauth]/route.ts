@@ -12,9 +12,11 @@ import {
   startAuthLog,
 } from "@/lib/auth/authLog";
 
-const handler = NextAuth(getAuthOptions());
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 async function authHandler(req: NextRequest) {
+  const handler = NextAuth(getAuthOptions());
   if (isAuthLogEnabled()) {
     const url = req.nextUrl.toString();
     const isLoginRelated =

@@ -218,10 +218,26 @@ export default function PlaylistBrowser() {
             images: Array.isArray(track.album?.images) ? track.album?.images : [],
           },
           durationMs: track.durationMs ?? null,
-          explicit: track.explicit ?? null,
+          explicit:
+            typeof track.explicit === "boolean"
+              ? track.explicit
+                ? 1
+                : 0
+              : track.explicit ?? null,
           popularity: track.popularity ?? null,
           albumImageUrl: track.albumImageUrl ?? null,
-          playlists: Array.isArray(track.playlists) ? track.playlists : [],
+          playlists: Array.isArray(track.playlists)
+            ? track.playlists
+                .filter((pl): pl is { id: string; name: string; spotifyUrl?: string } =>
+                  Boolean(pl?.id && pl?.name)
+                )
+                .map((pl) => ({
+                  id: pl.id,
+                  name: pl.name,
+                  spotifyUrl:
+                    pl.spotifyUrl ?? `https://open.spotify.com/playlist/${pl.id}`,
+                }))
+            : [],
         }));
         const unique = new Map<string, TrackOption>();
         for (const track of mappedItems) {
@@ -435,10 +451,26 @@ export default function PlaylistBrowser() {
           images: Array.isArray(track.album?.images) ? track.album?.images : [],
         },
         durationMs: track.durationMs ?? null,
-        explicit: track.explicit ?? null,
+        explicit:
+          typeof track.explicit === "boolean"
+            ? track.explicit
+              ? 1
+              : 0
+            : track.explicit ?? null,
         popularity: track.popularity ?? null,
         albumImageUrl: track.albumImageUrl ?? null,
-        playlists: Array.isArray(track.playlists) ? track.playlists : [],
+        playlists: Array.isArray(track.playlists)
+          ? track.playlists
+              .filter((pl): pl is { id: string; name: string; spotifyUrl?: string } =>
+                Boolean(pl?.id && pl?.name)
+              )
+              .map((pl) => ({
+                id: pl.id,
+                name: pl.name,
+                spotifyUrl:
+                  pl.spotifyUrl ?? `https://open.spotify.com/playlist/${pl.id}`,
+              }))
+          : [],
       }));
       setTrackItems((prev) => {
         const next = prev.concat(mappedItems);

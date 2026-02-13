@@ -92,6 +92,7 @@ export default function ChatGptButton({
 
   async function handleClick(event: React.MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
+    const popup = window.open("about:blank", "_blank", "noopener,noreferrer");
     let template = CHATGPT_PROMPT_TEMPLATE;
     if (typeof window !== "undefined") {
       const stored = window.localStorage.getItem("gs_chatgpt_prompt");
@@ -114,7 +115,11 @@ export default function ChatGptButton({
         // ignore clipboard errors
       }
     }
-    window.open("https://chatgpt.com", "_blank", "noopener,noreferrer");
+    if (popup) {
+      popup.location.href = "https://chatgpt.com";
+    } else {
+      window.open("https://chatgpt.com", "_blank", "noopener,noreferrer");
+    }
   }
 
   return (

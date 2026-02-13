@@ -184,7 +184,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   async function ensureActiveDevice(
     targetId: string,
     token: string,
-    shouldPlay = false
+    shouldPlay = false,
+    enforceShuffle = true
   ) {
     await transferPlayback(targetId, shouldPlay);
     const delays = [250, 500, 900, 1400, 2000];
@@ -195,16 +196,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           const data = await res.json();
           if (data?.device?.id === targetId) {
             setDeviceReady(true);
-            // Enforce shuffle state to avoid mismatches on new device.
-            try {
-              await spotifyApiFetch(
-                `https://api.spotify.com/v1/me/player/shuffle?state=${
-                  shuffleOn ? "true" : "false"
-                }&device_id=${targetId}`,
-                { method: "PUT" }
-              );
-            } catch {
-              // ignore
+            if (enforceShuffle) {
+              // Enforce shuffle state to avoid mismatches on new device.
+              try {
+                await spotifyApiFetch(
+                  `https://api.spotify.com/v1/me/player/shuffle?state=${
+                    shuffleOn ? "true" : "false"
+                  }&device_id=${targetId}`,
+                  { method: "PUT" }
+                );
+              } catch {
+                // ignore
+              }
             }
             return true;
           }
@@ -1209,7 +1212,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
     await enqueuePlaybackCommand(async () => {
-      const ready = await ensureActiveDevice(currentDevice, token, false);
+      const ready = await ensureActiveDevice(currentDevice, token, false, false);
       if (!ready) {
         setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
         return;
@@ -1229,6 +1232,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         // ignore
       }
       const next = !current;
+      setShuffleOn(next);
+      lastShuffleSyncRef.current = Date.now();
       await spotifyApiFetch(
         `https://api.spotify.com/v1/me/player/shuffle?state=${
           next ? "true" : "false"

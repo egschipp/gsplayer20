@@ -132,38 +132,54 @@ export default function PlaylistBrowser() {
       setError(null);
       setAuthRequired(false);
       try {
-        const url = new URL("/api/spotify/me/playlists", window.location.origin);
-        url.searchParams.set("limit", "50");
-        const res = await fetch(url.toString());
-        if (!res.ok) {
-          const mapped = mapSpotifyApiError(res.status, "Playlists laden lukt nu niet.");
-          if (!cancelled) {
-            setAuthRequired(Boolean(mapped.authRequired));
-            setError(mapped.message);
+        const all: PlaylistOption[] = [];
+        let cursor: string | null = null;
+        let pages = 0;
+        const MAX_PAGES = 20;
+        do {
+          const url = new URL("/api/spotify/me/playlists", window.location.origin);
+          url.searchParams.set("limit", "50");
+          if (cursor) url.searchParams.set("cursor", cursor);
+          const res = await fetch(url.toString());
+          if (!res.ok) {
+            const mapped = mapSpotifyApiError(
+              res.status,
+              "Playlists laden lukt nu niet."
+            );
+            if (!cancelled) {
+              setAuthRequired(Boolean(mapped.authRequired));
+              setError(mapped.message);
+            }
+            return;
           }
-          return;
-        }
-        const data = (await res.json()) as CursorResponse<PlaylistApiItem>;
-        const items = Array.isArray(data.items) ? data.items : [];
-        const mappedItems = items.map(
-          (p): PlaylistOption => ({
-            id: p.playlistId,
-            name: p.name,
-            type: "playlist",
-            spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
-          })
-        );
+          const data = (await res.json()) as CursorResponse<PlaylistApiItem>;
+          const items = Array.isArray(data.items) ? data.items : [];
+          const mappedItems = items.map(
+            (p): PlaylistOption => ({
+              id: p.playlistId,
+              name: p.name,
+              type: "playlist",
+              spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
+            })
+          );
+          all.push(...mappedItems);
+          cursor = data.nextCursor ?? null;
+          pages += 1;
+        } while (cursor && pages < MAX_PAGES);
+
         const unique = new Map<string, PlaylistOption>();
-        for (const option of [LIKED_OPTION, ...mappedItems]) {
+        for (const option of [LIKED_OPTION, ...all]) {
           unique.set(option.id, option);
         }
         const sorted: PlaylistOption[] = Array.from(unique.values())
           .filter((item) => item.id !== LIKED_OPTION.id)
-          .sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+          .sort((a, b) =>
+            a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+          );
         const list: PlaylistOption[] = [LIKED_OPTION, ...sorted];
         if (!cancelled) {
           setPlaylistOptions(list);
-          setPlaylistCursor(data.nextCursor ?? null);
+          setPlaylistCursor(cursor ?? null);
         }
       } catch {
         if (!cancelled) setError("Playlists laden lukt nu niet.");
@@ -1592,7 +1608,8 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
   const track = data.items[index];
   const isGrid = data.mode === "artists" || data.mode === "playlists";
   const isPlaying = Boolean(
-    data.currentTrackId && track.trackId === data.currentTrackId
+    data.currentTrackId &&
+      (track.trackId === data.currentTrackId || track.id === data.currentTrackId)
   );
   return (
     <div
@@ -1743,7 +1760,10 @@ function TrackItemRenderer({
   data,
 }: ListChildComponentProps<TrackItemData>) {
   const track = data.items[index];
-  const isPlaying = Boolean(data.currentTrackId && track.id === data.currentTrackId);
+  const isPlaying = Boolean(
+    data.currentTrackId &&
+      (track.id === data.currentTrackId || track.trackId === data.currentTrackId)
+  );
   const coverUrl = track.album?.images?.[0]?.url ?? null;
   const artistNames = track.artists
     .map((artist) => artist?.name)

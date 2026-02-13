@@ -59,6 +59,31 @@ a:hover {
   border-radius: 16px;
 }
 
+.shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+@media (min-width: 768px) {
+  .shell {
+    padding: 0 32px;
+  }
+}
+
+.header-shell {
+  margin-top: 20px;
+  margin-bottom: 20px;
+}
+
+.player-shell-wrap[data-visible="false"] {
+  display: none;
+}
+
+.player-shell-wrap {
+  margin-bottom: 16px;
+}
+
 .heading-1 {
   font-family: var(--font-display), system-ui, sans-serif;
   font-size: 28px;
@@ -454,10 +479,6 @@ a:focus-visible {
       rgba(8, 12, 12, 0.55) 70%,
       rgba(8, 12, 12, 0.1) 100%
     );
-}
-
-.player-shell[data-visible="false"] {
-  display: none;
 }
 
 .library-logo {

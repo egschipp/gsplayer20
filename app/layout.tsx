@@ -45,12 +45,11 @@ export default function RootLayout({
       <body>
         <AuthSessionProvider>
           <PlayerProvider>
-            <header
-              className="panel"
-              style={{ margin: "0 1rem", marginTop: "1.25rem" }}
-            >
-              <MainNav />
-            </header>
+            <div className="shell header-shell">
+              <header className="panel">
+                <MainNav />
+              </header>
+            </div>
             {children}
           </PlayerProvider>
         </AuthSessionProvider>

@@ -26,19 +26,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   return (
     <PlayerContext.Provider value={value}>
       <div
-        className="library-sticky player-shell"
+        className="shell player-shell-wrap"
         data-visible={showPlayer ? "true" : "false"}
         aria-hidden={!showPlayer}
       >
-        <Image
-          src="/georgies-spotify.png"
-          alt="Georgies Spotify logo"
-          width={240}
-          height={80}
-          className="library-logo"
-          priority
-        />
-        <SpotifyPlayer onReady={setApi} onTrackChange={setCurrentTrackId} />
+        <div className="library-sticky player-shell">
+          <Image
+            src="/georgies-spotify.png"
+            alt="Georgies Spotify logo"
+            width={240}
+            height={80}
+            className="library-logo"
+            priority
+          />
+          <SpotifyPlayer onReady={setApi} onTrackChange={setCurrentTrackId} />
+        </div>
       </div>
       {children}
     </PlayerContext.Provider>

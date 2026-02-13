@@ -14,19 +14,26 @@ type ChatGptButtonProps = {
   trackId?: string | null;
 };
 
+const TRACK_META_CACHE = (() => {
+  const cache = new Map<string, { value: string; expiresAt: number }>();
+  if (typeof globalThis === "undefined") return cache;
+  const globalAny = globalThis as any;
+  if (!globalAny.__gsTrackMetaCache) {
+    globalAny.__gsTrackMetaCache = cache;
+  }
+  return globalAny.__gsTrackMetaCache as Map<
+    string,
+    { value: string; expiresAt: number }
+  >;
+})();
+
 export default function ChatGptButton({
   trackUrl,
   playlistNames,
   trackMeta,
   trackId,
 }: ChatGptButtonProps) {
-  const metaCache = (globalThis as any).__gsTrackMetaCache as
-    | Map<string, { value: string; expiresAt: number }>
-    | undefined;
-  const cache = metaCache ?? new Map<string, { value: string; expiresAt: number }>();
-  if (!(globalThis as any).__gsTrackMetaCache) {
-    (globalThis as any).__gsTrackMetaCache = cache;
-  }
+  const cache = TRACK_META_CACHE;
 
   async function loadTrackMeta() {
     if (!trackId) return { formatted: trackMeta, tokens: undefined };

@@ -68,7 +68,8 @@ export default function PlaylistBrowser() {
   const loadingMoreTracksRef = useRef(false);
   const MAX_PLAYLIST_CHIPS = 2;
   const [listHeight, setListHeight] = useState(560);
-  const ROW_HEIGHT = 96;
+  const ROW_HEIGHT = 64;
+  const hydratedSelectionRef = useRef(false);
   const allPlaylistNames = useMemo(() => {
     const emojiStart = /^\s*\p{Extended_Pictographic}/u;
     return playlistOptions
@@ -87,6 +88,42 @@ export default function PlaylistBrowser() {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || hydratedSelectionRef.current) return;
+    const stored = window.localStorage.getItem("gs_playlist_selection");
+    if (!stored) {
+      hydratedSelectionRef.current = true;
+      return;
+    }
+    try {
+      const parsed = JSON.parse(stored) as {
+        mode?: Mode;
+        playlistId?: string;
+        artistId?: string;
+        trackId?: string;
+      };
+      if (parsed.mode) setMode(parsed.mode);
+      if (parsed.playlistId) setSelectedPlaylistId(parsed.playlistId);
+      if (parsed.artistId) setSelectedArtistId(parsed.artistId);
+      if (parsed.trackId) setSelectedTrackId(parsed.trackId);
+    } catch {
+      // ignore
+    } finally {
+      hydratedSelectionRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const payload = JSON.stringify({
+      mode,
+      playlistId: selectedPlaylistId,
+      artistId: selectedArtistId,
+      trackId: selectedTrackId,
+    });
+    window.localStorage.setItem("gs_playlist_selection", payload);
+  }, [mode, selectedPlaylistId, selectedArtistId, selectedTrackId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +178,12 @@ export default function PlaylistBrowser() {
   }, []);
 
   useEffect(() => {
+    if (!selectedPlaylistId) return;
+    const exists = playlistOptions.some((option) => option.id === selectedPlaylistId);
+    if (!exists) setSelectedPlaylistId("");
+  }, [playlistOptions, selectedPlaylistId]);
+
+  useEffect(() => {
     let cancelled = false;
     async function loadArtists() {
       setLoadingArtists(true);
@@ -183,6 +226,12 @@ export default function PlaylistBrowser() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedArtistId) return;
+    const exists = artistOptions.some((option) => option.id === selectedArtistId);
+    if (!exists) setSelectedArtistId("");
+  }, [artistOptions, selectedArtistId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -283,6 +332,12 @@ export default function PlaylistBrowser() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!selectedTrackId) return;
+    const exists = trackOptions.some((option) => option.id === selectedTrackId);
+    if (!exists) setSelectedTrackId("");
+  }, [trackOptions, selectedTrackId]);
+
   const selectedPlaylist = useMemo(() => {
     if (!selectedPlaylistId) return null;
     return playlistOptions.find((opt) => opt.id === selectedPlaylistId) || null;
@@ -305,17 +360,31 @@ export default function PlaylistBrowser() {
       ? selectedArtist
       : selectedTrack;
 
+  const sortedPlaylists = useMemo(() => {
+    if (!playlistOptions.length) return playlistOptions;
+    const map = new Map<string, PlaylistOption>();
+    for (const option of playlistOptions) map.set(option.id, option);
+    const list = Array.from(map.values())
+      .filter((item) => item.id !== LIKED_OPTION.id)
+      .sort((a, b) =>
+        String(a.name ?? "").localeCompare(String(b.name ?? ""), "nl", {
+          sensitivity: "base",
+        })
+      );
+    return [LIKED_OPTION, ...list];
+  }, [playlistOptions]);
+
   const filteredOptions = useMemo(() => {
     const term = debouncedQuery.trim().toLowerCase();
     const list =
       mode === "playlists"
-        ? playlistOptions
+        ? sortedPlaylists
         : mode === "artists"
         ? artistOptions
         : trackOptions;
     if (!term) return list;
     return list.filter((opt) => opt.name.toLowerCase().includes(term));
-  }, [playlistOptions, artistOptions, trackOptions, debouncedQuery, mode]);
+  }, [sortedPlaylists, artistOptions, trackOptions, debouncedQuery, mode]);
 
   useEffect(() => {
     setOpen(false);
@@ -1544,14 +1613,14 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
         style={{
           display: "grid",
           gridTemplateColumns: isGrid ? "98px 1fr 1fr auto" : "98px 1fr auto",
-          gap: 12,
+          gap: 16,
           alignItems: "center",
-          height: "100%",
-          padding: "12px",
+          height: "64px",
+          padding: "0 16px",
         }}
       >
         <div
-          style={{ display: "flex", alignItems: "center", gap: 10 }}
+          style={{ display: "flex", alignItems: "center", gap: 8 }}
           onClick={(event) => event.stopPropagation()}
         >
           <button
@@ -1568,16 +1637,16 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             <Image
               src={(track.coverUrl || track.albumImageUrl) as string}
               alt={track.albumName || "Album cover"}
-              width={56}
-              height={56}
+              width={48}
+              height={48}
               unoptimized
               style={{ borderRadius: 12, objectFit: "cover" }}
             />
           ) : (
             <div
               style={{
-                width: 56,
-                height: 56,
+                width: 48,
+                height: 48,
                 borderRadius: 12,
                 background: "#2a2a2a",
               }}
@@ -1608,7 +1677,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             />
           </div>
         ) : null}
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div className="text-subtle">{formatDuration(track.durationMs)}</div>
           <ChatGptButton
             trackUrl={
@@ -1644,8 +1713,8 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
               <svg
                 aria-hidden="true"
                 viewBox="0 0 24 24"
-                width="18"
-                height="18"
+                width="20"
+                height="20"
                 fill="currentColor"
               >
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm4.6 14.52c-.18.3-.57.4-.87.22-2.4-1.46-5.42-1.8-8.97-1.02-.34.08-.68-.13-.76-.47-.08-.34.13-.68.47-.76 3.86-.86 7.2-.47 9.9 1.18.3.18.4.57.22.87Zm1.24-2.76c-.22.36-.7.48-1.06.26-2.74-1.68-6.92-2.17-10.17-1.18-.41.12-.85-.11-.97-.52-.12-.41.11-.85.52-.97 3.71-1.12 8.33-.57 11.47 1.36.36.22.48.7.26 1.05Zm.11-2.87c-3.28-1.95-8.69-2.13-11.82-1.18-.49.15-1.02-.13-1.17-.62-.15-.49.13-1.02.62-1.17 3.59-1.09 9.56-.88 13.33 1.36.44.26.58.83.32 1.27-.26.44-.83.58-1.27.32Z" />
@@ -1700,14 +1769,14 @@ function TrackItemRenderer({
         style={{
           display: "grid",
           gridTemplateColumns: "98px 1fr 1fr auto",
-          gap: 12,
+          gap: 16,
           alignItems: "center",
-          height: "100%",
-          padding: "12px",
+          height: "64px",
+          padding: "0 16px",
         }}
       >
         <div
-          style={{ display: "flex", alignItems: "center", gap: 10 }}
+          style={{ display: "flex", alignItems: "center", gap: 8 }}
           onClick={(event) => event.stopPropagation()}
         >
           <button
@@ -1723,16 +1792,16 @@ function TrackItemRenderer({
             <Image
               src={coverUrl}
               alt={track.album?.name || "Album cover"}
-              width={56}
-              height={56}
+              width={48}
+              height={48}
               unoptimized
               style={{ borderRadius: 12, objectFit: "cover" }}
             />
           ) : (
             <div
               style={{
-                width: 56,
-                height: 56,
+                width: 48,
+                height: 48,
                 borderRadius: 12,
                 background: "#2a2a2a",
               }}
@@ -1757,7 +1826,7 @@ function TrackItemRenderer({
             maxVisible={data.MAX_PLAYLIST_CHIPS}
           />
         </div>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <ChatGptButton
             trackUrl={track.id ? `https://open.spotify.com/track/${track.id}` : null}
             playlistNames={data.allPlaylistNames}
@@ -1785,8 +1854,8 @@ function TrackItemRenderer({
             <svg
               aria-hidden="true"
               viewBox="0 0 24 24"
-              width="18"
-              height="18"
+              width="20"
+              height="20"
               fill="currentColor"
             >
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm4.6 14.52c-.18.3-.57.4-.87.22-2.4-1.46-5.42-1.8-8.97-1.02-.34.08-.68-.13-.76-.47-.08-.34.13-.68.47-.76 3.86-.86 7.2-.47 9.9 1.18.3.18.4.57.22.87Zm1.24-2.76c-.22.36-.7.48-1.06.26-2.74-1.68-6.92-2.17-10.17-1.18-.41.12-.85-.11-.97-.52-.12-.41.11-.85.52-.97 3.71-1.12 8.33-.57 11.47 1.36.36.22.48.7.26 1.05Zm.11-2.87c-3.28-1.95-8.69-2.13-11.82-1.18-.49.15-1.02-.13-1.17-.62-.15-.49.13-1.02.62-1.17 3.59-1.09 9.56-.88 13.33 1.36.44.26.58.83.32 1.27-.26.44-.83.58-1.27.32Z" />

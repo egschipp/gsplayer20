@@ -3,6 +3,7 @@ import { Space_Grotesk, Manrope } from "next/font/google";
 import "./globals.css";
 import AuthSessionProvider from "./components/SessionProvider";
 import MainNav from "./components/MainNav";
+import { PlayerProvider } from "./components/player/PlayerProvider";
 
 const displayFont = Space_Grotesk({
   subsets: ["latin"],
@@ -43,13 +44,15 @@ export default function RootLayout({
     <html lang="nl" className={`${displayFont.variable} ${bodyFont.variable}`}>
       <body>
         <AuthSessionProvider>
-          <header
-            className="panel"
-            style={{ margin: "0 1rem", marginTop: "1.25rem" }}
-          >
-            <MainNav />
-          </header>
-          {children}
+          <PlayerProvider>
+            <header
+              className="panel"
+              style={{ margin: "0 1rem", marginTop: "1.25rem" }}
+            >
+              <MainNav />
+            </header>
+            {children}
+          </PlayerProvider>
         </AuthSessionProvider>
       </body>
     </html>

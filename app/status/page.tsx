@@ -4,7 +4,7 @@ import StatusBox from "../components/StatusBox";
 
 export default function StatusPage() {
   return (
-    <main className="page">
+    <main className="page settings-page">
       <p className="text-body" style={{ marginBottom: 12 }}>
         Deze pagina is bedoeld voor diagnose en handmatig bijwerken.
       </p>

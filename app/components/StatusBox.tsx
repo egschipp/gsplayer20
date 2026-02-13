@@ -37,9 +37,31 @@ type WorkerHealth = {
 } | null;
 type VersionInfo = { name: string; version: string } | null;
 type ResourceNameMap = Record<string, string>;
-function Badge({ label, tone }: { label: string; tone?: "ok" | "warn" }) {
-  const cls = tone === "ok" ? "pill pill-success" : "pill pill-warn";
-  return <span className={cls}>{label}</span>;
+type BadgeTone = "ok" | "warn" | "error" | "info";
+
+function Badge({ label, tone }: { label: string; tone?: BadgeTone }) {
+  const cls =
+    tone === "ok"
+      ? "pill pill-success"
+      : tone === "error"
+      ? "pill pill-error"
+      : tone === "info"
+      ? "pill pill-info"
+      : "pill pill-warn";
+  const icon =
+    tone === "ok"
+      ? "✔"
+      : tone === "error"
+      ? "✖"
+      : tone === "info"
+      ? "ℹ"
+      : "⚠";
+  return (
+    <span className={cls}>
+      <span aria-hidden="true">{icon}</span>
+      {label}
+    </span>
+  );
 }
 
 const COUNT_LABELS: Record<string, string> = {
@@ -66,6 +88,15 @@ function formatResourceStatus(status: string | null | undefined) {
   if (value === "RUNNING") return "Bezig";
   if (value === "FAILED") return "Mislukt";
   return value || "Onbekend";
+}
+
+function toneFromStatus(value: string | null | undefined): BadgeTone {
+  const status = String(value ?? "").toUpperCase();
+  if (status === "OK") return "ok";
+  if (status === "RUNNING") return "warn";
+  if (status.startsWith("ERROR") || status === "FAILED") return "error";
+  if (status === "CHECKING") return "info";
+  return "warn";
 }
 
 export default function StatusBox() {
@@ -301,6 +332,22 @@ export default function StatusBox() {
         }))
     : [];
 
+  const statusBadgeItems = [
+    {
+      label: `App: ${appStatus?.status ?? "CHECKING"}`,
+      tone: toneFromStatus(appStatus?.status),
+    },
+    {
+      label: `Account: ${userStatus?.status ?? "CHECKING"}`,
+      tone: toneFromStatus(userStatus?.status),
+    },
+    { label: runningInfo.label, tone: runningInfo.tone },
+    {
+      label: `Synchronisatie: ${workerStatus}`,
+      tone: toneFromStatus(workerStatus),
+    },
+  ];
+
   return (
     <section className="card account-page" style={{ marginTop: 24 }}>
       <div className="account-header">
@@ -312,7 +359,7 @@ export default function StatusBox() {
       </div>
 
       <div className="account-grid">
-        <div className="panel account-panel">
+        <div className="panel account-panel span-6">
           <div className="account-panel-title">Spotify‑koppeling</div>
           <div className="account-connection">
             {userStatus?.status === "OK" && userStatus.profile ? (
@@ -354,17 +401,13 @@ export default function StatusBox() {
             <div className="status-badges">
               <Badge
                 label={`Koppeling: ${userStatus?.status ?? "CHECKING"}`}
-                tone={userStatus?.status === "OK" ? "ok" : "warn"}
+                tone={toneFromStatus(userStatus?.status)}
               />
             </div>
             <div className="account-actions">
               <button
                 type="button"
-                className={`btn ${
-                  userStatus?.status === "OK"
-                    ? "btn-outline-green"
-                    : "btn-solid-green"
-                }`}
+                className="btn btn-secondary"
                 onClick={() => {
                   window.location.href = "/api/auth/login";
                 }}
@@ -373,7 +416,7 @@ export default function StatusBox() {
               </button>
               <button
                 type="button"
-                className="btn btn-outline-green"
+                className="btn btn-ghost"
                 onClick={() => {
                   window.location.href = "/api/auth/logout";
                 }}
@@ -384,27 +427,30 @@ export default function StatusBox() {
           </div>
         </div>
 
-        <div className="panel account-panel">
+        <div className="panel account-panel span-3">
           <div className="account-panel-title">Status</div>
           <div className="status-badges">
-            <Badge
-              label={`App: ${appStatus?.status ?? "CHECKING"}`}
-              tone={appStatus?.status === "OK" ? "ok" : "warn"}
-            />
-            <Badge
-              label={`Account: ${userStatus?.status ?? "CHECKING"}`}
-              tone={userStatus?.status === "OK" ? "ok" : "warn"}
-            />
-            <Badge label={runningInfo.label} tone={runningInfo.tone} />
-            <Badge
-              label={`Synchronisatie: ${workerStatus}`}
-              tone={workerStatus === "OK" ? "ok" : "warn"}
-            />
+            {statusBadgeItems.map((item) => (
+              <Badge key={item.label} label={item.label} tone={item.tone} />
+            ))}
           </div>
 
           <div className="text-body status-summary">
-            <div>Laatst bijgewerkt: {lastSync}</div>
-            <div>Worker controle: {workerLast}</div>
+            <div>
+              Laatst bijgewerkt:{" "}
+              <time dateTime={dbStatus?.sync?.lastSuccessfulAt?.toString()}>
+                {lastSync}
+              </time>
+            </div>
+            <div>
+              Worker controle:{" "}
+              <time dateTime={workerHealth?.lastHeartbeat?.toString()}>
+                {workerLast}
+              </time>
+            </div>
+          </div>
+          <div className="sr-only" aria-live="polite">
+            {runningInfo.label}
           </div>
 
           <div className="status-grid compact">
@@ -421,7 +467,7 @@ export default function StatusBox() {
           </div>
         </div>
 
-        <div className="panel account-panel">
+        <div className="panel account-panel span-3">
           <div className="account-panel-title">Acties</div>
           <div className="account-actions">
             <button
@@ -445,18 +491,21 @@ export default function StatusBox() {
                 }
               }}
               disabled={syncing}
-              className="btn btn-outline-green account-action-primary"
+              className="btn btn-primary account-action-primary"
             >
               {syncing ? "Bijwerken..." : "Database bijwerken"}
             </button>
-            <button onClick={logoutPin} className="btn btn-outline-green">
+            <button onClick={logoutPin} className="btn btn-secondary">
               Uitloggen App
             </button>
           </div>
         </div>
 
-        <details className="panel account-panel">
-          <summary className="details-summary">ChatGPT prompt</summary>
+        <details className="panel account-panel span-6">
+          <summary className="details-summary">
+            ChatGPT prompt
+            <span aria-hidden="true">▾</span>
+          </summary>
           <div className="text-body" style={{ marginTop: 12 }}>
             Pas de prompt aan die naar het klembord wordt gekopieerd.
           </div>
@@ -498,11 +547,11 @@ export default function StatusBox() {
         </details>
       </div>
 
-      <div className="account-divider" />
+      <div className="account-divider span-12" />
 
-      <div className="panel account-panel">
+      <div className="panel account-panel span-12">
         <div className="account-panel-title">Playlists bijwerken</div>
-        <div className="text-body" style={{ marginBottom: 12 }}>
+        <div className="text-body" style={{ marginBottom: 16 }}>
           Werk individuele playlists bij als er iets ontbreekt.
         </div>
 
@@ -526,8 +575,21 @@ export default function StatusBox() {
                   : null;
                 const displayName =
                   resourceNameMap[String(row.resource)] ?? row.resource;
+                const rowStatus = String(row.status ?? "").toUpperCase();
                 return (
-                  <div key={row.resource} className="account-resource-row">
+                  <div
+                    key={row.resource}
+                    className="account-resource-row"
+                    data-status={
+                      rowStatus === "OK"
+                        ? "ok"
+                        : rowStatus === "RUNNING"
+                        ? "running"
+                        : rowStatus === "FAILED"
+                        ? "failed"
+                        : "info"
+                    }
+                  >
                     <div className="account-resource-name">{displayName}</div>
                     <div className="account-resource-meta">
                       <span>
@@ -545,9 +607,12 @@ export default function StatusBox() {
                             : ""}
                         </span>
                       ) : null}
+                      {resourceUpdateState[playlistId ?? ""]?.status === "running" ? (
+                        <span className="account-resource-spinner" aria-hidden="true" />
+                      ) : null}
                       {playlistId ? (
                         <button
-                          className="btn btn-secondary"
+                          className="btn btn-secondary account-resource-cta"
                           onClick={async () => {
                             setResourceUpdateState((prev) => ({
                               ...prev,

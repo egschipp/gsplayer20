@@ -38,6 +38,7 @@ export type TrackItem = {
 };
 
 export type TrackRow = {
+  id?: string | null;
   itemId?: string | null;
   playlistId?: string | null;
   trackId?: string | null;

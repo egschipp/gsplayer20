@@ -45,7 +45,7 @@ export default function RootLayout({
       <body>
         <AuthSessionProvider>
           <PlayerProvider>
-            <div className="shell header-shell">
+            <div className="shell header-shell fixed-top">
               <header className="panel">
                 <MainNav />
               </header>

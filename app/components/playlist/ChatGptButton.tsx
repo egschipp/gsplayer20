@@ -92,7 +92,7 @@ export default function ChatGptButton({
 
   async function handleClick(event: React.MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
-    const popup = window.open("about:blank", "_blank", "noopener,noreferrer");
+    const popup = window.open("https://chatgpt.com", "_blank", "noopener,noreferrer");
     let template = CHATGPT_PROMPT_TEMPLATE;
     if (typeof window !== "undefined") {
       const stored = window.localStorage.getItem("gs_chatgpt_prompt");
@@ -100,45 +100,43 @@ export default function ChatGptButton({
         template = normalizePromptTemplate(stored);
       }
     }
-    const metaResult = await loadTrackMeta();
-    const meta = metaResult.formatted;
-    const metaTokens = metaResult.tokens;
+    const cached = trackId ? cache.get(trackId) : undefined;
     const prompt = fillChatGptPrompt(
       template,
       trackUrl,
       playlistNames,
-      meta,
-      metaTokens
+      cached?.value ?? trackMeta,
+      undefined
     );
-    let copied = false;
+
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = prompt;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.top = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    } catch {
+      // ignore sync copy errors
+    }
+
     if (navigator.clipboard?.writeText) {
       try {
         await navigator.clipboard.writeText(prompt);
-        copied = true;
       } catch {
-        copied = false;
+        // ignore async clipboard errors
       }
     }
-    if (!copied) {
-      try {
-        const textarea = document.createElement("textarea");
-        textarea.value = prompt;
-        textarea.setAttribute("readonly", "true");
-        textarea.style.position = "fixed";
-        textarea.style.top = "-9999px";
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
-      } catch {
-        // ignore copy fallback errors
-      }
-    }
-    if (popup) {
-      popup.location.href = "https://chatgpt.com";
-    } else {
+
+    if (!popup) {
       window.open("https://chatgpt.com", "_blank", "noopener,noreferrer");
     }
+
+    // Warm cache asynchronously without blocking the gesture.
+    loadTrackMeta().catch(() => undefined);
   }
 
   return (

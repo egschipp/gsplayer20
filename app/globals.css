@@ -76,6 +76,12 @@ a:hover {
   margin-bottom: 16px;
 }
 
+.fixed-top {
+  position: sticky;
+  top: 0;
+  z-index: 80;
+}
+
 .player-shell-wrap[data-visible="false"] {
   display: none;
 }

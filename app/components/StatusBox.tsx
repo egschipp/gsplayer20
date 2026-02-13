@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   CHATGPT_PROMPT_TEMPLATE,
   CHATGPT_PROMPT_TOKENS,
+  CHATGPT_PROMPT_TOKEN_LABELS,
   normalizePromptTemplate,
 } from "@/lib/chatgpt/prompt";
 
@@ -461,10 +462,13 @@ export default function StatusBox() {
           </div>
           <div className="text-subtle" style={{ marginTop: 8 }}>
             Variabelen (niet te bewerken):{" "}
-            {CHATGPT_PROMPT_TOKENS.map((token) => (
-              <code key={token} style={{ marginRight: 8 }}>
-                {token}
-              </code>
+            {CHATGPT_PROMPT_TOKEN_LABELS.map((entry) => (
+              <div key={entry.token} style={{ marginTop: 4 }}>
+                <code>{entry.token}</code>
+                <span className="text-subtle" style={{ marginLeft: 8 }}>
+                  {entry.label}
+                </span>
+              </div>
             ))}
           </div>
           {promptWarning ? (

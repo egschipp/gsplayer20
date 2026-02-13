@@ -49,6 +49,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [durationMs, setDurationMs] = useState(0);
   const [volume, setVolume] = useState(0.5);
   const [muted, setMuted] = useState(false);
+  const [repeatMode, setRepeatMode] = useState<"off" | "context" | "track">("off");
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [queueItems, setQueueItems] = useState<
+    { id: string; name: string; artists: string; coverUrl: string | null }[]
+  >([]);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueError, setQueueError] = useState<string | null>(null);
   const [devices, setDevices] = useState<
     {
       id: string;
@@ -99,6 +106,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const playerStateRef = useRef<typeof playerState>(null);
   const lastShuffleSyncRef = useRef(0);
   const [deviceReady, setDeviceReady] = useState(false);
+  const commandQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingCommandsRef = useRef(0);
+  const [commandBusy, setCommandBusy] = useState(false);
+  const lastCommandAtRef = useRef(0);
+  const playbackRecoveryRef = useRef(false);
 
   function formatPlayerError(message?: string | null) {
     if (!message) return null;
@@ -162,6 +174,26 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     return res;
   }
 
+  const enqueueCommand = useCallback(async (fn: () => Promise<void>) => {
+    pendingCommandsRef.current += 1;
+    setCommandBusy(true);
+    const next = commandQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        lastCommandAtRef.current = Date.now();
+        await fn();
+      })
+      .finally(() => {
+        pendingCommandsRef.current -= 1;
+        if (pendingCommandsRef.current <= 0) {
+          pendingCommandsRef.current = 0;
+          setCommandBusy(false);
+        }
+      });
+    commandQueueRef.current = next;
+    return next;
+  }, []);
+
   async function ensureActiveDevice(
     targetId: string,
     token: string,
@@ -204,6 +236,58 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     return null;
   }
 
+  async function fetchQueue() {
+    if (!accessTokenRef.current) return;
+    setQueueLoading(true);
+    setQueueError(null);
+    try {
+      const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player/queue");
+      if (!res?.ok) {
+        setQueueError("Queue ophalen lukt nu niet.");
+        return;
+      }
+      const data = await res.json();
+      const nextTracks = Array.isArray(data?.queue) ? data.queue : [];
+      const mapped = nextTracks.map((track: any) => ({
+        id: track?.id ?? crypto.randomUUID(),
+        name: track?.name ?? "Onbekend nummer",
+        artists: Array.isArray(track?.artists)
+          ? track.artists.map((a: any) => a?.name).filter(Boolean).join(", ")
+          : "",
+        coverUrl: track?.album?.images?.[0]?.url ?? null,
+      }));
+      setQueueItems(mapped);
+    } catch {
+      setQueueError("Queue ophalen lukt nu niet.");
+    } finally {
+      setQueueLoading(false);
+    }
+  }
+
+  async function syncPlaybackState() {
+    const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
+    if (!res?.ok) return;
+    const data = await res.json();
+    if (typeof data?.shuffle_state === "boolean") {
+      setShuffleOn(data.shuffle_state);
+      lastShuffleSyncRef.current = Date.now();
+    }
+    if (typeof data?.repeat_state === "string") {
+      const mode =
+        data.repeat_state === "track"
+          ? "track"
+          : data.repeat_state === "context"
+          ? "context"
+          : "off";
+      setRepeatMode(mode);
+    }
+    if (typeof data?.device?.volume_percent === "number") {
+      const nextVol = data.device.volume_percent / 100;
+      setVolume(nextVol);
+      if (nextVol > 0) lastNonZeroVolumeRef.current = nextVol;
+    }
+  }
+
   const applySdkState = useCallback(
     (state: any) => {
       if (!state) return;
@@ -215,6 +299,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         activeDeviceIdRef.current !== sdkDeviceIdRef.current
       ) {
         return;
+      }
+      const stateDeviceId = state?.device?.id ?? null;
+      if (pendingDeviceIdRef.current && stateDeviceId === pendingDeviceIdRef.current) {
+        setActiveDevice(stateDeviceId, state?.device?.name ?? null);
+        setActiveDeviceRestricted(Boolean(state?.device?.is_restricted));
+        setActiveDeviceSupportsVolume(state?.device?.supports_volume !== false);
+        pendingDeviceIdRef.current = null;
+        setDeviceReady(true);
       }
       const current = state.track_window?.current_track;
       const trackId = current?.id ?? null;
@@ -266,6 +358,22 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       setDurationMs(nextDuration);
       if (onTrackChange) onTrackChange(trackId);
+      if (trackId && Date.now() - lastProgressSyncRef.current > 5000) {
+        lastProgressSyncRef.current = Date.now();
+        try {
+          window.localStorage.setItem(
+            "gs_last_playback",
+            JSON.stringify({
+              trackId,
+              positionMs: safePosition,
+              deviceId: stateDeviceId,
+              updatedAt: Date.now(),
+            })
+          );
+        } catch {
+          // ignore storage issues
+        }
+      }
     },
     [onTrackChange]
   );
@@ -430,6 +538,45 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               setDurationMs(item.duration_ms ?? 0);
               if (onTrackChange) onTrackChange(item.id ?? null);
             }
+            if (typeof data?.repeat_state === "string") {
+              const mode =
+                data.repeat_state === "track"
+                  ? "track"
+                  : data.repeat_state === "context"
+                  ? "context"
+                  : "off";
+              setRepeatMode(mode);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (!playbackRecoveryRef.current) {
+        playbackRecoveryRef.current = true;
+        try {
+          const raw = window.localStorage.getItem("gs_last_playback");
+          if (raw) {
+            const stored = JSON.parse(raw) as {
+              trackId?: string;
+              positionMs?: number;
+              deviceId?: string | null;
+              updatedAt?: number;
+            };
+            if (stored?.trackId && stored.updatedAt && Date.now() - stored.updatedAt < 6 * 60_000) {
+              const targetDevice = stored.deviceId || device_id;
+              await ensureActiveDevice(targetDevice, accessTokenRef.current!, false);
+              await spotifyApiFetch(
+                `https://api.spotify.com/v1/me/player/play?device_id=${targetDevice}`,
+                {
+                  method: "PUT",
+                  body: JSON.stringify({
+                    uris: [`spotify:track:${stored.trackId}`],
+                    position_ms: Math.max(0, stored.positionMs ?? 0),
+                  }),
+                }
+              );
+            }
           }
         } catch {
           // ignore
@@ -475,216 +622,211 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     playerRef.current = player;
 
     const api: PlayerApi = {
-      playQueue: async (uris, offsetUri) => {
-        const token = accessTokenRef.current;
-        let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
-        if (!token) return;
-        if (!currentDevice && sdkDeviceIdRef.current) {
-          currentDevice = sdkDeviceIdRef.current;
-          setActiveDevice(currentDevice, "GSPlayer20 Web");
-        }
-        if (!currentDevice) {
-          setError("Geen Spotify‑apparaat geselecteerd. Kies een apparaat om af te spelen.");
-          return;
-        }
-        if (offsetUri) {
-          const id = offsetUri.split(":").pop() || null;
-          pendingTrackIdRef.current = id;
-          trackChangeLockUntilRef.current = Date.now() + 2000;
-          setPositionMs(0);
-        }
-        if (currentDevice === sdkDeviceIdRef.current) {
-          await playerRef.current?.activateElement?.();
-        }
-
-        const payload = {
-          uris,
-          offset: offsetUri ? { uri: offsetUri } : undefined,
-          position_ms: 0,
-        };
-
-        const ready = await ensureActiveDevice(currentDevice as string, token, true);
-        if (!ready) {
-          setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-          return;
-        }
-
-        try {
-          const res = await spotifyApiFetch(
-            `https://api.spotify.com/v1/me/player/shuffle?state=${
-              shuffleOn ? "true" : "false"
-            }&device_id=${currentDevice}`,
-            {
-              method: "PUT",
-            }
-          );
-          if (res?.ok) {
-            lastShuffleSyncRef.current = Date.now();
-            const confirmed = await confirmShuffle(token);
-            if (typeof confirmed === "boolean") {
-              setShuffleOn(confirmed);
-            }
+      playQueue: async (uris, offsetUri) =>
+        enqueueCommand(async () => {
+          const token = accessTokenRef.current;
+          let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
+          if (!token) return;
+          if (!playbackAllowed) {
+            setError("Ontbrekende Spotify‑rechten. Koppel opnieuw.");
+            return;
           }
-        } catch {
-          // ignore
-        }
-
-        const attemptPlay = async () => {
-          return spotifyApiFetch(
-            `https://api.spotify.com/v1/me/player/play?device_id=${currentDevice}`,
-            {
-              method: "PUT",
-              body: JSON.stringify(payload),
-            }
-          );
-        };
-
-        let res = await attemptPlay();
-        if (res && !res.ok) {
-          if (res.status === 404 || res.status >= 500) {
-            refreshDevices(true);
-            await new Promise((resolve) => setTimeout(resolve, 600));
-            res = await attemptPlay();
+          if (!currentDevice && sdkDeviceIdRef.current) {
+            currentDevice = sdkDeviceIdRef.current;
+            setActiveDevice(currentDevice, "GSPlayer20 Web");
           }
-          if (res && !res.ok && res.status !== 204) {
-            if (res.status === 403) {
-              setError("Ontbrekende Spotify‑rechten. Koppel opnieuw.");
-            } else {
-              setError("Afspelen lukt nu niet. Probeer opnieuw.");
-            }
+          if (!currentDevice) {
+            setError(
+              "Geen Spotify‑apparaat geselecteerd. Kies een apparaat om af te spelen."
+            );
+            return;
           }
-        }
-        if (res && res.ok) {
-          setPositionMs(0);
-          lastKnownPositionRef.current = 0;
           if (offsetUri) {
+            const id = offsetUri.split(":").pop() || null;
+            pendingTrackIdRef.current = id;
+            trackChangeLockUntilRef.current = Date.now() + 2000;
+            setPositionMs(0);
+          }
+          if (currentDevice === sdkDeviceIdRef.current) {
+            await playerRef.current?.activateElement?.();
+          }
+
+          const payload = {
+            uris,
+            offset: offsetUri ? { uri: offsetUri } : undefined,
+            position_ms: 0,
+          };
+
+          const ready = await ensureActiveDevice(currentDevice as string, token, true);
+          if (!ready) {
+            setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+            return;
+          }
+
+          try {
+            const res = await spotifyApiFetch(
+              `https://api.spotify.com/v1/me/player/shuffle?state=${
+                shuffleOn ? "true" : "false"
+              }&device_id=${currentDevice}`,
+              { method: "PUT" }
+            );
+            if (res?.ok) {
+              lastShuffleSyncRef.current = Date.now();
+              const confirmed = await confirmShuffle(token);
+              if (typeof confirmed === "boolean") setShuffleOn(confirmed);
+            }
+          } catch {
+            // ignore
+          }
+
+          const attemptPlay = async () => {
+            return spotifyApiFetch(
+              `https://api.spotify.com/v1/me/player/play?device_id=${currentDevice}`,
+              { method: "PUT", body: JSON.stringify(payload) }
+            );
+          };
+
+          let res = await attemptPlay();
+          if (res && !res.ok) {
+            if (res.status === 404 || res.status >= 500) {
+              refreshDevices(true);
+              await new Promise((resolve) => setTimeout(resolve, 600));
+              res = await attemptPlay();
+            }
+            if (res && !res.ok && res.status !== 204) {
+              if (res.status === 403) {
+                setError("Ontbrekende Spotify‑rechten. Koppel opnieuw.");
+              } else {
+                setError("Afspelen lukt nu niet. Probeer opnieuw.");
+              }
+            }
+          }
+          if (res && res.ok) {
+            setPositionMs(0);
+            lastKnownPositionRef.current = 0;
+            if (offsetUri) {
+              setTimeout(() => {
+                spotifyApiFetch(
+                  `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=0`,
+                  { method: "PUT" }
+                ).catch(() => undefined);
+              }, 200);
+            }
+            if (offsetUri) {
+              const id = offsetUri.split(":").pop() || null;
+              pendingTrackIdRef.current = id;
+              trackChangeLockUntilRef.current = Date.now() + 3000;
+            }
+          }
+        }),
+      playContext: async (contextUri, offsetPosition, offsetUri) =>
+        enqueueCommand(async () => {
+          const token = accessTokenRef.current;
+          let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
+          if (!token) return;
+          if (!playbackAllowed) {
+            setError("Ontbrekende Spotify‑rechten. Koppel opnieuw.");
+            return;
+          }
+          if (!currentDevice && sdkDeviceIdRef.current) {
+            currentDevice = sdkDeviceIdRef.current;
+            setActiveDevice(currentDevice, "GSPlayer20 Web");
+          }
+          if (!currentDevice) {
+            setError(
+              "Geen Spotify‑apparaat geselecteerd. Kies een apparaat om af te spelen."
+            );
+            return;
+          }
+          if (offsetUri) {
+            const id = offsetUri.split(":").pop() || null;
+            pendingTrackIdRef.current = id;
+            trackChangeLockUntilRef.current = Date.now() + 2000;
+            setPositionMs(0);
+          }
+          if (currentDevice === sdkDeviceIdRef.current) {
+            await playerRef.current?.activateElement?.();
+          }
+
+          const ready = await ensureActiveDevice(currentDevice as string, token, true);
+          if (!ready) {
+            setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+            return;
+          }
+
+          try {
+            const res = await spotifyApiFetch(
+              `https://api.spotify.com/v1/me/player/shuffle?state=${
+                shuffleOn ? "true" : "false"
+              }&device_id=${currentDevice}`,
+              { method: "PUT" }
+            );
+            if (res?.ok) {
+              lastShuffleSyncRef.current = Date.now();
+              const confirmed = await confirmShuffle(token);
+              if (typeof confirmed === "boolean") setShuffleOn(confirmed);
+            }
+          } catch {
+            // ignore
+          }
+
+          const body = {
+            context_uri: contextUri,
+            offset:
+              typeof offsetPosition === "number"
+                ? { position: Math.max(0, offsetPosition) }
+                : offsetUri
+                ? { uri: offsetUri }
+                : undefined,
+            position_ms: 0,
+          };
+
+          const res = await spotifyApiFetch(
+            `https://api.spotify.com/v1/me/player/play?device_id=${currentDevice}`,
+            { method: "PUT", body: JSON.stringify(body) }
+          );
+          if (!res) return;
+          if (res.ok) {
+            setPositionMs(0);
+            lastKnownPositionRef.current = 0;
             setTimeout(() => {
               spotifyApiFetch(
                 `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=0`,
-                {
-                  method: "PUT",
-                }
+                { method: "PUT" }
               ).catch(() => undefined);
             }, 200);
-          }
-          if (offsetUri) {
-            const id = offsetUri.split(":").pop() || null;
-            pendingTrackIdRef.current = id;
-            trackChangeLockUntilRef.current = Date.now() + 3000;
-          }
-        }
-      },
-      playContext: async (contextUri, offsetPosition, offsetUri) => {
-        const token = accessTokenRef.current;
-        let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
-        if (!token) return;
-        if (!currentDevice && sdkDeviceIdRef.current) {
-          currentDevice = sdkDeviceIdRef.current;
-          setActiveDevice(currentDevice, "GSPlayer20 Web");
-        }
-        if (!currentDevice) {
-          setError("Geen Spotify‑apparaat geselecteerd. Kies een apparaat om af te spelen.");
-          return;
-        }
-        if (offsetUri) {
-          const id = offsetUri.split(":").pop() || null;
-          pendingTrackIdRef.current = id;
-          trackChangeLockUntilRef.current = Date.now() + 2000;
-          setPositionMs(0);
-        }
-        if (currentDevice === sdkDeviceIdRef.current) {
-          await playerRef.current?.activateElement?.();
-        }
-
-        const ready = await ensureActiveDevice(currentDevice as string, token, true);
-        if (!ready) {
-          setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-          return;
-        }
-
-        try {
-          const res = await spotifyApiFetch(
-            `https://api.spotify.com/v1/me/player/shuffle?state=${
-              shuffleOn ? "true" : "false"
-            }&device_id=${currentDevice}`,
-            {
-              method: "PUT",
+            if (offsetUri) {
+              const id = offsetUri.split(":").pop() || null;
+              pendingTrackIdRef.current = id;
+              trackChangeLockUntilRef.current = Date.now() + 3000;
             }
+          }
+        }),
+      togglePlay: async () =>
+        enqueueCommand(async () => {
+          if (!playerRef.current) return;
+          await playerRef.current.togglePlay();
+        }),
+      next: async () =>
+        enqueueCommand(async () => {
+          const currentDevice = deviceIdRef.current;
+          const token = accessTokenRef.current;
+          if (!currentDevice || !token) return;
+          await spotifyApiFetch(
+            `https://api.spotify.com/v1/me/player/next?device_id=${currentDevice}`,
+            { method: "POST" }
           );
-          if (res?.ok) {
-            lastShuffleSyncRef.current = Date.now();
-            const confirmed = await confirmShuffle(token);
-            if (typeof confirmed === "boolean") {
-              setShuffleOn(confirmed);
-            }
-          }
-        } catch {
-          // ignore
-        }
-
-        const body = {
-          context_uri: contextUri,
-          offset:
-            typeof offsetPosition === "number"
-              ? { position: Math.max(0, offsetPosition) }
-              : offsetUri
-              ? { uri: offsetUri }
-              : undefined,
-          position_ms: 0,
-        };
-
-        const res = await spotifyApiFetch(
-          `https://api.spotify.com/v1/me/player/play?device_id=${currentDevice}`,
-          {
-            method: "PUT",
-            body: JSON.stringify(body),
-          }
-        );
-        if (!res) return;
-        if (res.ok) {
-          setPositionMs(0);
-          lastKnownPositionRef.current = 0;
-          setTimeout(() => {
-            spotifyApiFetch(
-              `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=0`,
-              {
-                method: "PUT",
-              }
-            ).catch(() => undefined);
-          }, 200);
-          if (offsetUri) {
-            const id = offsetUri.split(":").pop() || null;
-            pendingTrackIdRef.current = id;
-            trackChangeLockUntilRef.current = Date.now() + 3000;
-          }
-        }
-      },
-      togglePlay: async () => {
-        if (!playerRef.current) return;
-        await playerRef.current.togglePlay();
-      },
-      next: async () => {
-        const currentDevice = deviceIdRef.current;
-        const token = accessTokenRef.current;
-        if (!currentDevice || !token) return;
-        await spotifyApiFetch(
-          `https://api.spotify.com/v1/me/player/next?device_id=${currentDevice}`,
-          {
-            method: "POST",
-          }
-        );
-      },
-      previous: async () => {
-        const currentDevice = deviceIdRef.current;
-        const token = accessTokenRef.current;
-        if (!currentDevice || !token) return;
-        await spotifyApiFetch(
-          `https://api.spotify.com/v1/me/player/previous?device_id=${currentDevice}`,
-          {
-            method: "POST",
-          }
-        );
-      },
+        }),
+      previous: async () =>
+        enqueueCommand(async () => {
+          const currentDevice = deviceIdRef.current;
+          const token = accessTokenRef.current;
+          if (!currentDevice || !token) return;
+          await spotifyApiFetch(
+            `https://api.spotify.com/v1/me/player/previous?device_id=${currentDevice}`,
+            { method: "POST" }
+          );
+        }),
     };
 
     onReady(api);
@@ -722,11 +864,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   useEffect(() => {
     function handleFocus() {
       refreshDevices();
+      syncPlaybackState().catch(() => undefined);
     }
     if (typeof window === "undefined") return;
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, [refreshDevices]);
+
+  useEffect(() => {
+    if (queueOpen) {
+      fetchQueue().catch(() => undefined);
+    }
+  }, [queueOpen]);
 
   useEffect(() => {
     const now = Date.now();
@@ -880,6 +1029,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         setShuffleOn(data.shuffle_state);
         lastShuffleSyncRef.current = Date.now();
       }
+      if (typeof data?.repeat_state === "string") {
+        const mode =
+          data.repeat_state === "track"
+            ? "track"
+            : data.repeat_state === "context"
+            ? "context"
+            : "off";
+        setRepeatMode(mode);
+      }
       if (typeof data?.is_playing === "boolean") {
         lastIsPlayingRef.current = data.is_playing;
       }
@@ -916,9 +1074,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     setDeviceId(targetId);
     deviceIdRef.current = targetId;
     const shouldPlay = lastIsPlayingRef.current;
-    await ensureActiveDevice(targetId, token, shouldPlay);
-    refreshDevices(true);
-    setTimeout(() => refreshDevices(true), 800);
+    await enqueueCommand(async () => {
+      await ensureActiveDevice(targetId, token, shouldPlay);
+      refreshDevices(true);
+      setTimeout(() => refreshDevices(true), 800);
+    });
   }
 
   async function handleTogglePlay() {
@@ -930,23 +1090,27 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       return;
     }
     if (Date.now() < rateLimitRef.current.until) return;
-    if (currentDevice === sdkDeviceIdRef.current) {
-      await playerRef.current?.activateElement?.();
-      await playerRef.current?.togglePlay?.();
-      return;
-    }
-    const ready = await ensureActiveDevice(currentDevice, token, !playerState?.paused);
-    if (!ready) {
-      setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-      return;
-    }
-    const endpoint = playerState?.paused ? "play" : "pause";
-    const res = await spotifyApiFetch(
-      `https://api.spotify.com/v1/me/player/${endpoint}?device_id=${currentDevice}`,
-      {
-        method: "PUT",
+    await enqueueCommand(async () => {
+      if (currentDevice === sdkDeviceIdRef.current) {
+        await playerRef.current?.activateElement?.();
+        await playerRef.current?.togglePlay?.();
+        return;
       }
-    );
+      const ready = await ensureActiveDevice(
+        currentDevice,
+        token,
+        !playerState?.paused
+      );
+      if (!ready) {
+        setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+        return;
+      }
+      const endpoint = playerState?.paused ? "play" : "pause";
+      await spotifyApiFetch(
+        `https://api.spotify.com/v1/me/player/${endpoint}?device_id=${currentDevice}`,
+        { method: "PUT" }
+      );
+    });
   }
 
   async function handleNext() {
@@ -955,37 +1119,37 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
-    if (currentDevice === sdkDeviceIdRef.current) {
-      const nextTrack = lastSdkStateRef.current?.track_window?.next_tracks?.[0];
-      if (nextTrack) {
-        setOptimisticTrack({
-          name: nextTrack.name ?? "Unknown track",
-          artists: (nextTrack.artists ?? [])
-            .map((a: any) => a.name)
-            .join(", "),
-          album: nextTrack.album?.name ?? "",
-          coverUrl: nextTrack.album?.images?.[0]?.url ?? null,
-        });
+    await enqueueCommand(async () => {
+      if (currentDevice === sdkDeviceIdRef.current) {
+        const nextTrack = lastSdkStateRef.current?.track_window?.next_tracks?.[0];
+        if (nextTrack) {
+          setOptimisticTrack({
+            name: nextTrack.name ?? "Unknown track",
+            artists: (nextTrack.artists ?? [])
+              .map((a: any) => a.name)
+              .join(", "),
+            album: nextTrack.album?.name ?? "",
+            coverUrl: nextTrack.album?.images?.[0]?.url ?? null,
+          });
+        }
+        await playerRef.current?.nextTrack?.();
+        setTimeout(async () => {
+          const state = await playerRef.current?.getCurrentState?.();
+          if (state) applySdkState(state);
+        }, 150);
+        return;
       }
-      await playerRef.current?.nextTrack?.();
-      setTimeout(async () => {
-        const state = await playerRef.current?.getCurrentState?.();
-        if (state) applySdkState(state);
-      }, 150);
-      return;
-    }
-    const ready = await ensureActiveDevice(currentDevice, token, true);
-    if (!ready) {
-      setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-      return;
-    }
-    const res = await spotifyApiFetch(
-      `https://api.spotify.com/v1/me/player/next?device_id=${currentDevice}`,
-      {
-        method: "POST",
+      const ready = await ensureActiveDevice(currentDevice, token, true);
+      if (!ready) {
+        setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+        return;
       }
-    );
-    pendingTrackIdRef.current = null;
+      await spotifyApiFetch(
+        `https://api.spotify.com/v1/me/player/next?device_id=${currentDevice}`,
+        { method: "POST" }
+      );
+      pendingTrackIdRef.current = null;
+    });
   }
 
   async function handlePrevious() {
@@ -994,36 +1158,36 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
-    if (currentDevice === sdkDeviceIdRef.current) {
-      const prevTrack = lastSdkStateRef.current?.track_window?.previous_tracks?.[0];
-      if (prevTrack) {
-        setOptimisticTrack({
-          name: prevTrack.name ?? "Unknown track",
-          artists: (prevTrack.artists ?? [])
-            .map((a: any) => a.name)
-            .join(", "),
-          album: prevTrack.album?.name ?? "",
-          coverUrl: prevTrack.album?.images?.[0]?.url ?? null,
-        });
+    await enqueueCommand(async () => {
+      if (currentDevice === sdkDeviceIdRef.current) {
+        const prevTrack = lastSdkStateRef.current?.track_window?.previous_tracks?.[0];
+        if (prevTrack) {
+          setOptimisticTrack({
+            name: prevTrack.name ?? "Unknown track",
+            artists: (prevTrack.artists ?? [])
+              .map((a: any) => a.name)
+              .join(", "),
+            album: prevTrack.album?.name ?? "",
+            coverUrl: prevTrack.album?.images?.[0]?.url ?? null,
+          });
+        }
+        await playerRef.current?.previousTrack?.();
+        setTimeout(async () => {
+          const state = await playerRef.current?.getCurrentState?.();
+          if (state) applySdkState(state);
+        }, 150);
+        return;
       }
-      await playerRef.current?.previousTrack?.();
-      setTimeout(async () => {
-        const state = await playerRef.current?.getCurrentState?.();
-        if (state) applySdkState(state);
-      }, 150);
-      return;
-    }
-    const ready = await ensureActiveDevice(currentDevice, token, true);
-    if (!ready) {
-      setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-      return;
-    }
-    const res = await spotifyApiFetch(
-      `https://api.spotify.com/v1/me/player/previous?device_id=${currentDevice}`,
-      {
-        method: "POST",
+      const ready = await ensureActiveDevice(currentDevice, token, true);
+      if (!ready) {
+        setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+        return;
       }
-    );
+      await spotifyApiFetch(
+        `https://api.spotify.com/v1/me/player/previous?device_id=${currentDevice}`,
+        { method: "POST" }
+      );
+    });
   }
 
   async function handleToggleShuffle() {
@@ -1032,40 +1196,66 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
-    const ready = await ensureActiveDevice(currentDevice, token, false);
-    if (!ready) {
-      setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-      return;
-    }
-    let current = shuffleOn;
-    try {
-      const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
-      if (res?.ok) {
-        const data = await res.json();
-        if (typeof data?.shuffle_state === "boolean") {
-          current = data.shuffle_state;
-          setShuffleOn(current);
-          lastShuffleSyncRef.current = Date.now();
+    await enqueueCommand(async () => {
+      const ready = await ensureActiveDevice(currentDevice, token, false);
+      if (!ready) {
+        setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+        return;
+      }
+      let current = shuffleOn;
+      try {
+        const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
+        if (res?.ok) {
+          const data = await res.json();
+          if (typeof data?.shuffle_state === "boolean") {
+            current = data.shuffle_state;
+            setShuffleOn(current);
+            lastShuffleSyncRef.current = Date.now();
+          }
         }
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
-    }
-    const next = !current;
-    const res = await spotifyApiFetch(
-      `https://api.spotify.com/v1/me/player/shuffle?state=${next ? "true" : "false"}&device_id=${currentDevice}`,
-      {
-        method: "PUT",
+      const next = !current;
+      await spotifyApiFetch(
+        `https://api.spotify.com/v1/me/player/shuffle?state=${
+          next ? "true" : "false"
+        }&device_id=${currentDevice}`,
+        { method: "PUT" }
+      );
+      const confirmed = await confirmShuffle(token);
+      if (typeof confirmed === "boolean") {
+        setShuffleOn(confirmed);
+        lastShuffleSyncRef.current = Date.now();
+      } else {
+        setShuffleOn(next);
+        lastShuffleSyncRef.current = Date.now();
       }
-    );
-    const confirmed = await confirmShuffle(token);
-    if (typeof confirmed === "boolean") {
-      setShuffleOn(confirmed);
-      lastShuffleSyncRef.current = Date.now();
-    } else {
-      setShuffleOn(next);
-      lastShuffleSyncRef.current = Date.now();
-    }
+    });
+  }
+
+  async function handleToggleRepeat() {
+    setPlaybackTouched(true);
+    const token = accessTokenRef.current;
+    const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
+    if (!token || !currentDevice) return;
+    if (Date.now() < rateLimitRef.current.until) return;
+    const next =
+      repeatMode === "off" ? "context" : repeatMode === "context" ? "track" : "off";
+    await enqueueCommand(async () => {
+      const ready = await ensureActiveDevice(currentDevice, token, false);
+      if (!ready) {
+        setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+        return;
+      }
+      const res = await spotifyApiFetch(
+        `https://api.spotify.com/v1/me/player/repeat?state=${next}&device_id=${currentDevice}`,
+        { method: "PUT" }
+      );
+      if (res?.ok) {
+        setRepeatMode(next);
+      }
+    });
   }
 
   function formatTime(ms?: number) {
@@ -1086,18 +1276,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     lastUserSeekAtRef.current = Date.now();
     if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
     seekTimerRef.current = setTimeout(async () => {
-      if (currentDevice === sdkDeviceIdRef.current) {
-        await playerRef.current?.seek?.(Math.floor(nextMs));
-        return;
-      }
-      const res = await spotifyApiFetch(
-        `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=${Math.floor(
-          nextMs
-        )}`,
-        {
-          method: "PUT",
+      await enqueueCommand(async () => {
+        if (currentDevice === sdkDeviceIdRef.current) {
+          await playerRef.current?.seek?.(Math.floor(nextMs));
+          return;
         }
-      );
+        await spotifyApiFetch(
+          `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=${Math.floor(
+            nextMs
+          )}`,
+          { method: "PUT" }
+        );
+      });
     }, 120);
   }
 
@@ -1121,20 +1311,22 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (Date.now() < rateLimitRef.current.until) return;
       if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current);
       volumeTimerRef.current = setTimeout(async () => {
-        const res = await spotifyApiFetch(
-          `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(
-            clamped * 100
-          )}&device_id=${activeDeviceIdRef.current}`,
-          {
-            method: "PUT",
-          }
-        );
+        await enqueueCommand(async () => {
+          await spotifyApiFetch(
+            `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(
+              clamped * 100
+            )}&device_id=${activeDeviceIdRef.current}`,
+            { method: "PUT" }
+          );
+        });
       }, 120);
       return;
     }
     if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current);
     volumeTimerRef.current = setTimeout(async () => {
-      await playerRef.current?.setVolume?.(clamped);
+      await enqueueCommand(async () => {
+        await playerRef.current?.setVolume?.(clamped);
+      });
     }, 120);
   }
 
@@ -1281,6 +1473,26 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             </svg>
           </div>
           <div
+            className={`player-control player-control-ghost player-control-grad${
+              repeatMode !== "off" ? " active" : ""
+            }`}
+            role="button"
+            tabIndex={0}
+            aria-label={`Repeat ${repeatMode}`}
+            title={`Repeat ${repeatMode}`}
+            onClick={handleToggleRepeat}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleToggleRepeat();
+              }
+            }}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M4 4.5h6.5l-1.6-1.6a.5.5 0 0 1 .7-.7l2.8 2.8a.5.5 0 0 1 0 .7l-2.8 2.8a.5.5 0 0 1-.7-.7l1.6-1.6H4a2 2 0 0 0-2 2v2a.5.5 0 0 1-1 0v-2a3 3 0 0 1 3-3zm8 3a.5.5 0 0 1 .5.5v2a3 3 0 0 1-3 3H2.5l1.6 1.6a.5.5 0 1 1-.7.7l-2.8-2.8a.5.5 0 0 1 0-.7l2.8-2.8a.5.5 0 0 1 .7.7L2.5 12H9.5a2 2 0 0 0 2-2v-2a.5.5 0 0 1 .5-.5z" />
+            </svg>
+          </div>
+          <div
             className="player-control player-control-ghost player-control-grad"
             role="button"
             tabIndex={0}
@@ -1338,6 +1550,26 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M12.5 3.5a.5.5 0 0 0-1 0v9a.5.5 0 0 0 1 0v-9zM10.9 8.4 4.7 4.3a.5.5 0 0 0-.8.4v6.6a.5.5 0 0 0 .8.4l6.2-4.1a.5.5 0 0 0 0-.8z" />
+            </svg>
+          </div>
+          <div
+            className={`player-control player-control-ghost player-control-grad${
+              queueOpen ? " active" : ""
+            }`}
+            role="button"
+            tabIndex={0}
+            aria-label="Queue"
+            title="Queue"
+            onClick={() => setQueueOpen((prev) => !prev)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setQueueOpen((prev) => !prev);
+              }
+            }}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M2.5 3h8a.5.5 0 0 1 0 1h-8a.5.5 0 0 1 0-1zm0 5h11a.5.5 0 0 1 0 1h-11a.5.5 0 0 1 0-1zm0 5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1 0-1z" />
             </svg>
           </div>
         </div>
@@ -1488,6 +1720,40 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           />
         </div>
       </div>
+      {queueOpen ? (
+        <div className="player-queue">
+          <div className="player-queue-title">Up Next</div>
+          {queueLoading ? (
+            <div className="text-subtle">Queue laden...</div>
+          ) : queueError ? (
+            <div className="text-subtle">{queueError}</div>
+          ) : queueItems.length === 0 ? (
+            <div className="text-subtle">Geen volgende nummers.</div>
+          ) : (
+            <div className="player-queue-list">
+              {queueItems.slice(0, 10).map((track) => (
+                <div key={track.id} className="player-queue-item">
+                  {track.coverUrl ? (
+                    <Image
+                      src={track.coverUrl}
+                      alt={track.name}
+                      width={40}
+                      height={40}
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="player-queue-cover" />
+                  )}
+                  <div>
+                    <div className="player-queue-name">{track.name}</div>
+                    <div className="text-subtle">{track.artists}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

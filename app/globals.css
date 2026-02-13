@@ -850,6 +850,49 @@ details[open] > .details-summary::after {
   border: 1px solid rgba(2, 154, 228, 0.25);
 }
 
+.player-queue {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 16px;
+  background: linear-gradient(
+      135deg,
+      rgba(2, 154, 228, 0.18),
+      rgba(19, 194, 161, 0.16),
+      rgba(69, 221, 97, 0.12)
+    ),
+    rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(2, 154, 228, 0.25);
+}
+
+.player-queue-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.player-queue-list {
+  display: grid;
+  gap: 8px;
+}
+
+.player-queue-item {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.player-queue-cover {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: rgba(2, 154, 228, 0.2);
+  border: 1px solid rgba(2, 154, 228, 0.3);
+}
+
+.player-queue-name {
+  font-weight: 500;
+}
+
 .player-meta {
   min-width: 0;
 }

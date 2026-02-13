@@ -29,16 +29,16 @@ export default function ChatGptButton({
   }
 
   async function loadTrackMeta() {
-    if (!trackId) return trackMeta;
+    if (!trackId) return { formatted: trackMeta, tokens: undefined };
     const cached = cache.get(trackId);
     if (cached && cached.expiresAt > Date.now()) {
-      return cached.value;
+      return { formatted: cached.value, tokens: undefined };
     }
     try {
       const url = new URL("/api/spotify/tracks/meta", window.location.origin);
       url.searchParams.set("trackId", trackId);
       const res = await fetch(url.toString());
-      if (!res.ok) return trackMeta;
+      if (!res.ok) return { formatted: trackMeta, tokens: undefined };
       const data = await res.json();
       const value = formatTrackMeta({
         id: data.id ?? trackId,
@@ -59,9 +59,27 @@ export default function ChatGptButton({
         popularity: data.popularity ?? null,
       });
       cache.set(trackId, { value, expiresAt: Date.now() + 5 * 60_000 });
-      return value;
+      const tokens = {
+        id: data.id ?? trackId,
+        name: data.name ?? null,
+        artistIds: Array.isArray(data.artists)
+          ? data.artists.map((artist: { id?: string }) => artist.id).filter(Boolean)
+          : undefined,
+        artistNames: Array.isArray(data.artists)
+          ? data.artists
+              .map((artist: { name?: string }) => artist.name)
+              .filter(Boolean)
+          : undefined,
+        albumId: data.album?.id ?? null,
+        albumReleaseDate: data.album?.release_date ?? null,
+        durationMs: data.duration_ms ?? null,
+        isrc: data.external_ids?.isrc ?? null,
+        explicit: data.explicit ?? null,
+        popularity: data.popularity ?? null,
+      };
+      return { formatted: value, tokens };
     } catch {
-      return trackMeta;
+      return { formatted: trackMeta, tokens: undefined };
     }
   }
 
@@ -72,8 +90,16 @@ export default function ChatGptButton({
       const stored = window.localStorage.getItem("gs_chatgpt_prompt");
       if (stored) template = normalizePromptTemplate(stored);
     }
-    const meta = await loadTrackMeta();
-    const prompt = fillChatGptPrompt(template, trackUrl, playlistNames, meta);
+    const metaResult = await loadTrackMeta();
+    const meta = metaResult.formatted;
+    const metaTokens = metaResult.tokens;
+    const prompt = fillChatGptPrompt(
+      template,
+      trackUrl,
+      playlistNames,
+      meta,
+      metaTokens
+    );
     if (navigator.clipboard?.writeText) {
       try {
         await navigator.clipboard.writeText(prompt);

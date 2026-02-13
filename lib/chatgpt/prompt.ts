@@ -2,7 +2,33 @@ export const CHATGPT_PROMPT_TOKENS = [
   "[TRACK_URL]",
   "[PLAYLISTS]",
   "[TRACK_META]",
+  "[TRACK_ID]",
+  "[TRACK_NAME]",
+  "[ARTIST_IDS]",
+  "[ARTIST_NAMES]",
+  "[ALBUM_ID]",
+  "[ALBUM_RELEASE_DATE]",
+  "[DURATION_MS]",
+  "[ISRC]",
+  "[EXPLICIT]",
+  "[POPULARITY]",
 ] as const;
+
+export const CHATGPT_PROMPT_TOKEN_LABELS: { token: string; label: string }[] = [
+  { token: "[TRACK_URL]", label: "Spotify track URL" },
+  { token: "[PLAYLISTS]", label: "Beschikbare playlists" },
+  { token: "[TRACK_META]", label: "Verificatie-metadata (samenvatting)" },
+  { token: "[TRACK_ID]", label: "Primaire verificatie-ID" },
+  { token: "[TRACK_NAME]", label: "Tracknaam validatie" },
+  { token: "[ARTIST_IDS]", label: "Unieke artiest-ID validatie" },
+  { token: "[ARTIST_NAMES]", label: "Cross-check met verwachte artiest" },
+  { token: "[ALBUM_ID]", label: "Albumvalidatie" },
+  { token: "[ALBUM_RELEASE_DATE]", label: "Chronologische verificatie" },
+  { token: "[DURATION_MS]", label: "Exacte technische verificatie" },
+  { token: "[ISRC]", label: "Sterke unieke identificator (indien aanwezig)" },
+  { token: "[EXPLICIT]", label: "Consistentiecontrole" },
+  { token: "[POPULARITY]", label: "Plausibiliteitscontrole" },
+];
 
 export const CHATGPT_PROMPT_TEMPLATE = `Je bent een uiterst nauwkeurige muziekcurator en Spotify-verifier. Je werkt in “Instant”-modus: snel, maar met strikte verificatie en nul aannames.
 
@@ -75,15 +101,60 @@ export function fillChatGptPrompt(
   template: string,
   trackUrl: string | null,
   playlists: string[],
-  trackMeta?: string
+  trackMeta?: string,
+  metaTokens?: {
+    id?: string | null;
+    name?: string | null;
+    artistIds?: string[];
+    artistNames?: string[];
+    albumId?: string | null;
+    albumReleaseDate?: string | null;
+    durationMs?: number | null;
+    isrc?: string | null;
+    explicit?: boolean | number | null;
+    popularity?: number | null;
+  }
 ) {
   const url = trackUrl || "Onbekend";
   const list = playlists.length ? playlists.join("\n") : "—";
   const meta = trackMeta?.trim() ? trackMeta.trim() : "—";
-  return template
-    .replaceAll("[TRACK_URL]", url)
-    .replaceAll("[PLAYLISTS]", list)
-    .replaceAll("[TRACK_META]", meta);
+  const explicitValue =
+    metaTokens?.explicit === true || metaTokens?.explicit === 1
+      ? "ja"
+      : metaTokens?.explicit === false || metaTokens?.explicit === 0
+      ? "nee"
+      : "Onbekend";
+  const popularityValue =
+    metaTokens?.popularity === null || metaTokens?.popularity === undefined
+      ? "Onbekend"
+      : String(metaTokens.popularity);
+  const replacements: Record<string, string> = {
+    "[TRACK_URL]": url,
+    "[PLAYLISTS]": list,
+    "[TRACK_META]": meta,
+    "[TRACK_ID]": metaTokens?.id ?? "Onbekend",
+    "[TRACK_NAME]": metaTokens?.name ?? "Onbekend",
+    "[ARTIST_IDS]": metaTokens?.artistIds?.length
+      ? metaTokens.artistIds.join(", ")
+      : "Onbekend",
+    "[ARTIST_NAMES]": metaTokens?.artistNames?.length
+      ? metaTokens.artistNames.join(", ")
+      : "Onbekend",
+    "[ALBUM_ID]": metaTokens?.albumId ?? "Onbekend",
+    "[ALBUM_RELEASE_DATE]": metaTokens?.albumReleaseDate ?? "Onbekend",
+    "[DURATION_MS]":
+      metaTokens?.durationMs === null || metaTokens?.durationMs === undefined
+        ? "Onbekend"
+        : String(metaTokens.durationMs),
+    "[ISRC]": metaTokens?.isrc ?? "Onbekend",
+    "[EXPLICIT]": explicitValue,
+    "[POPULARITY]": popularityValue,
+  };
+  let next = template;
+  for (const [token, value] of Object.entries(replacements)) {
+    next = next.replaceAll(token, value);
+  }
+  return next;
 }
 
 export function normalizePromptTemplate(value: string) {

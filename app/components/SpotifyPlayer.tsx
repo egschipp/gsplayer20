@@ -114,6 +114,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const queueOrderRef = useRef<number[] | null>(null);
   const queuePosRef = useRef(0);
   const queueModeRef = useRef<"queue" | "context" | null>(null);
+  const shuffleInitDoneRef = useRef(false);
   const [deviceReady, setDeviceReady] = useState(false);
   const { enqueue: enqueueCommand, busy: commandBusy } = usePlaybackCommandQueue();
   const lastCommandAtRef = useRef(0);
@@ -259,23 +260,32 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (pos >= 0) queuePosRef.current = pos;
   }, [getIndexFromTrackId]);
 
-  const rebuildQueueOrder = useCallback((nextShuffle: boolean) => {
+  const rebuildQueueOrder = useCallback((nextShuffle: boolean, forceRebuild = false) => {
     if (queueModeRef.current !== "queue" || !queueUrisRef.current?.length) return;
     const uris = queueUrisRef.current;
-    const activeTrackId = pendingTrackIdRef.current || lastTrackIdRef.current;
+    const activeTrackId = lastTrackIdRef.current || pendingTrackIdRef.current;
     const currentIndex = getIndexFromTrackId(uris, activeTrackId);
     const startIndex = currentIndex >= 0 ? currentIndex : queueIndexRef.current;
     queueIndexRef.current = Math.max(0, startIndex);
     if (nextShuffle) {
+      if (
+        !forceRebuild &&
+        queueOrderRef.current?.length === uris.length &&
+        queueOrderRef.current.includes(queueIndexRef.current)
+      ) {
+        queuePosRef.current = queueOrderRef.current.indexOf(queueIndexRef.current);
+        return;
+      }
       queueOrderRef.current = buildShuffleOrder(uris.length, queueIndexRef.current);
-      queuePosRef.current = 0;
+      queuePosRef.current = queueOrderRef.current.indexOf(queueIndexRef.current);
+      if (queuePosRef.current < 0) queuePosRef.current = 0;
       return;
     }
     queueOrderRef.current = null;
     queuePosRef.current = queueIndexRef.current;
   }, [buildShuffleOrder, getIndexFromTrackId]);
 
-  async function confirmShuffleState() {
+  async function confirmShuffleState(expectedState?: boolean) {
     const delays = [0, 180, 380, 650];
     for (const delay of delays) {
       if (delay > 0) {
@@ -285,6 +295,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (!res?.ok) continue;
       const data = await res.json();
       if (typeof data?.shuffle_state !== "boolean") continue;
+      if (typeof expectedState === "boolean" && data.shuffle_state !== expectedState) {
+        continue;
+      }
       setShuffleOn(data.shuffle_state);
       shuffleOnRef.current = data.shuffle_state;
       lastShuffleSyncRef.current = Date.now();
@@ -310,15 +323,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       { method: "PUT" }
     );
     if (!res?.ok) return false;
-    const confirmed = await confirmShuffleState();
-    if (typeof confirmed === "boolean") {
-      rebuildQueueOrder(confirmed);
-      return confirmed === nextState;
-    }
     setShuffleOn(nextState);
     shuffleOnRef.current = nextState;
     lastShuffleSyncRef.current = Date.now();
-    rebuildQueueOrder(nextState);
+    rebuildQueueOrder(nextState, nextState);
+    const confirmed = await confirmShuffleState(nextState);
+    if (typeof confirmed === "boolean") {
+      rebuildQueueOrder(confirmed, false);
+      return true;
+    }
     setTimeout(() => {
       syncPlaybackState().catch(() => undefined);
     }, 700);
@@ -721,6 +734,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           // ignore
         }
       }
+      if (!shuffleInitDoneRef.current && accessTokenRef.current) {
+        shuffleInitDoneRef.current = true;
+        setShuffleOn(false);
+        shuffleOnRef.current = false;
+        rebuildQueueOrder(false, true);
+        await setRemoteShuffleState(false, device_id, accessTokenRef.current, false).catch(
+          () => undefined
+        );
+      }
     };
 
     const onNotReady = () => {
@@ -803,7 +825,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           queueIndexRef.current = startIndex;
           if (shuffleOnRef.current) {
             queueOrderRef.current = buildShuffleOrder(uris.length, startIndex);
-            queuePosRef.current = 0;
+            queuePosRef.current = queueOrderRef.current.indexOf(startIndex);
+            if (queuePosRef.current < 0) queuePosRef.current = 0;
           } else {
             queueOrderRef.current = null;
             queuePosRef.current = startIndex;
@@ -1291,7 +1314,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         }
         const uris = queueUrisRef.current;
         if (shuffleOnRef.current && queueOrderRef.current?.length) {
-          queuePosRef.current = Math.min(queuePosRef.current + 1, queueOrderRef.current.length - 1);
+          if (queuePosRef.current >= queueOrderRef.current.length - 1) return;
+          queuePosRef.current += 1;
           const nextIndex = queueOrderRef.current[queuePosRef.current];
           queueIndexRef.current = nextIndex;
           await playUrisAtIndex(uris, nextIndex, currentDevice, token);
@@ -1330,7 +1354,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         }
         const uris = queueUrisRef.current;
         if (shuffleOnRef.current && queueOrderRef.current?.length) {
-          queuePosRef.current = Math.max(queuePosRef.current - 1, 0);
+          if (queuePosRef.current <= 0) return;
+          queuePosRef.current -= 1;
           const prevIndex = queueOrderRef.current[queuePosRef.current];
           queueIndexRef.current = prevIndex;
           await playUrisAtIndex(uris, prevIndex, currentDevice, token);
@@ -1365,7 +1390,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     setShufflePending(true);
     setShuffleOn(next);
     shuffleOnRef.current = next;
-    rebuildQueueOrder(next);
+    rebuildQueueOrder(next, next);
 
     await enqueuePlaybackCommand(async () => {
       try {

@@ -3,6 +3,7 @@ import { getAuthOptions } from "@/lib/auth/options";
 import { hasAllScopes } from "@/lib/spotify/scopes";
 import { getRequestIp, rateLimitResponse, jsonNoStore } from "@/lib/api/guards";
 import { spotifyFetch } from "@/lib/spotify/client";
+import { SpotifyFetchError } from "@/lib/spotify/errors";
 
 export const runtime = "nodejs";
 
@@ -34,7 +35,7 @@ export async function GET(req: Request) {
     return jsonNoStore({ status: "OK", profile });
   } catch (error) {
     const message = String(error);
-    if (message.includes("401")) {
+    if (error instanceof SpotifyFetchError && error.status === 401) {
       return jsonNoStore({ status: "ERROR_REVOKED" }, 401);
     }
     return jsonNoStore({ status: "ERROR_NETWORK" }, 502);

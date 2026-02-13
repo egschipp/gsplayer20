@@ -2,6 +2,7 @@ import { getAppAccessToken, refreshAccessToken } from "@/lib/spotify/tokens";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
 import { getRefreshToken, upsertTokens } from "@/lib/db/queries";
+import { SpotifyFetchError } from "@/lib/spotify/errors";
 
 const FETCH_TIMEOUT_MS = Number(
   process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000"
@@ -30,7 +31,9 @@ export async function spotifyFetch<T>(args: {
   try {
     return await doFetch<T>(url, method, body, accessToken);
   } catch (error) {
-    if (!String(error).includes("401")) {
+    if (error instanceof SpotifyFetchError) {
+      if (error.status !== 401) throw error;
+    } else if (!String(error).includes("401")) {
       throw error;
     }
   }
@@ -72,7 +75,7 @@ async function doFetch<T>(
 ) {
   const maxAttempts = 3;
   let attempt = 0;
-  let lastError: string | null = null;
+  let lastError: SpotifyFetchError | Error | null = null;
 
   while (attempt < maxAttempts) {
     attempt += 1;
@@ -96,7 +99,7 @@ async function doFetch<T>(
     const retryAfter = res.headers.get("Retry-After");
     const retryAfterMs = retryAfter ? Number(retryAfter) * 1000 : null;
     const text = await res.text();
-    lastError = `SpotifyFetchError:${res.status}:${text}`;
+    lastError = new SpotifyFetchError(res.status, text);
 
     const shouldRetry =
       res.status === 429 || res.status === 500 || res.status === 502 || res.status === 503;
@@ -109,5 +112,6 @@ async function doFetch<T>(
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
-  throw new Error(lastError ?? "SpotifyFetchError:unknown");
+  if (lastError) throw lastError;
+  throw new SpotifyFetchError(500, "SpotifyFetchError:unknown");
 }

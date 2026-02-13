@@ -37,6 +37,7 @@ export default function PlaylistBrowser() {
   const [selectedArtistId, setSelectedArtistId] = useState<string>("");
   const [selectedTrackId, setSelectedTrackId] = useState<string>("");
   const [query, setQuery] = useState<string>("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [trackItems, setTrackItems] = useState<TrackItem[]>([]);
@@ -305,7 +306,7 @@ export default function PlaylistBrowser() {
       : selectedTrack;
 
   const filteredOptions = useMemo(() => {
-    const term = query.trim().toLowerCase();
+    const term = debouncedQuery.trim().toLowerCase();
     const list =
       mode === "playlists"
         ? playlistOptions
@@ -314,11 +315,12 @@ export default function PlaylistBrowser() {
         : trackOptions;
     if (!term) return list;
     return list.filter((opt) => opt.name.toLowerCase().includes(term));
-  }, [playlistOptions, artistOptions, trackOptions, query, mode]);
+  }, [playlistOptions, artistOptions, trackOptions, debouncedQuery, mode]);
 
   useEffect(() => {
     setOpen(false);
     setQuery("");
+    setDebouncedQuery("");
     if (mode === "playlists") setSelectedPlaylistId("");
     if (mode === "artists") setSelectedArtistId("");
     if (mode === "tracks") {
@@ -328,7 +330,8 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     if (!open) return;
-    if (!query.trim()) return;
+    const term = debouncedQuery.trim();
+    if (term.length < 2) return;
     if (mode === "playlists" && playlistCursor && !loadingMorePlaylists) {
       loadMorePlaylists();
     }
@@ -339,7 +342,7 @@ export default function PlaylistBrowser() {
       loadMoreTracksList();
     }
   }, [
-    query,
+    debouncedQuery,
     open,
     mode,
     playlistCursor,
@@ -349,6 +352,13 @@ export default function PlaylistBrowser() {
     loadingMoreArtists,
     loadingMoreTracksList,
   ]);
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [query]);
 
   const filteredTrackItems = useMemo(() => {
     if (!selectedTrackId) return [];

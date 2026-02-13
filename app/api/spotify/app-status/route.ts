@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { spotifyFetch } from "@/lib/spotify/client";
+import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { assertSpotifyEnv } from "@/lib/env";
 import { getRequestIp, rateLimitResponse } from "@/lib/api/guards";
 
@@ -28,7 +29,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ status: "ERROR_MISSING_ENV" }, { status: 500 });
     }
 
-    if (message.includes("SpotifyFetchError:401")) {
+    if (error instanceof SpotifyFetchError && error.status === 401) {
       return NextResponse.json({ status: "ERROR_AUTH" }, { status: 401 });
     }
 

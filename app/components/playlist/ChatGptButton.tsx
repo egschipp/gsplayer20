@@ -20,15 +20,27 @@ export default function ChatGptButton({
   trackMeta,
   trackId,
 }: ChatGptButtonProps) {
+  const metaCache = (globalThis as any).__gsTrackMetaCache as
+    | Map<string, { value: string; expiresAt: number }>
+    | undefined;
+  const cache = metaCache ?? new Map<string, { value: string; expiresAt: number }>();
+  if (!(globalThis as any).__gsTrackMetaCache) {
+    (globalThis as any).__gsTrackMetaCache = cache;
+  }
+
   async function loadTrackMeta() {
     if (!trackId) return trackMeta;
+    const cached = cache.get(trackId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
     try {
       const url = new URL("/api/spotify/tracks/meta", window.location.origin);
       url.searchParams.set("trackId", trackId);
       const res = await fetch(url.toString());
       if (!res.ok) return trackMeta;
       const data = await res.json();
-      return formatTrackMeta({
+      const value = formatTrackMeta({
         id: data.id ?? trackId,
         name: data.name ?? null,
         artistIds: Array.isArray(data.artists)
@@ -46,6 +58,8 @@ export default function ChatGptButton({
         explicit: data.explicit ?? null,
         popularity: data.popularity ?? null,
       });
+      cache.set(trackId, { value, expiresAt: Date.now() + 5 * 60_000 });
+      return value;
     } catch {
       return trackMeta;
     }

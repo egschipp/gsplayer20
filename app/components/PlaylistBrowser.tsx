@@ -26,6 +26,7 @@ import {
   formatTimestamp,
 } from "./playlist/utils";
 import { mapSpotifyApiError } from "./playlist/errors";
+import { formatTrackMeta } from "@/lib/chatgpt/trackMeta";
 
 export default function PlaylistBrowser() {
   const [mode, setMode] = useState<Mode>("playlists");
@@ -74,49 +75,6 @@ export default function PlaylistBrowser() {
       .filter((name) => emojiStart.test(name));
   }, [playlistOptions]);
 
-  function formatTrackMeta(meta: {
-    id?: string | null;
-    name?: string | null;
-    artistIds?: string[];
-    artistNames?: string[];
-    albumId?: string | null;
-    albumReleaseDate?: string | null;
-    durationMs?: number | null;
-    isrc?: string | null;
-    explicit?: boolean | number | null;
-    popularity?: number | null;
-  }) {
-    const explicitValue =
-      meta.explicit === true || meta.explicit === 1
-        ? "ja"
-        : meta.explicit === false || meta.explicit === 0
-        ? "nee"
-        : "Onbekend";
-    const popularityValue =
-      meta.popularity === null || meta.popularity === undefined
-        ? "Onbekend"
-        : String(meta.popularity);
-    return [
-      `Primaire verificatie-ID: ${meta.id ?? "Onbekend"}`,
-      `Tracknaam validatie: ${meta.name ?? "Onbekend"}`,
-      `Unieke artiest-ID validatie: ${
-        meta.artistIds?.length ? meta.artistIds.join(", ") : "Onbekend"
-      }`,
-      `Cross-check met verwachte artiest: ${
-        meta.artistNames?.length ? meta.artistNames.join(", ") : "Onbekend"
-      }`,
-      `Albumvalidatie: ${meta.albumId ?? "Onbekend"}`,
-      `Chronologische verificatie: ${meta.albumReleaseDate ?? "Onbekend"}`,
-      `Exacte technische verificatie: ${
-        meta.durationMs === null || meta.durationMs === undefined
-          ? "Onbekend"
-          : `${meta.durationMs}`
-      }`,
-      `Sterke unieke identificator (indien aanwezig): ${meta.isrc ?? "Onbekend"}`,
-      `Consistentiecontrole: ${explicitValue}`,
-      `Plausibiliteitscontrole: ${popularityValue}`,
-    ].join("\n");
-  }
 
   useEffect(() => {
     function handleResize() {
@@ -254,7 +212,11 @@ export default function PlaylistBrowser() {
                 })
                 .map((artist) => ({ id: artist.id, name: artist.name }))
             : [],
-          album: track.album ?? { id: null, name: null, images: [] },
+          album: {
+            id: track.album?.id ?? null,
+            name: track.album?.name ?? null,
+            images: Array.isArray(track.album?.images) ? track.album?.images : [],
+          },
           durationMs: track.durationMs ?? null,
           explicit: track.explicit ?? null,
           popularity: track.popularity ?? null,
@@ -467,7 +429,11 @@ export default function PlaylistBrowser() {
               })
               .map((artist) => ({ id: artist.id, name: artist.name }))
           : [],
-        album: track.album ?? { id: null, name: null, images: [] },
+        album: {
+          id: track.album?.id ?? null,
+          name: track.album?.name ?? null,
+          images: Array.isArray(track.album?.images) ? track.album?.images : [],
+        },
         durationMs: track.durationMs ?? null,
         explicit: track.explicit ?? null,
         popularity: track.popularity ?? null,
@@ -1596,6 +1562,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
               track.trackId ? `https://open.spotify.com/track/${track.trackId}` : null
             }
             playlistNames={data.allPlaylistNames}
+            trackId={track.trackId ?? null}
             trackMeta={formatTrackMeta({
               id: track.trackId ?? null,
               name: track.name ?? null,
@@ -1741,6 +1708,7 @@ function TrackItemRenderer({
           <ChatGptButton
             trackUrl={track.id ? `https://open.spotify.com/track/${track.id}` : null}
             playlistNames={data.allPlaylistNames}
+            trackId={track.id ?? track.trackId ?? null}
             trackMeta={formatTrackMeta({
               id: track.id ?? track.trackId ?? null,
               name: track.name ?? null,

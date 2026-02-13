@@ -777,10 +777,21 @@ export default function PlaylistBrowser() {
     if (!trackId) return;
 
     if (mode === "playlists" && selectedPlaylist?.id) {
-      const contextUri =
-        selectedPlaylist.type === "liked"
-          ? "spotify:collection:tracks"
-          : `spotify:playlist:${selectedPlaylist.id}`;
+      if (selectedPlaylist.type === "liked") {
+        const queue = buildQueue();
+        const targetUri = `spotify:track:${trackId}`;
+        if (queue.uris.length && queue.byId.has(trackId)) {
+          await playerApi.playQueue(queue.uris, targetUri);
+        } else {
+          await playerApi.playContext(
+            "spotify:collection:tracks",
+            null,
+            targetUri
+          );
+        }
+        return;
+      }
+      const contextUri = `spotify:playlist:${selectedPlaylist.id}`;
       const offsetPosition =
         "position" in track && typeof track.position === "number"
           ? track.position

@@ -1669,26 +1669,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             </svg>
           </div>
           <div
-            className={`player-control player-control-ghost player-control-grad${
-              repeatMode !== "off" ? " active" : ""
-            }`}
-            role="button"
-            tabIndex={0}
-            aria-label={`Repeat ${repeatMode}`}
-            title={`Repeat ${repeatMode}`}
-            onClick={handleToggleRepeat}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                handleToggleRepeat();
-              }
-            }}
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-              <path d="M4 4.5h6.5l-1.6-1.6a.5.5 0 0 1 .7-.7l2.8 2.8a.5.5 0 0 1 0 .7l-2.8 2.8a.5.5 0 0 1-.7-.7l1.6-1.6H4a2 2 0 0 0-2 2v2a.5.5 0 0 1-1 0v-2a3 3 0 0 1 3-3zm8 3a.5.5 0 0 1 .5.5v2a3 3 0 0 1-3 3H2.5l1.6 1.6a.5.5 0 1 1-.7.7l-2.8-2.8a.5.5 0 0 1 0-.7l2.8-2.8a.5.5 0 0 1 .7.7L2.5 12H9.5a2 2 0 0 0 2-2v-2a.5.5 0 0 1 .5-.5z" />
-            </svg>
-          </div>
-          <div
             className="player-control player-control-ghost player-control-grad"
             role="button"
             tabIndex={0}

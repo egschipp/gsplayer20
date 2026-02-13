@@ -106,6 +106,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const lastIsPlayingRef = useRef(false);
   const playerStateRef = useRef<typeof playerState>(null);
   const lastShuffleSyncRef = useRef(0);
+  const queueUrisRef = useRef<string[] | null>(null);
+  const queueIndexRef = useRef(0);
+  const queueOrderRef = useRef<number[] | null>(null);
+  const queuePosRef = useRef(0);
+  const queueModeRef = useRef<"queue" | "context" | null>(null);
   const [deviceReady, setDeviceReady] = useState(false);
   const { enqueue: enqueueCommand, busy: commandBusy } = usePlaybackCommandQueue();
   const lastCommandAtRef = useRef(0);
@@ -236,6 +241,64 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       // ignore
     }
     return null;
+  }
+
+  function getIndexFromTrackId(uris: string[], trackId?: string | null) {
+    if (!trackId) return -1;
+    const target = String(trackId);
+    return uris.findIndex((uri) => uri.split(":").pop() === target);
+  }
+
+  function buildShuffleOrder(count: number, startIndex: number) {
+    const indices = Array.from({ length: count }, (_, i) => i);
+    if (count <= 1) return indices;
+    const rest = indices.filter((i) => i !== startIndex);
+    for (let i = rest.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [rest[i], rest[j]] = [rest[j], rest[i]];
+    }
+    return [startIndex, ...rest];
+  }
+
+  async function playUrisAtIndex(
+    uris: string[],
+    index: number,
+    deviceId: string,
+    token: string
+  ) {
+    const offsetUri = uris[index];
+    if (!offsetUri) return;
+    const id = offsetUri.split(":").pop() || null;
+    pendingTrackIdRef.current = id;
+    trackChangeLockUntilRef.current = Date.now() + 2000;
+    setPositionMs(0);
+    if (deviceId === sdkDeviceIdRef.current) {
+      await playerRef.current?.activateElement?.();
+    }
+    const ready = await ensureActiveDevice(deviceId, token, true);
+    if (!ready) {
+      setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+      return;
+    }
+    const payload = {
+      uris,
+      offset: { uri: offsetUri },
+      position_ms: 0,
+    };
+    const res = await spotifyApiFetch(
+      `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
+      { method: "PUT", body: JSON.stringify(payload) }
+    );
+    if (res && res.ok) {
+      setPositionMs(0);
+      lastKnownPositionRef.current = 0;
+      setTimeout(() => {
+        spotifyApiFetch(
+          `https://api.spotify.com/v1/me/player/seek?device_id=${deviceId}&position_ms=0`,
+          { method: "PUT" }
+        ).catch(() => undefined);
+      }, 200);
+    }
   }
 
   async function fetchQueue() {
@@ -658,6 +721,19 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             offset: offsetUri ? { uri: offsetUri } : undefined,
             position_ms: 0,
           };
+          queueModeRef.current = "queue";
+          queueUrisRef.current = uris;
+          const startIndex = offsetUri
+            ? Math.max(0, uris.indexOf(offsetUri))
+            : Math.max(0, getIndexFromTrackId(uris, pendingTrackIdRef.current));
+          queueIndexRef.current = startIndex;
+          if (shuffleOn) {
+            queueOrderRef.current = buildShuffleOrder(uris.length, startIndex);
+            queuePosRef.current = 0;
+          } else {
+            queueOrderRef.current = null;
+            queuePosRef.current = startIndex;
+          }
 
           const ready = await ensureActiveDevice(currentDevice as string, token, true);
           if (!ready) {
@@ -795,6 +871,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 : undefined,
             position_ms: 0,
           };
+          queueModeRef.current = "context";
+          queueUrisRef.current = null;
+          queueOrderRef.current = null;
 
           const res = await spotifyApiFetch(
             `https://api.spotify.com/v1/me/player/play?device_id=${currentDevice}`,
@@ -1159,6 +1238,23 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
         return;
       }
+      if (queueModeRef.current === "queue" && queueUrisRef.current?.length) {
+        const uris = queueUrisRef.current;
+        if (shuffleOn && queueOrderRef.current?.length) {
+          queuePosRef.current = Math.min(
+            queuePosRef.current + 1,
+            queueOrderRef.current.length - 1
+          );
+          const nextIndex = queueOrderRef.current[queuePosRef.current];
+          queueIndexRef.current = nextIndex;
+          await playUrisAtIndex(uris, nextIndex, currentDevice, token);
+        } else {
+          const nextIndex = Math.min(queueIndexRef.current + 1, uris.length - 1);
+          queueIndexRef.current = nextIndex;
+          await playUrisAtIndex(uris, nextIndex, currentDevice, token);
+        }
+        return;
+      }
       await spotifyApiFetch(
         `https://api.spotify.com/v1/me/player/next?device_id=${currentDevice}`,
         { method: "POST" }
@@ -1234,6 +1330,19 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       const next = !current;
       setShuffleOn(next);
       lastShuffleSyncRef.current = Date.now();
+      if (queueModeRef.current === "queue" && queueUrisRef.current?.length) {
+        const uris = queueUrisRef.current;
+        const currentIndex = getIndexFromTrackId(uris, pendingTrackIdRef.current);
+        const startIndex = currentIndex >= 0 ? currentIndex : queueIndexRef.current;
+        queueIndexRef.current = startIndex;
+        if (next) {
+          queueOrderRef.current = buildShuffleOrder(uris.length, startIndex);
+          queuePosRef.current = 0;
+        } else {
+          queueOrderRef.current = null;
+          queuePosRef.current = startIndex;
+        }
+      }
       await spotifyApiFetch(
         `https://api.spotify.com/v1/me/player/shuffle?state=${
           next ? "true" : "false"

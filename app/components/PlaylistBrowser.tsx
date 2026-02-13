@@ -880,15 +880,21 @@ export default function PlaylistBrowser() {
         }
         return;
       }
-      const contextUri = `spotify:playlist:${selectedPlaylist.id}`;
+      const queue = buildQueue();
+      const targetUri = `spotify:track:${trackId}`;
       const offsetPosition =
         "position" in track && typeof track.position === "number"
           ? track.position
           : null;
+      if (queue.uris.length && queue.byId.has(trackId)) {
+        await playerApi.playQueue(queue.uris, targetUri, offsetPosition);
+        return;
+      }
+      const contextUri = `spotify:playlist:${selectedPlaylist.id}`;
       await playerApi.playContext(
         contextUri,
         offsetPosition,
-        `spotify:track:${trackId}`
+        targetUri
       );
       return;
     }
@@ -896,7 +902,9 @@ export default function PlaylistBrowser() {
     const queue = buildQueue();
     if (!queue.uris.length) return;
     const targetUri = `spotify:track:${trackId}`;
-    await playerApi.playQueue(queue.uris, targetUri);
+    const offsetPosition =
+      "position" in track && typeof track.position === "number" ? track.position : null;
+    await playerApi.playQueue(queue.uris, targetUri, offsetPosition);
   }
 
 

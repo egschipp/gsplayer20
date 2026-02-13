@@ -14,7 +14,7 @@ declare global {
 }
 
 export type PlayerApi = {
-  playQueue: (uris: string[], offsetUri?: string) => Promise<void>;
+  playQueue: (uris: string[], offsetUri?: string, offsetIndex?: number | null) => Promise<void>;
   playContext: (
     contextUri: string,
     offsetPosition?: number | null,
@@ -783,7 +783,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     playerRef.current = player;
 
     const api: PlayerApi = {
-      playQueue: async (uris, offsetUri) =>
+      playQueue: async (uris, offsetUri, offsetIndex) =>
         enqueuePlaybackCommand(async () => {
           const token = accessTokenRef.current;
           let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
@@ -802,8 +802,20 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             );
             return;
           }
-          if (offsetUri) {
-            const id = offsetUri.split(":").pop() || null;
+          const hasIndex =
+            typeof offsetIndex === "number" &&
+            Number.isFinite(offsetIndex) &&
+            offsetIndex >= 0 &&
+            offsetIndex < uris.length;
+          const resolvedIndex = hasIndex
+            ? (offsetIndex as number)
+            : offsetUri
+            ? Math.max(0, uris.indexOf(offsetUri))
+            : Math.max(0, getIndexFromTrackId(uris, pendingTrackIdRef.current));
+          const resolvedUri = uris[resolvedIndex] ?? offsetUri ?? null;
+
+          if (resolvedUri) {
+            const id = resolvedUri.split(":").pop() || null;
             pendingTrackIdRef.current = id;
             trackChangeLockUntilRef.current = Date.now() + 2000;
             setPositionMs(0);
@@ -814,14 +826,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
           const payload = {
             uris,
-            offset: offsetUri ? { uri: offsetUri } : undefined,
+            offset: resolvedUri ? { uri: resolvedUri } : undefined,
             position_ms: 0,
           };
           queueModeRef.current = "queue";
           queueUrisRef.current = uris;
-          const startIndex = offsetUri
-            ? Math.max(0, uris.indexOf(offsetUri))
-            : Math.max(0, getIndexFromTrackId(uris, pendingTrackIdRef.current));
+          const startIndex = resolvedIndex;
           queueIndexRef.current = startIndex;
           if (shuffleOnRef.current) {
             queueOrderRef.current = buildShuffleOrder(uris.length, startIndex);
@@ -872,7 +882,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           if (res && res.ok) {
             setPositionMs(0);
             lastKnownPositionRef.current = 0;
-            if (offsetUri) {
+            if (resolvedUri) {
               setTimeout(() => {
                 spotifyApiFetch(
                   `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=0`,
@@ -880,8 +890,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 ).catch(() => undefined);
               }, 200);
             }
-            if (offsetUri) {
-              const id = offsetUri.split(":").pop() || null;
+            if (resolvedUri) {
+              const id = resolvedUri.split(":").pop() || null;
               pendingTrackIdRef.current = id;
               trackChangeLockUntilRef.current = Date.now() + 3000;
             }

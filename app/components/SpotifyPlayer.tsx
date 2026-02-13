@@ -663,16 +663,22 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
 
           try {
+            const forceShuffleOff = Boolean(offsetUri);
+            const desiredShuffle = forceShuffleOff ? false : shuffleOn;
             const res = await spotifyApiFetch(
               `https://api.spotify.com/v1/me/player/shuffle?state=${
-                shuffleOn ? "true" : "false"
+                desiredShuffle ? "true" : "false"
               }&device_id=${currentDevice}`,
               { method: "PUT" }
             );
             if (res?.ok) {
-              lastShuffleSyncRef.current = Date.now();
-              const confirmed = await confirmShuffle(token);
-              if (typeof confirmed === "boolean") setShuffleOn(confirmed);
+              if (forceShuffleOff && shuffleOn) {
+                setShuffleOn(false);
+              } else {
+                lastShuffleSyncRef.current = Date.now();
+                const confirmed = await confirmShuffle(token);
+                if (typeof confirmed === "boolean") setShuffleOn(confirmed);
+              }
             }
           } catch {
             // ignore
@@ -754,16 +760,23 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
 
           try {
+            const forceShuffleOff =
+              Boolean(offsetUri) || typeof offsetPosition === "number";
+            const desiredShuffle = forceShuffleOff ? false : shuffleOn;
             const res = await spotifyApiFetch(
               `https://api.spotify.com/v1/me/player/shuffle?state=${
-                shuffleOn ? "true" : "false"
+                desiredShuffle ? "true" : "false"
               }&device_id=${currentDevice}`,
               { method: "PUT" }
             );
             if (res?.ok) {
-              lastShuffleSyncRef.current = Date.now();
-              const confirmed = await confirmShuffle(token);
-              if (typeof confirmed === "boolean") setShuffleOn(confirmed);
+              if (forceShuffleOff && shuffleOn) {
+                setShuffleOn(false);
+              } else {
+                lastShuffleSyncRef.current = Date.now();
+                const confirmed = await confirmShuffle(token);
+                if (typeof confirmed === "boolean") setShuffleOn(confirmed);
+              }
             }
           } catch {
             // ignore

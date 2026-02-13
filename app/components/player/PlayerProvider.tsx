@@ -20,8 +20,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const value = useMemo(() => ({ api, currentTrackId }), [api, currentTrackId]);
   const pathname = usePathname();
-  const showPlayer =
-    pathname === "/" || pathname.startsWith("/gsplayer");
+  const path = pathname ?? "/";
+  const showPlayer = path === "/" || path.startsWith("/gsplayer");
 
   return (
     <PlayerContext.Provider value={value}>

@@ -44,14 +44,12 @@ export default function RootLayout({
     <html lang="nl" className={`${displayFont.variable} ${bodyFont.variable}`}>
       <body>
         <AuthSessionProvider>
-          <PlayerProvider>
-            <div className="shell header-shell fixed-top">
-              <header className="panel">
-                <MainNav />
-              </header>
-            </div>
-            {children}
-          </PlayerProvider>
+          <div className="shell header-shell fixed-top">
+            <header className="panel">
+              <MainNav />
+            </header>
+          </div>
+          <PlayerProvider>{children}</PlayerProvider>
         </AuthSessionProvider>
       </body>
     </html>

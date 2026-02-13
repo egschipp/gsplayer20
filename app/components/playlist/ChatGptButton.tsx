@@ -96,7 +96,9 @@ export default function ChatGptButton({
     let template = CHATGPT_PROMPT_TEMPLATE;
     if (typeof window !== "undefined") {
       const stored = window.localStorage.getItem("gs_chatgpt_prompt");
-      if (stored) template = normalizePromptTemplate(stored);
+      if (stored && stored.trim()) {
+        template = normalizePromptTemplate(stored);
+      }
     }
     const metaResult = await loadTrackMeta();
     const meta = metaResult.formatted;
@@ -108,11 +110,28 @@ export default function ChatGptButton({
       meta,
       metaTokens
     );
+    let copied = false;
     if (navigator.clipboard?.writeText) {
       try {
         await navigator.clipboard.writeText(prompt);
+        copied = true;
       } catch {
-        // ignore clipboard errors
+        copied = false;
+      }
+    }
+    if (!copied) {
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = prompt;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "fixed";
+        textarea.style.top = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      } catch {
+        // ignore copy fallback errors
       }
     }
     if (popup) {

@@ -116,7 +116,9 @@ export function fillChatGptPrompt(
   }
 ) {
   const url = trackUrl || "Onbekend";
-  const list = playlists.length ? playlists.join("\n") : "—";
+  const emojiStart = /^\s*\p{Extended_Pictographic}/u;
+  const filteredPlaylists = playlists.filter((name) => emojiStart.test(name));
+  const list = filteredPlaylists.length ? filteredPlaylists.join("\n") : "—";
   const meta = trackMeta?.trim() ? trackMeta.trim() : "—";
   const explicitValue =
     metaTokens?.explicit === true || metaTokens?.explicit === 1

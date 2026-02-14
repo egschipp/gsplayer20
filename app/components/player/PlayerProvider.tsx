@@ -4,6 +4,8 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { createContext, useContext, useMemo, useState } from "react";
 import SpotifyPlayer, { type PlayerApi } from "../SpotifyPlayer";
+import { QueueProvider } from "@/lib/queue/QueueProvider";
+import { QueuePlaybackProvider } from "@/lib/playback/QueuePlaybackProvider";
 
 type PlayerContextValue = {
   api: PlayerApi | null;
@@ -21,28 +23,32 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(() => ({ api, currentTrackId }), [api, currentTrackId]);
   const pathname = usePathname();
   const path = pathname ?? "/";
-  const showPlayer = path === "/" || path.startsWith("/gsplayer");
+  const showPlayer = path === "/" || path.startsWith("/gsplayer") || path.startsWith("/queue");
 
   return (
     <PlayerContext.Provider value={value}>
-      <div
-        className="shell player-shell-wrap"
-        data-visible={showPlayer ? "true" : "false"}
-        aria-hidden={!showPlayer}
-      >
-        <div className="library-sticky player-shell">
-          <Image
-            src="/georgies-spotify.png"
-            alt="Georgies Spotify logo"
-            width={240}
-            height={80}
-            className="library-logo"
-            priority
-          />
-          <SpotifyPlayer onReady={setApi} onTrackChange={setCurrentTrackId} />
-        </div>
-      </div>
-      {children}
+      <QueueProvider>
+        <QueuePlaybackProvider>
+          <div
+            className="shell player-shell-wrap"
+            data-visible={showPlayer ? "true" : "false"}
+            aria-hidden={!showPlayer}
+          >
+            <div className="library-sticky player-shell">
+              <Image
+                src="/georgies-spotify.png"
+                alt="Georgies Spotify logo"
+                width={240}
+                height={80}
+                className="library-logo"
+                priority
+              />
+              <SpotifyPlayer onReady={setApi} onTrackChange={setCurrentTrackId} />
+            </div>
+          </div>
+          {children}
+        </QueuePlaybackProvider>
+      </QueueProvider>
     </PlayerContext.Provider>
   );
 }

@@ -8,6 +8,7 @@ export default function MainNav() {
   const pathname = usePathname();
   const isHome = pathname === "/";
   const isStatus = pathname === "/status";
+  const isQueue = pathname === "/queue";
   const [loggingOut, setLoggingOut] = useState(false);
 
   async function handleLogout() {
@@ -35,6 +36,13 @@ export default function MainNav() {
           aria-current={isStatus ? "page" : undefined}
         >
           Settings
+        </Link>
+        <Link
+          href="/queue"
+          className={`nav-link${isQueue ? " active" : " secondary"}`}
+          aria-current={isQueue ? "page" : undefined}
+        >
+          Queue
         </Link>
       </div>
       <div className="nav-right">

@@ -1,0 +1,169 @@
+.page {
+  display: grid;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.12);
+  color: #fecaca;
+}
+
+.empty {
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 20px;
+  background: linear-gradient(120deg, rgba(22, 27, 24, 0.95), rgba(15, 20, 18, 0.95));
+}
+
+.emptyTitle {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.item {
+  min-height: 72px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: linear-gradient(120deg, rgba(22, 27, 24, 0.96), rgba(14, 19, 17, 0.95));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.itemCurrent {
+  border-left: 4px solid #1db954;
+  box-shadow: 0 0 0 1px rgba(29, 185, 84, 0.26);
+}
+
+.itemNext {
+  border-left: 4px solid #38bdf8;
+}
+
+.itemDragOver {
+  border-color: rgba(56, 189, 248, 0.65);
+  transform: translateY(-1px);
+}
+
+.itemDragging {
+  opacity: 0.6;
+}
+
+.itemLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.itemCopy {
+  min-width: 0;
+}
+
+.itemName {
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.itemArtist {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.itemMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.pillNow {
+  background: rgba(29, 185, 84, 0.22);
+  border: 1px solid rgba(29, 185, 84, 0.6);
+  color: #8cf5a9;
+}
+
+.pillNext {
+  background: rgba(56, 189, 248, 0.2);
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  color: #7dd3fc;
+}
+
+.duration {
+  color: var(--text-muted);
+  min-width: 48px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.artwork {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: #1b1b1b;
+  flex-shrink: 0;
+}
+
+.artworkPlaceholder {
+  border: 1px solid var(--border-subtle);
+}
+
+@media (max-width: 900px) {
+  .item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .itemMeta {
+    justify-content: flex-start;
+  }
+}

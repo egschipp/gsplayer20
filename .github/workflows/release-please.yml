@@ -107,28 +107,6 @@ jobs:
           process.stdout.write(`version=${nextVersion}\n`);
           NODE
 
-      - name: Bump package version
-        if: steps.semver.outputs.should_release == 'true'
-        env:
-          VERSION: ${{ steps.semver.outputs.version }}
-        run: |
-          set -euo pipefail
-          npm version "$VERSION" --no-git-tag-version
-
-      - name: Commit release
-        if: steps.semver.outputs.should_release == 'true'
-        env:
-          VERSION: ${{ steps.semver.outputs.version }}
-        run: |
-          set -euo pipefail
-          git add package.json package-lock.json
-          if git diff --cached --quiet; then
-            echo "No version changes to commit."
-            exit 0
-          fi
-          git commit -m "chore(release): v${VERSION}"
-          git push origin HEAD:main
-
       - name: Create and push release tag
         if: steps.semver.outputs.should_release == 'true'
         env:

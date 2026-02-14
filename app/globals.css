@@ -428,6 +428,24 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+.queue-add-btn {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--tide);
+  border-color: rgba(29, 185, 84, 0.35);
+}
+
+.queue-add-btn:hover {
+  border-color: rgba(29, 185, 84, 0.6);
+  background: rgba(29, 185, 84, 0.18);
+}
+
+.queue-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .track-row:focus-visible {
   border-color: rgba(29, 185, 84, 0.5);
   background: rgba(29, 185, 84, 0.12);

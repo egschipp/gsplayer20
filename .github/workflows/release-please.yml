@@ -7,7 +7,7 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: automated-release-${{ github.ref }}
+  group: automated-release-main
   cancel-in-progress: false
 
 permissions:
@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   release:
+    if: github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'chore(release):')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -27,65 +28,132 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Determine Release Version
-        id: version
-        env:
-          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+      - name: Calculate next SemVer
+        id: semver
         run: |
           set -euo pipefail
-          CURRENT_VERSION=$(node -e 'const fs=require("fs");const pkg=JSON.parse(fs.readFileSync("package.json","utf8"));process.stdout.write(String(pkg.version||"0.0.0"));')
-          CURRENT_TAG="v${CURRENT_VERSION}"
-          if [[ "${HEAD_MESSAGE:-}" == chore\(release\):* ]]; then
-            echo "bumped=false" >> "$GITHUB_OUTPUT"
-            echo "version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if git ls-remote --exit-code --tags origin "refs/tags/${CURRENT_TAG}" >/dev/null 2>&1; then
-            NEXT_VERSION=$(node -e 'const fs=require("fs");const pkg=JSON.parse(fs.readFileSync("package.json","utf8"));const parts=String(pkg.version||"0.0.0").split(".").map((v)=>Number(v)||0);const next=[parts[0],parts[1],parts[2]+1].join(".");pkg.version=next;fs.writeFileSync("package.json",JSON.stringify(pkg,null,2)+"\n");process.stdout.write(next);')
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
-            echo "version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
-          else
-            echo "bumped=false" >> "$GITHUB_OUTPUT"
-            echo "version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
-          fi
+          git fetch --tags origin
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const { execSync } = require("node:child_process");
+          const fs = require("node:fs");
 
-      - name: Commit + tag
-        if: steps.version.outputs.bumped == 'true'
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const currentVersion = String(pkg.version || "0.0.0");
+          const tagList = execSync(
+            "git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname",
+            { encoding: "utf8" }
+          )
+            .trim()
+            .split("\n")
+            .filter(Boolean);
+          const latestTag = tagList[0] || "";
+          const range = latestTag ? `${latestTag}..HEAD` : "HEAD";
+          const lines = execSync(`git log --format=%s%x1f%b%x1e ${range}`, {
+            encoding: "utf8",
+          })
+            .split("\x1e")
+            .map((entry) => entry.trim())
+            .filter(Boolean);
+
+          let hasReleaseCandidateCommit = false;
+          let bumpLevel = -1; // -1 none, 0 patch, 1 minor, 2 major
+
+          for (const entry of lines) {
+            const [subjectRaw = "", bodyRaw = ""] = entry.split("\x1f");
+            const subject = subjectRaw.trim();
+            const body = bodyRaw.trim();
+            if (!subject || /^chore\(release\):/i.test(subject)) continue;
+            hasReleaseCandidateCommit = true;
+            const isBreaking =
+              /(^|[a-z]+(\([^)]+\))?)!:/i.test(subject) ||
+              /BREAKING CHANGE:/i.test(body);
+            if (isBreaking) {
+              bumpLevel = Math.max(bumpLevel, 2);
+              continue;
+            }
+            const isFeature = /^feat(\([^)]+\))?:/i.test(subject);
+            if (isFeature) {
+              bumpLevel = Math.max(bumpLevel, 1);
+              continue;
+            }
+            bumpLevel = Math.max(bumpLevel, 0);
+          }
+
+          if (!hasReleaseCandidateCommit) {
+            process.stdout.write("should_release=false\n");
+            process.stdout.write(`version=${currentVersion}\n`);
+            process.exit(0);
+          }
+
+          const source = (latestTag || `v${currentVersion}`).replace(/^v/, "");
+          const [major, minor, patch] = source.split(".").map((n) => Number(n) || 0);
+          let nextMajor = major;
+          let nextMinor = minor;
+          let nextPatch = patch;
+
+          if (bumpLevel === 2) {
+            nextMajor += 1;
+            nextMinor = 0;
+            nextPatch = 0;
+          } else if (bumpLevel === 1) {
+            nextMinor += 1;
+            nextPatch = 0;
+          } else {
+            nextPatch += 1;
+          }
+
+          const nextVersion = `${nextMajor}.${nextMinor}.${nextPatch}`;
+          process.stdout.write("should_release=true\n");
+          process.stdout.write(`version=${nextVersion}\n`);
+          NODE
+
+      - name: Bump package version
+        if: steps.semver.outputs.should_release == 'true'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.semver.outputs.version }}
         run: |
           set -euo pipefail
-          git add package.json
+          npm version "$VERSION" --no-git-tag-version
+
+      - name: Commit release
+        if: steps.semver.outputs.should_release == 'true'
+        env:
+          VERSION: ${{ steps.semver.outputs.version }}
+        run: |
+          set -euo pipefail
+          git add package.json package-lock.json
           if git diff --cached --quiet; then
-            echo "No version diff to commit."
+            echo "No version changes to commit."
             exit 0
           fi
           git commit -m "chore(release): v${VERSION}"
           git push origin HEAD:main
 
-      - name: Ensure tag exists
+      - name: Create and push release tag
+        if: steps.semver.outputs.should_release == 'true'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.semver.outputs.version }}
         run: |
           set -euo pipefail
           TAG="v${VERSION}"
           git fetch --tags origin
-          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
-            git tag "$TAG"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists."
+            exit 0
           fi
-          git push origin "$TAG"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
 
-      - name: Create GitHub Release
+      - name: Create GitHub release
+        if: steps.semver.outputs.should_release == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.semver.outputs.version }}
         run: |
           set -euo pipefail
           TAG="v${VERSION}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists, skipping."
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists."
             exit 0
           fi
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --generate-notes
+          gh release create "${TAG}" --title "${TAG}" --generate-notes

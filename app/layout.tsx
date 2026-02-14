@@ -1,19 +1,8 @@
 import type { Metadata, Viewport } from "next";
-import { Space_Grotesk, Manrope } from "next/font/google";
 import "./globals.css";
 import AuthSessionProvider from "./components/SessionProvider";
 import MainNav from "./components/MainNav";
 import { PlayerProvider } from "./components/player/PlayerProvider";
-
-const displayFont = Space_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-display",
-});
-
-const bodyFont = Manrope({
-  subsets: ["latin"],
-  variable: "--font-body",
-});
 
 export const metadata: Metadata = {
   title: "Georgies Spotify",
@@ -41,7 +30,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="nl" className={`${displayFont.variable} ${bodyFont.variable}`}>
+    <html lang="nl">
       <body>
         <AuthSessionProvider>
           <div className="shell header-shell fixed-top">

@@ -1,5 +1,7 @@
 :root {
   color-scheme: dark;
+  --font-display: "Space Grotesk", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Manrope", "Avenir Next", "Segoe UI", system-ui, sans-serif;
   --bg-main: #0f1412;
   --bg-surface: #161b18;
   --bg-elevated: #1c2420;

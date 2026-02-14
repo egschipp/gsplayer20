@@ -60,6 +60,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [queueItems, setQueueItems] = useState<
     { id: string; name: string; artists: string; coverUrl: string | null }[]
   >([]);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
   const [devices, setDevices] = useState<
@@ -160,6 +161,24 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   useEffect(() => {
     playerStateRef.current = playerState;
   }, [playerState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/version", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return res.json().catch(() => null);
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const version = typeof data?.version === "string" ? data.version.trim() : "";
+        if (version) setAppVersion(version);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     shuffleOnRef.current = shuffleOn;
@@ -488,18 +507,37 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     };
   }, [accessToken, currentTrackIdState]);
 
+  const emitLikedTracksUpdated = useCallback(
+    (trackId: string, action: "added" | "removed") => {
+      if (typeof window === "undefined") return;
+      const at = Date.now();
+      window.dispatchEvent(
+        new CustomEvent("gs-liked-tracks-updated", {
+          detail: { trackId, action, at },
+        })
+      );
+      try {
+        window.localStorage.setItem("gs_liked_tracks_updated_at", String(at));
+      } catch {
+        // ignore storage issues
+      }
+    },
+    []
+  );
+
   const handleLikeCurrentTrack = useCallback(async () => {
     if (!currentTrackIdState) return;
-    if (likedStateSaving || likedStateLoading || currentTrackLiked === true) return;
+    if (likedStateSaving || likedStateLoading) return;
+    const removing = currentTrackLiked === true;
 
     const previousLiked = currentTrackLiked;
     setLikedStateSaving(true);
-    setCurrentTrackLiked(true);
-    likedCacheRef.current.set(currentTrackIdState, true);
+    setCurrentTrackLiked(!removing);
+    likedCacheRef.current.set(currentTrackIdState, !removing);
 
     try {
       const res = await fetch("/api/spotify/me/tracks/liked", {
-        method: "POST",
+        method: removing ? "DELETE" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ trackId: currentTrackIdState }),
       });
@@ -507,23 +545,32 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         throw new Error(`LIKE_FAILED_${res.status}`);
       }
       const data = await res.json().catch(() => null);
-      const liked = typeof data?.liked === "boolean" ? data.liked : true;
+      const liked = typeof data?.liked === "boolean" ? data.liked : !removing;
       likedCacheRef.current.set(currentTrackIdState, liked);
       setCurrentTrackLiked(liked);
-      if (!liked) {
-        setError("Track toevoegen aan Liked Songs kon niet bevestigd worden.");
-      } else {
-        setError(null);
+      setError(null);
+      if ((!removing && liked) || (removing && !liked)) {
+        emitLikedTracksUpdated(currentTrackIdState, removing ? "removed" : "added");
       }
     } catch {
       const rollback = previousLiked ?? false;
       likedCacheRef.current.set(currentTrackIdState, rollback);
       setCurrentTrackLiked(rollback);
-      setError("Track toevoegen aan Liked Songs lukt nu niet.");
+      setError(
+        removing
+          ? "Track verwijderen uit Liked Songs lukt nu niet."
+          : "Track toevoegen aan Liked Songs lukt nu niet."
+      );
     } finally {
       setLikedStateSaving(false);
     }
-  }, [currentTrackIdState, currentTrackLiked, likedStateLoading, likedStateSaving]);
+  }, [
+    currentTrackIdState,
+    currentTrackLiked,
+    emitLikedTracksUpdated,
+    likedStateLoading,
+    likedStateSaving,
+  ]);
 
   const setActiveDevice = useCallback((id: string | null, name?: string | null) => {
     setActiveDeviceId(id);
@@ -1696,18 +1743,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               className={`player-like-btn${currentTrackLiked ? " active" : ""}`}
               aria-label={
                 currentTrackLiked
-                  ? "Staat al in Liked Songs"
+                  ? "Verwijderen uit Liked Songs"
                   : "Toevoegen aan Liked Songs"
               }
               title={
                 currentTrackLiked
-                  ? "Staat al in Liked Songs"
+                  ? "Verwijderen uit Liked Songs"
                   : "Toevoegen aan Liked Songs"
               }
-              disabled={likedStateSaving || likedStateLoading || currentTrackLiked === true}
+              disabled={likedStateSaving || likedStateLoading}
               onClick={handleLikeCurrentTrack}
             >
-              {likedStateSaving ? "…" : currentTrackLiked ? "✓" : "+"}
+              {likedStateSaving ? "…" : currentTrackLiked ? "−" : "+"}
             </button>
           ) : null}
         </div>
@@ -2044,6 +2091,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               ))}
             </div>
           )}
+        </div>
+      ) : null}
+      {appVersion ? (
+        <div className="player-release" aria-label={`Versie ${appVersion}`}>
+          v{appVersion}
         </div>
       ) : null}
     </div>

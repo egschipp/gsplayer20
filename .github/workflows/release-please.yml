@@ -1,4 +1,4 @@
-name: Release Please
+name: Automated Release
 
 on:
   push:
@@ -7,17 +7,79 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: release-please-${{ github.ref }}
+  group: automated-release-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
-  release-please:
+  release:
+    if: github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'chore(release):')
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          release-type: node
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine Release Version
+        id: version
+        run: |
+          set -euo pipefail
+          CURRENT_VERSION=$(node -e 'const fs=require("fs");const pkg=JSON.parse(fs.readFileSync("package.json","utf8"));process.stdout.write(String(pkg.version||"0.0.0"));')
+          CURRENT_TAG="v${CURRENT_VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${CURRENT_TAG}" >/dev/null 2>&1; then
+            NEXT_VERSION=$(node -e 'const fs=require("fs");const pkg=JSON.parse(fs.readFileSync("package.json","utf8"));const parts=String(pkg.version||"0.0.0").split(".").map((v)=>Number(v)||0);const next=[parts[0],parts[1],parts[2]+1].join(".");pkg.version=next;fs.writeFileSync("package.json",JSON.stringify(pkg,null,2)+"\n");process.stdout.write(next);')
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            echo "version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            echo "version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit + tag
+        if: steps.version.outputs.bumped == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git add package.json
+          if git diff --cached --quiet; then
+            echo "No version diff to commit."
+            exit 0
+          fi
+          git commit -m "chore(release): v${VERSION}"
+          git push origin HEAD:main
+
+      - name: Ensure tag exists
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          git fetch --tags origin
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git tag "$TAG"
+          fi
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, skipping."
+            exit 0
+          fi
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes

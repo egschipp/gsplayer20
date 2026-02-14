@@ -926,6 +926,7 @@ details[open] > .details-summary::after {
 }
 
 .player-card {
+  position: relative;
   display: grid;
   grid-template-columns: 3fr 2fr;
   gap: 16px;
@@ -941,6 +942,17 @@ details[open] > .details-summary::after {
     ),
     rgba(0, 0, 0, 0.55);
   margin: 16px 0 20px;
+}
+
+.player-release {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  font-size: 11px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.45);
+  letter-spacing: 0.02em;
+  pointer-events: none;
 }
 
 .player-cover {

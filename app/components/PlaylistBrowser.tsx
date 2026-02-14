@@ -72,6 +72,7 @@ export default function PlaylistBrowser() {
   const hydratedSelectionRef = useRef(false);
   const skipModeResetRef = useRef(true);
   const [tracksContextKey, setTracksContextKey] = useState<string | null>(null);
+  const [likedRefreshNonce, setLikedRefreshNonce] = useState(0);
   const [cacheHydrated, setCacheHydrated] = useState(false);
   const hasCachedPlaylistsRef = useRef(false);
   const hasCachedArtistsRef = useRef(false);
@@ -121,6 +122,27 @@ export default function PlaylistBrowser() {
       hydratedSelectionRef.current = true;
       skipModeResetRef.current = false;
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onLikedUpdate = () => {
+      setLikedRefreshNonce((prev) => prev + 1);
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "gs_liked_tracks_updated_at") {
+        onLikedUpdate();
+      }
+    };
+    window.addEventListener("gs-liked-tracks-updated", onLikedUpdate as EventListener);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(
+        "gs-liked-tracks-updated",
+        onLikedUpdate as EventListener
+      );
+      window.removeEventListener("storage", onStorage);
+    };
   }, []);
 
   useEffect(() => {
@@ -883,7 +905,7 @@ export default function PlaylistBrowser() {
         const baseUrl =
           mode === "playlists"
             ? selectedPlaylist?.type === "liked"
-              ? "/api/spotify/me/tracks"
+              ? "/api/spotify/me/tracks?live=1"
               : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
             : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
         const url = new URL(baseUrl, window.location.origin);
@@ -917,13 +939,17 @@ export default function PlaylistBrowser() {
 
     if (mode === "playlists" && !selectedPlaylist?.id) return;
 
+    const shouldRefreshLiked =
+      mode === "playlists" &&
+      selectedPlaylist?.type === "liked" &&
+      likedRefreshNonce > 0;
     const contextChanged = nextContextKey !== tracksContextKey;
     const hasCachedTracksForContext = Boolean(
       nextContextKey &&
         nextContextKey === tracksContextKey &&
         tracks.length > 0
     );
-    if (!contextChanged && hasCachedTracksForContext) {
+    if (!contextChanged && hasCachedTracksForContext && !shouldRefreshLiked) {
       setLoadingTracks(false);
       return;
     }
@@ -942,6 +968,7 @@ export default function PlaylistBrowser() {
     selectedPlaylist?.id,
     selectedPlaylist?.type,
     selectedArtist?.id,
+    likedRefreshNonce,
     tracks.length,
     tracksContextKey,
   ]);
@@ -954,7 +981,7 @@ export default function PlaylistBrowser() {
     const baseUrl =
       mode === "playlists"
         ? selectedPlaylist?.type === "liked"
-          ? "/api/spotify/me/tracks"
+          ? "/api/spotify/me/tracks?live=1"
           : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
         : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
     const url = new URL(baseUrl, window.location.origin);

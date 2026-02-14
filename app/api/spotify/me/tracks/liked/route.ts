@@ -103,3 +103,36 @@ export async function POST(req: Request) {
     return jsonError(mapped.code, mapped.status);
   }
 }
+
+export async function DELETE(req: Request) {
+  const originCheck = requireSameOrigin(req);
+  if (originCheck) return originCheck;
+
+  const { session, response } = await requireAppUser();
+  if (response) return response;
+
+  const rl = await rateLimitResponse({
+    key: `liked:remove:${session.appUserId}`,
+    limit: 120,
+    windowMs: 60_000,
+    includeRetryAfter: true,
+  });
+  if (rl) return rl;
+
+  const body = await req.json().catch(() => ({}));
+  const trackId = normalizeTrackId(body?.trackId);
+  if (!trackId) return jsonError("INVALID_TRACK_ID", 400);
+
+  try {
+    await spotifyFetch({
+      url: `https://api.spotify.com/v1/me/tracks?ids=${encodeURIComponent(trackId)}`,
+      method: "DELETE",
+      userLevel: true,
+    });
+    const liked = await getLikedState(trackId);
+    return jsonNoStore({ trackId, liked });
+  } catch (error) {
+    const mapped = mapSpotifyError(error);
+    return jsonError(mapped.code, mapped.status);
+  }
+}

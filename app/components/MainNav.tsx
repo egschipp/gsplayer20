@@ -28,14 +28,7 @@ export default function MainNav() {
           className={`nav-link${isHome ? " active" : ""}`}
           aria-current={isHome ? "page" : undefined}
         >
-          GSPlayer
-        </Link>
-        <Link
-          href="/status"
-          className={`nav-link${isStatus ? " active" : " secondary"}`}
-          aria-current={isStatus ? "page" : undefined}
-        >
-          Settings
+          My Music
         </Link>
         <Link
           href="/queue"
@@ -43,6 +36,13 @@ export default function MainNav() {
           aria-current={isQueue ? "page" : undefined}
         >
           Queue
+        </Link>
+        <Link
+          href="/status"
+          className={`nav-link${isStatus ? " active" : " secondary"}`}
+          aria-current={isStatus ? "page" : undefined}
+        >
+          Settings
         </Link>
       </div>
       <div className="nav-right">

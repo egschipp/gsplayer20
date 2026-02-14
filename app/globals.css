@@ -966,7 +966,7 @@ details[open] > .details-summary::after {
 
 .player-release {
   position: absolute;
-  right: 12px;
+  left: 12px;
   bottom: 8px;
   font-size: 11px;
   line-height: 1;

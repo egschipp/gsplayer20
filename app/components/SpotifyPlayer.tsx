@@ -45,6 +45,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     positionMs: number;
     durationMs: number;
   } | null>(null);
+  const [currentTrackIdState, setCurrentTrackIdState] = useState<string | null>(null);
+  const [currentTrackLiked, setCurrentTrackLiked] = useState<boolean | null>(null);
+  const [likedStateLoading, setLikedStateLoading] = useState(false);
+  const [likedStateSaving, setLikedStateSaving] = useState(false);
   const [shuffleOn, setShuffleOn] = useState(false);
   const [shufflePending, setShufflePending] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
@@ -103,6 +107,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const lastUserSeekAtRef = useRef(0);
   const lastUserVolumeAtRef = useRef(0);
   const lastNonZeroVolumeRef = useRef(0.5);
+  const likedCacheRef = useRef<Map<string, boolean>>(new Map());
+  const likedRequestIdRef = useRef(0);
   const lastSdkStateRef = useRef<any>(null);
   const lastIsPlayingRef = useRef(false);
   const playerStateRef = useRef<typeof playerState>(null);
@@ -436,6 +442,89 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     }
   }, [rebuildQueueOrder, spotifyApiFetch]);
 
+  useEffect(() => {
+    if (!accessToken || !currentTrackIdState) {
+      setCurrentTrackLiked(null);
+      setLikedStateLoading(false);
+      return;
+    }
+
+    const cached = likedCacheRef.current.get(currentTrackIdState);
+    if (typeof cached === "boolean") {
+      setCurrentTrackLiked(cached);
+      setLikedStateLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const requestId = ++likedRequestIdRef.current;
+    setLikedStateLoading(true);
+
+    fetch(
+      `/api/spotify/me/tracks/liked?trackId=${encodeURIComponent(currentTrackIdState)}`,
+      { cache: "no-store" }
+    )
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return res.json().catch(() => null);
+      })
+      .then((data) => {
+        if (cancelled || likedRequestIdRef.current !== requestId) return;
+        const liked = Boolean(data?.liked);
+        likedCacheRef.current.set(currentTrackIdState, liked);
+        setCurrentTrackLiked(liked);
+      })
+      .catch(() => {
+        if (cancelled || likedRequestIdRef.current !== requestId) return;
+        setCurrentTrackLiked(null);
+      })
+      .finally(() => {
+        if (cancelled || likedRequestIdRef.current !== requestId) return;
+        setLikedStateLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, currentTrackIdState]);
+
+  const handleLikeCurrentTrack = useCallback(async () => {
+    if (!currentTrackIdState) return;
+    if (likedStateSaving || likedStateLoading || currentTrackLiked === true) return;
+
+    const previousLiked = currentTrackLiked;
+    setLikedStateSaving(true);
+    setCurrentTrackLiked(true);
+    likedCacheRef.current.set(currentTrackIdState, true);
+
+    try {
+      const res = await fetch("/api/spotify/me/tracks/liked", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackId: currentTrackIdState }),
+      });
+      if (!res.ok) {
+        throw new Error(`LIKE_FAILED_${res.status}`);
+      }
+      const data = await res.json().catch(() => null);
+      const liked = typeof data?.liked === "boolean" ? data.liked : true;
+      likedCacheRef.current.set(currentTrackIdState, liked);
+      setCurrentTrackLiked(liked);
+      if (!liked) {
+        setError("Track toevoegen aan Liked Songs kon niet bevestigd worden.");
+      } else {
+        setError(null);
+      }
+    } catch {
+      const rollback = previousLiked ?? false;
+      likedCacheRef.current.set(currentTrackIdState, rollback);
+      setCurrentTrackLiked(rollback);
+      setError("Track toevoegen aan Liked Songs lukt nu niet.");
+    } finally {
+      setLikedStateSaving(false);
+    }
+  }, [currentTrackIdState, currentTrackLiked, likedStateLoading, likedStateSaving]);
+
   const setActiveDevice = useCallback((id: string | null, name?: string | null) => {
     setActiveDeviceId(id);
     activeDeviceIdRef.current = id;
@@ -513,6 +602,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         lastKnownPositionRef.current = safePosition;
       }
       setDurationMs(nextDuration);
+      setCurrentTrackIdState(trackId);
       if (onTrackChange) onTrackChange(trackId);
       syncQueuePositionFromTrack(trackId);
       if (trackId && Date.now() - lastProgressSyncRef.current > 5000) {
@@ -605,6 +695,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   useEffect(() => {
     if (!canUseSdk) {
       onReady(null);
+      setCurrentTrackIdState(null);
+      setCurrentTrackLiked(null);
       if (accessToken && !playbackAllowed) {
         setError("Ontbrekende Spotify‑rechten. Koppel opnieuw.");
       }
@@ -685,6 +777,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               });
               setPositionMs(data.progress_ms ?? 0);
               setDurationMs(item.duration_ms ?? 0);
+              setCurrentTrackIdState(item.id ?? null);
               if (onTrackChange) onTrackChange(item.id ?? null);
             }
             if (typeof data?.shuffle_state === "boolean") {
@@ -1191,6 +1284,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
         }
         setDurationMs(item.duration_ms ?? 0);
+        setCurrentTrackIdState(item.id ?? null);
         if (onTrackChange) onTrackChange(item.id ?? null);
         syncQueuePositionFromTrack(trackId);
       }
@@ -1590,10 +1684,32 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           )}
         </div>
       <div className="player-meta player-meta-wide">
-        <div className="player-title">
-          {optimisticTrack?.name ||
-            playerState?.name ||
-            (activeDeviceName ? `Afspelen op ${activeDeviceName}` : "Ready to play")}
+        <div className="player-title-row">
+          <div className="player-title">
+            {optimisticTrack?.name ||
+              playerState?.name ||
+              (activeDeviceName ? `Afspelen op ${activeDeviceName}` : "Ready to play")}
+          </div>
+          {accessToken && currentTrackIdState ? (
+            <button
+              type="button"
+              className={`player-like-btn${currentTrackLiked ? " active" : ""}`}
+              aria-label={
+                currentTrackLiked
+                  ? "Staat al in Liked Songs"
+                  : "Toevoegen aan Liked Songs"
+              }
+              title={
+                currentTrackLiked
+                  ? "Staat al in Liked Songs"
+                  : "Toevoegen aan Liked Songs"
+              }
+              disabled={likedStateSaving || likedStateLoading || currentTrackLiked === true}
+              onClick={handleLikeCurrentTrack}
+            >
+              {likedStateSaving ? "…" : currentTrackLiked ? "✓" : "+"}
+            </button>
+          ) : null}
         </div>
         <div className="text-body">
           {optimisticTrack?.artists ||

@@ -93,7 +93,22 @@ async function doFetch<T>(
     clearTimeout(timeout);
 
     if (res.ok) {
-      return (await res.json()) as T;
+      if (res.status === 204 || res.status === 205) {
+        return undefined as T;
+      }
+      const text = await res.text();
+      if (!text) {
+        return undefined as T;
+      }
+      const contentType = res.headers.get("Content-Type") ?? "";
+      const looksJson =
+        contentType.includes("application/json") ||
+        text.trim().startsWith("{") ||
+        text.trim().startsWith("[");
+      if (looksJson) {
+        return JSON.parse(text) as T;
+      }
+      return text as T;
     }
 
     const retryAfter = res.headers.get("Retry-After");

@@ -8,14 +8,13 @@ on:
 
 concurrency:
   group: automated-release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'chore(release):')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -30,10 +29,17 @@ jobs:
 
       - name: Determine Release Version
         id: version
+        env:
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           set -euo pipefail
           CURRENT_VERSION=$(node -e 'const fs=require("fs");const pkg=JSON.parse(fs.readFileSync("package.json","utf8"));process.stdout.write(String(pkg.version||"0.0.0"));')
           CURRENT_TAG="v${CURRENT_VERSION}"
+          if [[ "${HEAD_MESSAGE:-}" == chore\(release\):* ]]; then
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            echo "version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if git ls-remote --exit-code --tags origin "refs/tags/${CURRENT_TAG}" >/dev/null 2>&1; then
             NEXT_VERSION=$(node -e 'const fs=require("fs");const pkg=JSON.parse(fs.readFileSync("package.json","utf8"));const parts=String(pkg.version||"0.0.0").split(".").map((v)=>Number(v)||0);const next=[parts[0],parts[1],parts[2]+1].join(".");pkg.version=next;fs.writeFileSync("package.json",JSON.stringify(pkg,null,2)+"\n");process.stdout.write(next);')
             echo "bumped=true" >> "$GITHUB_OUTPUT"

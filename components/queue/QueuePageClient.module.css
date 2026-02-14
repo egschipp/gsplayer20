@@ -18,6 +18,11 @@
   flex-wrap: wrap;
 }
 
+.controlsHint {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
 .error {
   display: flex;
   align-items: center;

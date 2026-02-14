@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { hasPlaybackScopes } from "@/lib/spotify/scopes";
 import { usePlaybackCommandQueue } from "./player/usePlaybackCommandQueue";
+import { useQueueStore } from "@/lib/queue/QueueProvider";
+import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
 
 declare global {
   interface Window {
@@ -32,6 +34,8 @@ type PlayerProps = {
 
 export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const { data: session, status: sessionStatus } = useSession();
+  const customQueue = useQueueStore();
+  const customQueuePlayback = useQueuePlayback();
   const accessToken = session?.accessToken as string | undefined;
   const scope = session?.scope as string | undefined;
   const playbackAllowed = hasPlaybackScopes(scope);
@@ -157,6 +161,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     () => Boolean(accessToken) && playbackAllowed,
     [accessToken, playbackAllowed]
   );
+  const isCustomQueueActive =
+    customQueue.mode === "queue" && customQueue.items.length > 0;
+  const isCurrentTrackFromCustomQueue = useMemo(() => {
+    if (!currentTrackIdState) return false;
+    return customQueue.items.some((item) => item.trackId === currentTrackIdState);
+  }, [currentTrackIdState, customQueue.items]);
 
   useEffect(() => {
     playerStateRef.current = playerState;
@@ -1427,6 +1437,19 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handleTogglePlay() {
     setPlaybackTouched(true);
+    if (
+      isCustomQueueActive &&
+      !isCurrentTrackFromCustomQueue &&
+      !customQueuePlayback.busy
+    ) {
+      const targetQueueId =
+        customQueue.currentQueueId ?? customQueue.items[0]?.queueId ?? null;
+      if (targetQueueId) {
+        customQueue.setCurrentQueueId(targetQueueId);
+        await customQueuePlayback.playFromQueue(targetQueueId);
+        return;
+      }
+    }
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) {
@@ -1459,6 +1482,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handleNext() {
     setPlaybackTouched(true);
+    if (isCustomQueueActive && !customQueuePlayback.busy) {
+      await customQueuePlayback.playNextFromQueue();
+      return;
+    }
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
@@ -1499,6 +1526,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handlePrevious() {
     setPlaybackTouched(true);
+    if (isCustomQueueActive && !customQueuePlayback.busy) {
+      await customQueuePlayback.playPreviousFromQueue();
+      return;
+    }
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
@@ -1804,6 +1835,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             Geen Spotify‑apparaat geselecteerd. Kies een apparaat om af te spelen.
           </div>
         ) : null}
+        {isCustomQueueActive ? (
+          <div className="text-subtle">
+            Custom queue actief. Bedien play/vorige/volgende vanuit de player.
+          </div>
+        ) : null}
         </div>
         <div className="player-controls">
           <div
@@ -1893,7 +1929,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           </div>
           <div
             className={`player-control player-control-ghost player-control-grad${
-              queueOpen ? " active" : ""
+              queueOpen || isCustomQueueActive ? " active" : ""
             }`}
             role="button"
             tabIndex={0}

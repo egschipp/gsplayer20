@@ -1,14 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import { type DragEvent, useEffect, useMemo, useState } from "react";
+import { type DragEvent, useMemo, useState } from "react";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
 import { usePlayer } from "@/app/components/player/PlayerProvider";
-import {
-  type PlaybackStateSnapshot,
-  fetchPlaybackStateSnapshot,
-} from "@/lib/spotify/webPlaybackApi";
 import styles from "./QueuePageClient.module.css";
 
 function formatDuration(ms: number | null) {
@@ -25,8 +21,6 @@ export default function QueuePageClient() {
   const { currentTrackId } = usePlayer();
   const [draggingQueueId, setDraggingQueueId] = useState<string | null>(null);
   const [dragOverQueueId, setDragOverQueueId] = useState<string | null>(null);
-  const [currentPlayable, setCurrentPlayable] = useState<PlaybackStateSnapshot | null>(null);
-  const [loadingCurrentPlayable, setLoadingCurrentPlayable] = useState(false);
 
   const currentIndex = useMemo(() => {
     if (!queue.currentQueueId) return -1;
@@ -39,22 +33,6 @@ export default function QueuePageClient() {
       : null;
 
   const hasItems = queue.items.length > 0;
-
-  async function refreshCurrentPlayable() {
-    setLoadingCurrentPlayable(true);
-    try {
-      const snapshot = await fetchPlaybackStateSnapshot();
-      setCurrentPlayable(snapshot);
-    } catch {
-      setCurrentPlayable(null);
-    } finally {
-      setLoadingCurrentPlayable(false);
-    }
-  }
-
-  useEffect(() => {
-    void refreshCurrentPlayable();
-  }, []);
 
   function handleDragStart(queueId: string) {
     setDraggingQueueId(queueId);
@@ -85,27 +63,13 @@ export default function QueuePageClient() {
     setDragOverQueueId(null);
   }
 
-  async function handleClearQueue() {
+  function handleClearQueue() {
     if (!hasItems) return;
     if (queue.items.length > 1) {
       const approved = window.confirm("Weet je zeker dat je de custom queue wilt leegmaken?");
       if (!approved) return;
     }
     queue.clearQueue();
-  }
-
-  function handleAddCurrentTrack() {
-    if (!currentPlayable?.trackId || !currentPlayable.itemUri) return;
-    queue.addTracks([
-      {
-        uri: currentPlayable.itemUri,
-        trackId: currentPlayable.trackId,
-        name: currentPlayable.trackName || "Onbekend nummer",
-        artists: currentPlayable.artistNames || "Onbekende artiest",
-        durationMs: currentPlayable.durationMs || null,
-        artworkUrl: currentPlayable.artworkUrl || null,
-      },
-    ]);
   }
 
   return (
@@ -116,48 +80,11 @@ export default function QueuePageClient() {
             Custom Queue
           </h1>
           <p className="text-body" style={{ margin: 0 }}>
-            Beheer je eigen afspeelvolgorde los van Spotify Queue.
+            Beheer je afspeelvolgorde. Gebruik de player voor play/pause/vorige/volgende.
           </p>
         </div>
         <div className={styles.headerActions}>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={handleAddCurrentTrack}
-            disabled={!currentPlayable?.trackId || !currentPlayable?.itemUri || playback.busy}
-          >
-            Voeg Nu Spelend Toe
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => {
-              if (queue.currentQueueId) {
-                void playback.playFromQueue(queue.currentQueueId);
-              } else if (queue.items[0]) {
-                void playback.playFromQueue(queue.items[0].queueId);
-              }
-            }}
-            disabled={!hasItems || playback.busy}
-          >
-            Start Queue
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => void playback.playPreviousFromQueue()}
-            disabled={!hasItems || playback.busy}
-          >
-            Vorige
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => void playback.playNextFromQueue()}
-            disabled={!hasItems || playback.busy}
-          >
-            Volgende
-          </button>
+          <span className={styles.controlsHint}>Bediening via player</span>
           <button
             type="button"
             className="btn btn-secondary"
@@ -165,14 +92,6 @@ export default function QueuePageClient() {
             disabled={!hasItems || playback.busy}
           >
             Clear Queue
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => void refreshCurrentPlayable()}
-            disabled={loadingCurrentPlayable}
-          >
-            {loadingCurrentPlayable ? "Vernieuwen..." : "Vernieuw Track"}
           </button>
         </div>
       </div>
@@ -196,7 +115,7 @@ export default function QueuePageClient() {
         <div className={styles.empty} role="status">
           <div className={styles.emptyTitle}>Je queue is leeg</div>
           <p className="text-body" style={{ margin: 0 }}>
-            Start een track en klik op <strong>Voeg Nu Spelend Toe</strong>.
+            Voeg tracks toe met de <strong>＋ Queue</strong> knop in de lijsten.
           </p>
         </div>
       ) : null}
@@ -262,7 +181,7 @@ export default function QueuePageClient() {
                     onClick={() => void playback.playFromQueue(item.queueId)}
                     disabled={playback.busy}
                   >
-                    Speel
+                    Start hier
                   </button>
                   <button
                     type="button"

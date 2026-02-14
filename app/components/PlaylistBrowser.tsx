@@ -1068,6 +1068,9 @@ export default function PlaylistBrowser() {
 
   async function handlePlayTrack(track: TrackRow | TrackItem | null | undefined) {
     if (!track || !playerApi) return;
+    if (queue.mode === "queue") {
+      queue.setMode("idle");
+    }
     let trackId: string | null = null;
     if ("trackId" in track && track.trackId) {
       trackId = track.trackId;
@@ -1078,10 +1081,10 @@ export default function PlaylistBrowser() {
 
     if (mode === "playlists" && selectedPlaylist?.id) {
       if (selectedPlaylist.type === "liked") {
-        const queue = buildQueue();
+        const playbackQueue = buildQueue();
         const targetUri = `spotify:track:${trackId}`;
-        if (queue.uris.length && queue.byId.has(trackId)) {
-          await playerApi.playQueue(queue.uris, targetUri);
+        if (playbackQueue.uris.length && playbackQueue.byId.has(trackId)) {
+          await playerApi.playQueue(playbackQueue.uris, targetUri);
         } else {
           await playerApi.playContext(
             "spotify:collection:tracks",
@@ -1091,14 +1094,14 @@ export default function PlaylistBrowser() {
         }
         return;
       }
-      const queue = buildQueue();
+      const playbackQueue = buildQueue();
       const targetUri = `spotify:track:${trackId}`;
       const offsetPosition =
         "position" in track && typeof track.position === "number"
           ? track.position
           : null;
-      if (queue.uris.length && queue.byId.has(trackId)) {
-        await playerApi.playQueue(queue.uris, targetUri, offsetPosition);
+      if (playbackQueue.uris.length && playbackQueue.byId.has(trackId)) {
+        await playerApi.playQueue(playbackQueue.uris, targetUri, offsetPosition);
         return;
       }
       const contextUri = `spotify:playlist:${selectedPlaylist.id}`;
@@ -1110,12 +1113,12 @@ export default function PlaylistBrowser() {
       return;
     }
 
-    const queue = buildQueue();
-    if (!queue.uris.length) return;
+    const playbackQueue = buildQueue();
+    if (!playbackQueue.uris.length) return;
     const targetUri = `spotify:track:${trackId}`;
     const offsetPosition =
       "position" in track && typeof track.position === "number" ? track.position : null;
-    await playerApi.playQueue(queue.uris, targetUri, offsetPosition);
+    await playerApi.playQueue(playbackQueue.uris, targetUri, offsetPosition);
   }
 
 

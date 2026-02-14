@@ -215,15 +215,18 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     if (pendingQueueIdRef.current === queue.currentQueueId) return;
     const currentInQueue = queue.items.some((item) => item.trackId === currentTrackId);
     if (currentInQueue) return;
-    void playFromQueue(queue.currentQueueId);
+    // External track selection should immediately release queue lock instead of forcing a rewind.
+    queue.setMode("idle");
+    pendingQueueIdRef.current = null;
+    lastAutoAdvancedQueueIdRef.current = null;
   }, [
     api,
     currentTrackId,
-    playFromQueue,
     queue.currentQueueId,
     queue.hydrated,
     queue.items,
     queue.mode,
+    queue,
   ]);
 
   useEffect(() => {

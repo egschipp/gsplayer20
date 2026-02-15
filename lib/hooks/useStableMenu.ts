@@ -12,7 +12,7 @@ export function useStableMenu<T extends HTMLElement = HTMLDivElement>({
 }: UseStableMenuOptions) {
   const rootRef = useRef<T | null>(null);
   const interactionRef = useRef(false);
-  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resetTimerRef = useRef<number | null>(null);
 
   const markInteraction = useCallback(() => {
     interactionRef.current = true;
@@ -24,7 +24,7 @@ export function useStableMenu<T extends HTMLElement = HTMLDivElement>({
   }, []);
 
   const handleBlur = useCallback(
-    (event: FocusEvent<T>) => {
+    (event: FocusEvent<HTMLElement>) => {
       const nextTarget =
         (event.relatedTarget as Node | null) ?? document.activeElement;
       if (nextTarget && rootRef.current?.contains(nextTarget)) return;

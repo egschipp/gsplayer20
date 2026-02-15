@@ -27,6 +27,7 @@ import {
 } from "./playlist/utils";
 import { mapSpotifyApiError } from "./playlist/errors";
 import { formatTrackMeta } from "@/lib/chatgpt/trackMeta";
+import { useStableMenu } from "@/lib/hooks/useStableMenu";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import type { QueueTrackInput } from "@/lib/queue/types";
 
@@ -64,7 +65,6 @@ export default function PlaylistBrowser() {
   const [trackArtistsLoading, setTrackArtistsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
-  const suppressCloseRef = useRef(false);
   const { api: playerApi, currentTrackId } = usePlayer();
   const queue = useQueueStore();
   const comboListRef = useRef<HTMLDivElement | null>(null);
@@ -80,6 +80,9 @@ export default function PlaylistBrowser() {
   const hasCachedPlaylistsRef = useRef(false);
   const hasCachedArtistsRef = useRef(false);
   const hasCachedTrackOptionsRef = useRef(false);
+  const comboMenu = useStableMenu<HTMLDivElement>({
+    onClose: () => setOpen(false),
+  });
   const CACHE_KEY = "gs_library_cache_v1";
   const allPlaylistNames = useMemo(() => {
     const emojiStart = /^\s*\p{Extended_Pictographic}/u;
@@ -1164,15 +1167,20 @@ export default function PlaylistBrowser() {
         ))}
       </div>
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <div className="combo" style={{ minWidth: 260 }}>
+        <div
+          className="combo"
+          style={{ minWidth: 260 }}
+          ref={comboMenu.rootRef}
+          onPointerDownCapture={comboMenu.markInteraction}
+          onTouchStartCapture={comboMenu.markInteraction}
+        >
           <label className="sr-only" htmlFor="playlist-search">
             Kies selectie
           </label>
           <input
             id="playlist-search"
             value={query}
-            onMouseDown={() => {
-              suppressCloseRef.current = true;
+            onClick={() => {
               setQuery("");
               setDebouncedQuery("");
               setOpen(true);
@@ -1186,12 +1194,7 @@ export default function PlaylistBrowser() {
               setDebouncedQuery("");
               setOpen(true);
             }}
-            onBlur={() => {
-              setTimeout(() => {
-                if (!suppressCloseRef.current) setOpen(false);
-                suppressCloseRef.current = false;
-              }, 100);
-            }}
+            onBlur={comboMenu.handleBlur}
             className="combo-input"
             aria-label="Selectie zoeken"
             role="combobox"
@@ -1219,8 +1222,7 @@ export default function PlaylistBrowser() {
               type="button"
               className="combo-clear"
               aria-label="Clear selection"
-              onMouseDown={() => {
-                suppressCloseRef.current = true;
+              onClick={() => {
                 setQuery("");
                 setOpen(true);
                 if (mode === "playlists") setSelectedPlaylistId("");
@@ -1260,8 +1262,7 @@ export default function PlaylistBrowser() {
                     className={`combo-item${
                       opt.id === selectedTrackId ? " active" : ""
                     }`}
-                    onMouseDown={() => {
-                      suppressCloseRef.current = true;
+                    onClick={() => {
                       setSelectedTrackId(opt.id);
                       setQuery("");
                       setDebouncedQuery("");
@@ -1307,8 +1308,7 @@ export default function PlaylistBrowser() {
                         ? " active"
                         : ""
                     }`}
-                    onMouseDown={() => {
-                      suppressCloseRef.current = true;
+                    onClick={() => {
                       if (mode === "playlists") setSelectedPlaylistId(opt.id);
                       if (mode === "artists") setSelectedArtistId(opt.id);
                       setQuery("");

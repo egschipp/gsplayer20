@@ -7,6 +7,7 @@ import { hasPlaybackScopes } from "@/lib/spotify/scopes";
 import { usePlaybackCommandQueue } from "./player/usePlaybackCommandQueue";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
+import { useStableMenu } from "@/lib/hooks/useStableMenu";
 
 declare global {
   interface Window {
@@ -84,7 +85,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [deviceMissing, setDeviceMissing] = useState(false);
   const [devicesLoaded, setDevicesLoaded] = useState(false);
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
-  const deviceCloseRef = useRef(false);
   const lastDeviceSelectRef = useRef(0);
   const pendingDeviceIdRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -130,6 +130,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const { enqueue: enqueueCommand, busy: commandBusy } = usePlaybackCommandQueue();
   const lastCommandAtRef = useRef(0);
   const playbackRecoveryRef = useRef(false);
+  const deviceMenu = useStableMenu<HTMLDivElement>({
+    onClose: () => setDeviceMenuOpen(false),
+  });
 
   function formatPlayerError(message?: string | null) {
     if (!message) return null;
@@ -1956,21 +1959,16 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             max={durationMs || 1}
             value={Math.min(positionMs, durationMs || 1)}
             onChange={(event) => setPositionMs(Number(event.target.value))}
-            onMouseDown={() => {
+            onPointerDown={() => {
               isScrubbingRef.current = true;
             }}
-            onTouchStart={() => {
-              isScrubbingRef.current = true;
-            }}
-            onMouseUp={() => {
+            onPointerUp={() => {
               if (!isScrubbingRef.current) return;
               isScrubbingRef.current = false;
               handleSeek(positionMs);
             }}
-            onTouchEnd={() => {
-              if (!isScrubbingRef.current) return;
+            onPointerCancel={() => {
               isScrubbingRef.current = false;
-              handleSeek(positionMs);
             }}
             className="player-slider"
             style={{
@@ -2013,20 +2011,21 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           </button>
         </div>
         <div className="player-device-select">
-          <div className="combo" style={{ width: "100%" }}>
+          <div
+            className="combo"
+            style={{ width: "100%" }}
+            ref={deviceMenu.rootRef}
+            onPointerDownCapture={deviceMenu.markInteraction}
+            onTouchStartCapture={deviceMenu.markInteraction}
+          >
             <button
               type="button"
               className="combo-input"
-              onMouseDown={() => {
+              onClick={() => {
                 setDeviceMenuOpen((prev) => !prev);
                 refreshDevices(true);
               }}
-              onBlur={() => {
-                setTimeout(() => {
-                  if (!deviceCloseRef.current) setDeviceMenuOpen(false);
-                  deviceCloseRef.current = false;
-                }, 100);
-              }}
+              onBlur={deviceMenu.handleBlur}
               aria-label="Kies een Spotify‑apparaat"
               aria-haspopup="listbox"
               aria-expanded={deviceMenuOpen}
@@ -2048,8 +2047,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                       className={`combo-item${
                         device.id === (activeDeviceId || deviceId) ? " active" : ""
                       }`}
-                      onMouseDown={() => {
-                        deviceCloseRef.current = true;
+                      onClick={() => {
                         handleDeviceChange(device.id);
                         setDeviceMenuOpen(false);
                       }}

@@ -1210,7 +1210,11 @@ export default function PlaylistBrowser() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ trackId }),
           });
-          if (!likedRes.ok) throw new Error(`ADD_LIKED_FAILED_${likedRes.status}`);
+          if (!likedRes.ok) {
+            const data = await likedRes.json().catch(() => null);
+            const code = typeof data?.error === "string" ? data.error : "UNKNOWN";
+            throw new Error(`ADD_LIKED_FAILED_${likedRes.status}_${code}`);
+          }
           emitLikedTracksUpdated(trackId, "added");
           setLikedRefreshNonce((prev) => prev + 1);
         } else {
@@ -1220,7 +1224,9 @@ export default function PlaylistBrowser() {
             body: JSON.stringify({ trackId }),
           });
           if (!playlistRes.ok) {
-            throw new Error(`ADD_PLAYLIST_FAILED_${playlistRes.status}`);
+            const data = await playlistRes.json().catch(() => null);
+            const code = typeof data?.error === "string" ? data.error : "UNKNOWN";
+            throw new Error(`ADD_PLAYLIST_FAILED_${playlistRes.status}_${code}`);
           }
           void requestPlaylistItemsSync(target.id);
         }
@@ -1233,12 +1239,25 @@ export default function PlaylistBrowser() {
         if (mode === "playlists" && selectedPlaylist?.type === "playlist" && selectedPlaylist.id) {
           void requestPlaylistItemsSync(selectedPlaylist.id);
         }
-      } catch {
-        setError(
-          target.type === "liked"
-            ? "Track toevoegen aan Liked Songs lukt nu niet."
-            : "Track toevoegen aan playlist lukt nu niet."
-        );
+      } catch (error) {
+        const message = String(error);
+        if (
+          message.includes("_403_") ||
+          message.includes("FORBIDDEN") ||
+          message.includes("SPOTIFY_SCOPE_OR_PREMIUM")
+        ) {
+          setError("Ontbrekende Spotify-rechten. Koppel Spotify opnieuw.");
+        } else if (message.includes("_401_") || message.includes("UNAUTHENTICATED")) {
+          setError("Spotify-sessie verlopen. Koppel Spotify opnieuw.");
+        } else if (message.includes("_429_") || message.includes("RATE_LIMIT")) {
+          setError("Spotify rate limit bereikt. Probeer zo opnieuw.");
+        } else {
+          setError(
+            target.type === "liked"
+              ? "Track toevoegen aan Liked Songs lukt nu niet."
+              : "Track toevoegen aan playlist lukt nu niet."
+          );
+        }
       } finally {
         setAddingTargetKey(null);
       }

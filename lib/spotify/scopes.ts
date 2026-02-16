@@ -4,6 +4,8 @@ export const SPOTIFY_SCOPES = [
   "user-library-modify",
   "playlist-read-private",
   "playlist-read-collaborative",
+  "playlist-modify-public",
+  "playlist-modify-private",
   "user-top-read",
   "user-read-private",
   "user-read-playback-state",

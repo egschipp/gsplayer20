@@ -40,6 +40,7 @@ export async function GET(req: Request) {
             album?: {
               id?: string;
               name?: string;
+              release_date?: string;
               images?: Array<{ url: string }>;
             };
             artists?: Array<{ name?: string }>;
@@ -70,6 +71,11 @@ export async function GET(req: Request) {
                 : null,
             albumId: track.album?.id ?? null,
             albumName: track.album?.name ?? null,
+            albumReleaseDate: track.album?.release_date ?? null,
+            releaseYear:
+              track.album?.release_date && /^\d{4}/.test(track.album.release_date)
+                ? Number(track.album.release_date.slice(0, 4))
+                : null,
             albumImageUrl: track.album?.images?.[0]?.url ?? null,
             coverUrl: track.album?.images?.[0]?.url ?? null,
             popularity:
@@ -148,6 +154,8 @@ export async function GET(req: Request) {
       explicit: tracks.explicit,
       albumId: tracks.albumId,
       albumName: tracks.albumName,
+      albumReleaseDate: tracks.albumReleaseDate,
+      releaseYear: tracks.albumReleaseYear,
       albumImageUrl: tracks.albumImageUrl,
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
       popularity: tracks.popularity,

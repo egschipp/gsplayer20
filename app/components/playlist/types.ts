@@ -29,7 +29,13 @@ export type TrackItem = {
   trackId?: string | null;
   name: string;
   artists: { id: string; name: string }[];
-  album: { id: string | null; name: string | null; images: { url: string }[] };
+  album: {
+    id: string | null;
+    name: string | null;
+    images: { url: string }[];
+    release_date?: string | null;
+  };
+  releaseYear?: number | null;
   durationMs?: number | null;
   explicit?: number | null;
   popularity?: number | null;
@@ -45,6 +51,8 @@ export type TrackRow = {
   name: string | null;
   albumId?: string | null;
   albumName?: string | null;
+  albumReleaseDate?: string | null;
+  releaseYear?: number | null;
   albumImageUrl?: string | null;
   coverUrl?: string | null;
   artists?: string | null;

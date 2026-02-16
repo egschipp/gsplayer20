@@ -28,6 +28,14 @@ if (!hasColumn("tracks", "album_name")) {
   sqlite.exec("ALTER TABLE tracks ADD COLUMN album_name TEXT");
 }
 
+if (!hasColumn("tracks", "album_release_date")) {
+  sqlite.exec("ALTER TABLE tracks ADD COLUMN album_release_date TEXT");
+}
+
+if (!hasColumn("tracks", "album_release_year")) {
+  sqlite.exec("ALTER TABLE tracks ADD COLUMN album_release_year INTEGER");
+}
+
 if (!hasColumn("tracks", "album_image_url")) {
   sqlite.exec("ALTER TABLE tracks ADD COLUMN album_image_url TEXT");
 }

@@ -57,6 +57,8 @@ export async function GET(
       popularity: tracks.popularity,
       albumId: tracks.albumId,
       albumName: tracks.albumName,
+      albumReleaseDate: tracks.albumReleaseDate,
+      releaseYear: tracks.albumReleaseYear,
       albumImageUrl: tracks.albumImageUrl,
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
       artists: sql<string | null>`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,

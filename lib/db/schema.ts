@@ -46,6 +46,8 @@ export const tracks = sqliteTable("tracks", {
   explicit: integer("explicit").notNull(),
   albumId: text("album_id"),
   albumName: text("album_name"),
+  albumReleaseDate: text("album_release_date"),
+  albumReleaseYear: integer("album_release_year"),
   albumImageUrl: text("album_image_url"),
   albumImageBlob: blob("album_image_blob", { mode: "buffer" }),
   albumImageMime: text("album_image_mime"),

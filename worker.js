@@ -56,6 +56,14 @@ if (!hasColumn("sync_state", "updated_at")) {
   );
 }
 
+if (!hasColumn("tracks", "album_release_date")) {
+  db.exec("ALTER TABLE tracks ADD COLUMN album_release_date TEXT");
+}
+
+if (!hasColumn("tracks", "album_release_year")) {
+  db.exec("ALTER TABLE tracks ADD COLUMN album_release_year INTEGER");
+}
+
 function sanitizeErrorMessage(message) {
   return String(message)
     .replace(/Bearer\\s+[^\\s]+/g, "Bearer [redacted]")
@@ -245,14 +253,16 @@ const statements = {
     `UPDATE oauth_tokens SET refresh_token_enc=?, updated_at=? WHERE user_id=?`
   ),
   upsertTrack: db.prepare(
-    `INSERT INTO tracks (track_id, name, duration_ms, explicit, album_id, album_name, album_image_url, popularity, updated_at)
-     VALUES (@track_id, @name, @duration_ms, @explicit, @album_id, @album_name, @album_image_url, @popularity, @updated_at)
+    `INSERT INTO tracks (track_id, name, duration_ms, explicit, album_id, album_name, album_release_date, album_release_year, album_image_url, popularity, updated_at)
+     VALUES (@track_id, @name, @duration_ms, @explicit, @album_id, @album_name, @album_release_date, @album_release_year, @album_image_url, @popularity, @updated_at)
      ON CONFLICT(track_id) DO UPDATE SET
        name=excluded.name,
        duration_ms=excluded.duration_ms,
        explicit=excluded.explicit,
        album_id=excluded.album_id,
        album_name=excluded.album_name,
+       album_release_date=excluded.album_release_date,
+       album_release_year=excluded.album_release_year,
        album_image_url=excluded.album_image_url,
        popularity=excluded.popularity,
        updated_at=excluded.updated_at`
@@ -275,7 +285,7 @@ const statements = {
   getTracksMissingMeta: db.prepare(
     `SELECT track_id
      FROM tracks
-     WHERE (album_name IS NULL OR album_image_url IS NULL)
+     WHERE (album_name IS NULL OR album_image_url IS NULL OR album_release_date IS NULL OR album_release_year IS NULL)
        AND track_id > ?
      ORDER BY track_id ASC
      LIMIT ?`
@@ -290,7 +300,7 @@ const statements = {
   ),
   updateTrackMeta: db.prepare(
     `UPDATE tracks
-     SET album_id=?, album_name=?, album_image_url=?, updated_at=?
+     SET album_id=?, album_name=?, album_release_date=?, album_release_year=?, album_image_url=?, updated_at=?
      WHERE track_id=?`
   ),
   getUsers: db.prepare(`SELECT id FROM users`),
@@ -408,6 +418,11 @@ const writeTracksPage = db.transaction((items, userId, now) => {
       explicit: track.explicit ? 1 : 0,
       album_id: track.album?.id || null,
       album_name: track.album?.name || null,
+      album_release_date: track.album?.release_date || null,
+      album_release_year:
+        track.album?.release_date && /^\d{4}/.test(track.album.release_date)
+          ? Number(track.album.release_date.slice(0, 4))
+          : null,
       album_image_url:
         track.album?.images?.[track.album?.images?.length - 1]?.url || null,
       popularity: track.popularity ?? null,
@@ -469,6 +484,11 @@ const writePlaylistItemsPage = db.transaction(
           explicit: track.explicit ? 1 : 0,
           album_id: track.album?.id || null,
           album_name: track.album?.name || null,
+          album_release_date: track.album?.release_date || null,
+          album_release_year:
+            track.album?.release_date && /^\d{4}/.test(track.album.release_date)
+              ? Number(track.album.release_date.slice(0, 4))
+              : null,
           album_image_url:
             track.album?.images?.[track.album?.images?.length - 1]?.url || null,
           popularity: track.popularity ?? null,
@@ -870,9 +890,16 @@ async function syncTrackMetadata(job) {
       if (!track?.id) continue;
       const imageUrl =
         track.album?.images?.[track.album?.images?.length - 1]?.url || null;
+      const releaseDate = track.album?.release_date || null;
+      const releaseYear =
+        releaseDate && /^\d{4}/.test(releaseDate)
+          ? Number(releaseDate.slice(0, 4))
+          : null;
       statements.updateTrackMeta.run(
         track.album?.id || null,
         track.album?.name || null,
+        releaseDate,
+        releaseYear,
         imageUrl,
         now,
         track.id

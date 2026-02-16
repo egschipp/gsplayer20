@@ -12,9 +12,39 @@ import {
 } from "@/lib/db/schema";
 import { and, asc, eq, gt, inArray, or, sql } from "drizzle-orm";
 import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
-import { rateLimitResponse, requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
+import {
+  jsonError,
+  jsonNoStore,
+  jsonPrivateCache,
+  rateLimitResponse,
+  requireAppUser,
+  requireSameOrigin,
+} from "@/lib/api/guards";
+import { spotifyFetch } from "@/lib/spotify/client";
+import { SpotifyFetchError } from "@/lib/spotify/errors";
 
 export const runtime = "nodejs";
+
+const TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
+
+function normalizeTrackId(value: unknown) {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  if (TRACK_ID_REGEX.test(raw)) return raw;
+  if (raw.startsWith("spotify:track:")) {
+    const id = raw.split(":").pop() ?? "";
+    return TRACK_ID_REGEX.test(id) ? id : null;
+  }
+  try {
+    const url = new URL(raw);
+    const match = url.pathname.match(/\/track\/([A-Za-z0-9]{22})/);
+    if (match?.[1]) return match[1];
+  } catch {
+    // ignore
+  }
+  return null;
+}
 
 export async function GET(
   req: NextRequest,
@@ -67,6 +97,8 @@ export async function GET(
       name: tracks.name,
       albumId: tracks.albumId,
       albumName: tracks.albumName,
+      albumReleaseDate: tracks.albumReleaseDate,
+      releaseYear: tracks.albumReleaseYear,
       albumImageUrl: tracks.albumImageUrl,
       durationMs: tracks.durationMs,
       explicit: tracks.explicit,
@@ -189,4 +221,54 @@ export async function GET(
       lagSec,
     },
   });
+}
+
+export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ playlistId: string }> }
+) {
+  const originCheck = requireSameOrigin(req);
+  if (originCheck) return originCheck;
+
+  const { session, response } = await requireAppUser();
+  if (response) return response;
+
+  const rl = await rateLimitResponse({
+    key: `playlist-items:add:${session.appUserId}`,
+    limit: 120,
+    windowMs: 60_000,
+    includeRetryAfter: true,
+  });
+  if (rl) return rl;
+
+  const { playlistId } = await ctx.params;
+  if (!playlistId) return jsonError("MISSING_PLAYLIST", 400);
+
+  const body = await req.json().catch(() => ({}));
+  const trackId = normalizeTrackId(body?.trackId);
+  if (!trackId) return jsonError("INVALID_TRACK_ID", 400);
+
+  try {
+    await spotifyFetch({
+      url: `https://api.spotify.com/v1/playlists/${encodeURIComponent(
+        playlistId
+      )}/tracks`,
+      method: "POST",
+      body: { uris: [`spotify:track:${trackId}`] },
+      userLevel: true,
+    });
+    return jsonNoStore({ playlistId, trackId, added: true });
+  } catch (error) {
+    if (error instanceof SpotifyFetchError) {
+      if (error.status === 401) return jsonError("UNAUTHENTICATED", 401);
+      if (error.status === 403) return jsonError("FORBIDDEN", 403);
+      if (error.status === 404) return jsonError("PLAYLIST_NOT_FOUND", 404);
+      if (error.status === 429) return jsonError("SPOTIFY_RATE_LIMIT", 429);
+      return jsonError("SPOTIFY_UPSTREAM", 502);
+    }
+    if (String(error).includes("UserNotAuthenticated")) {
+      return jsonError("UNAUTHENTICATED", 401);
+    }
+    return jsonError("SPOTIFY_UPSTREAM", 502);
+  }
 }

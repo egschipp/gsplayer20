@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS tracks (
   explicit INTEGER NOT NULL,
   album_id TEXT,
   album_name TEXT,
+  album_release_date TEXT,
+  album_release_year INTEGER,
   album_image_url TEXT,
   album_image_blob BLOB,
   album_image_mime TEXT,

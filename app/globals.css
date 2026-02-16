@@ -566,6 +566,10 @@ a:focus-visible {
   grid-template-columns: 98px 1fr 1fr auto;
 }
 
+.track-header.columns-5 {
+  grid-template-columns: 98px 1fr 80px 1fr auto;
+}
+
 .empty-state {
   padding: 16px 18px;
   border-radius: 1rem;

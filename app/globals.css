@@ -570,6 +570,16 @@ a:focus-visible {
   grid-template-columns: 98px 1fr 80px 1fr auto;
 }
 
+.track-context-title {
+  padding-left: 114px;
+}
+
+@media (max-width: 900px) {
+  .track-context-title {
+    padding-left: 0;
+  }
+}
+
 .empty-state {
   padding: 16px 18px;
   border-radius: 1rem;
@@ -735,14 +745,21 @@ details[open] > .details-summary::after {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   border-radius: 999px;
-  border: 1px solid rgba(29, 185, 84, 0.7);
-  background: var(--tide);
-  color: #0b0b0b;
-  font-size: 24px;
+  border: 1px solid rgba(29, 185, 84, 0.45);
+  background: rgba(29, 185, 84, 0.2);
+  color: rgba(234, 255, 242, 0.95);
+  font-size: 20px;
   cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.play-btn:hover:not(:disabled) {
+  border-color: rgba(29, 185, 84, 0.65);
+  background: rgba(29, 185, 84, 0.3);
+  color: #ffffff;
 }
 
 .play-btn:disabled {

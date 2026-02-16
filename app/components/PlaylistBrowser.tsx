@@ -1717,7 +1717,7 @@ export default function PlaylistBrowser() {
         </p>
       ) : null}
       {mode === "tracks" && selectedTrack?.artistNames ? (
-        <div className="text-subtle" style={{ marginTop: 6 }}>
+        <div className="text-subtle track-context-title" style={{ marginTop: 6 }}>
           Geselecteerd: {selectedTrack.name} • {selectedTrack.artistNames}
         </div>
       ) : null}
@@ -1730,12 +1730,12 @@ export default function PlaylistBrowser() {
       {mode !== "tracks" ? (
         <div className="track-list" style={{ marginTop: 16 }}>
           {mode === "playlists" && selectedPlaylist?.name ? (
-            <div className="text-body" style={{ marginBottom: 6 }}>
+            <div className="text-body track-context-title" style={{ marginBottom: 6 }}>
               Tracks in: <strong>{selectedPlaylist.name}</strong>
             </div>
           ) : null}
           {mode === "artists" && selectedArtist?.name ? (
-            <div className="text-body" style={{ marginBottom: 6 }}>
+            <div className="text-body track-context-title" style={{ marginBottom: 6 }}>
               Tracks van: <strong>{selectedArtist.name}</strong>
             </div>
           ) : null}
@@ -1799,7 +1799,7 @@ export default function PlaylistBrowser() {
       ) : (
         <div className="track-list" style={{ marginTop: 16 }}>
           {selectedTrack?.name ? (
-            <div className="text-body" style={{ marginBottom: 6 }}>
+            <div className="text-body track-context-title" style={{ marginBottom: 6 }}>
               Tracks met naam: <strong>{selectedTrack?.name}</strong>
             </div>
           ) : null}
@@ -2442,7 +2442,6 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
               </svg>
             </a>
           ) : null}
-          {track.trackId ? <span className="text-subtle">Spotify</span> : null}
         </div>
       </div>
     </div>
@@ -2595,9 +2594,6 @@ function TrackItemRenderer({
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm4.6 14.52c-.18.3-.57.4-.87.22-2.4-1.46-5.42-1.8-8.97-1.02-.34.08-.68-.13-.76-.47-.08-.34.13-.68.47-.76 3.86-.86 7.2-.47 9.9 1.18.3.18.4.57.22.87Zm1.24-2.76c-.22.36-.7.48-1.06.26-2.74-1.68-6.92-2.17-10.17-1.18-.41.12-.85-.11-.97-.52-.12-.41.11-.85.52-.97 3.71-1.12 8.33-.57 11.47 1.36.36.22.48.7.26 1.05Zm.11-2.87c-3.28-1.95-8.69-2.13-11.82-1.18-.49.15-1.02-.13-1.17-.62-.15-.49.13-1.02.62-1.17 3.59-1.09 9.56-.88 13.33 1.36.44.26.58.83.32 1.27-.26.44-.83.58-1.27.32Z" />
             </svg>
           </a>
-          <span className="text-subtle" style={{ marginLeft: 6 }}>
-            Spotify
-          </span>
         </div>
       </div>
     </div>

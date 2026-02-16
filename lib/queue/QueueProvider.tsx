@@ -100,13 +100,30 @@ function getNextQueueId(items: QueueItem[], currentQueueId: string | null) {
   return items[index + 1].queueId;
 }
 
+function safeReadQueueStorage(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeWriteQueueStorage(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function QueueProvider({ children }: { children: React.ReactNode }) {
   const [snapshot, setSnapshot] = useState<QueueSnapshot>(initialSnapshot);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const next = parsePersistedSnapshot(window.localStorage.getItem(STORAGE_KEY));
+    const next = parsePersistedSnapshot(safeReadQueueStorage(STORAGE_KEY));
     // Hydrate persisted queue state after mount to keep SSR deterministic.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSnapshot(next);
@@ -115,7 +132,16 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!hydrated || typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    const raw = JSON.stringify(snapshot);
+    if (safeWriteQueueStorage(STORAGE_KEY, raw)) return;
+    // Try to at least persist the current playback pointer when storage is tight.
+    const compact = JSON.stringify({
+      ...initialSnapshot,
+      currentQueueId: snapshot.currentQueueId,
+      mode: snapshot.mode,
+      fallbackContext: snapshot.fallbackContext,
+    });
+    safeWriteQueueStorage(STORAGE_KEY, compact);
   }, [hydrated, snapshot]);
 
   const addTracks = useCallback((tracks: QueueTrackInput[]) => {

@@ -55,6 +55,31 @@ function toPlaylistLink(option: PlaylistOption): PlaylistLink {
       };
 }
 
+function safeReadStorage(storage: Storage, key: string) {
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeWriteStorage(storage: Storage, key: string, value: string) {
+  try {
+    storage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function safeRemoveStorageKey(storage: Storage, key: string) {
+  try {
+    storage.removeItem(key);
+  } catch {
+    // ignore storage issues
+  }
+}
+
 export default function PlaylistBrowser() {
   const [mode, setMode] = useState<Mode>("playlists");
   const [playlistOptions, setPlaylistOptions] = useState<PlaylistOption[]>([]);
@@ -108,6 +133,7 @@ export default function PlaylistBrowser() {
   const hasCachedArtistsRef = useRef(false);
   const hasCachedTrackOptionsRef = useRef(false);
   const lastHandledRefreshTokenRef = useRef(0);
+  const cacheWriteBlockedRef = useRef(false);
   const comboMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setOpen(false),
   });
@@ -151,7 +177,7 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     if (typeof window === "undefined" || hydratedSelectionRef.current) return;
-    const stored = window.localStorage.getItem("gs_playlist_selection");
+    const stored = safeReadStorage(window.localStorage, "gs_playlist_selection");
     if (!stored) {
       hydratedSelectionRef.current = true;
       skipModeResetRef.current = false;
@@ -199,7 +225,7 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const raw = window.sessionStorage.getItem(CACHE_KEY);
+    const raw = safeReadStorage(window.sessionStorage, CACHE_KEY);
     try {
       if (!raw) return;
       const parsed = JSON.parse(raw) as {
@@ -262,6 +288,7 @@ export default function PlaylistBrowser() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!cacheHydrated) return;
+    if (cacheWriteBlockedRef.current) return;
     const payload = {
       playlistOptions,
       artistOptions,
@@ -274,7 +301,27 @@ export default function PlaylistBrowser() {
       trackCursor,
       tracksContextKey,
     };
-    window.sessionStorage.setItem(CACHE_KEY, JSON.stringify(payload));
+    const full = JSON.stringify(payload);
+    if (safeWriteStorage(window.sessionStorage, CACHE_KEY, full)) return;
+
+    // Fallback cache for browsers with low storage quota (e.g. mobile Safari).
+    const compactPayload = {
+      playlistOptions: playlistOptions.slice(0, 500),
+      artistOptions: artistOptions.slice(0, 500),
+      trackOptions: trackOptions.slice(0, 900),
+      trackItems: [] as TrackItem[],
+      tracks: [] as TrackRow[],
+      nextCursor: null as string | null,
+      playlistCursor,
+      artistCursor,
+      trackCursor,
+      tracksContextKey: null as string | null,
+    };
+    const compact = JSON.stringify(compactPayload);
+    if (safeWriteStorage(window.sessionStorage, CACHE_KEY, compact)) return;
+
+    safeRemoveStorageKey(window.sessionStorage, CACHE_KEY);
+    cacheWriteBlockedRef.current = true;
   }, [
     artistCursor,
     artistOptions,
@@ -297,7 +344,7 @@ export default function PlaylistBrowser() {
       artistId: selectedArtistId,
       trackId: selectedTrackId,
     });
-    window.localStorage.setItem("gs_playlist_selection", payload);
+    safeWriteStorage(window.localStorage, "gs_playlist_selection", payload);
   }, [mode, selectedPlaylistId, selectedArtistId, selectedTrackId]);
 
   useEffect(() => {
@@ -1420,57 +1467,72 @@ export default function PlaylistBrowser() {
 
   async function handlePlayTrack(track: TrackRow | TrackItem | null | undefined) {
     if (!track || !playerApi) return;
-    if (queue.mode === "queue") {
-      queue.setMode("idle");
-    }
-    let trackId: string | null = null;
-    if ("trackId" in track && track.trackId) {
-      trackId = track.trackId;
-    } else if ("id" in track && track.id) {
-      trackId = track.id;
-    }
-    if (!trackId) return;
+    try {
+      if (queue.mode === "queue") {
+        queue.setMode("idle");
+      }
+      let trackId: string | null = null;
+      if ("trackId" in track && track.trackId) {
+        trackId = track.trackId;
+      } else if ("id" in track && track.id) {
+        trackId = track.id;
+      }
+      if (!trackId) return;
 
-    if (mode === "playlists" && selectedPlaylist?.id) {
-      if (selectedPlaylist.type === "liked") {
+      if (mode === "playlists" && selectedPlaylist?.id) {
+        if (selectedPlaylist.type === "liked") {
+          const playbackQueue = buildQueue();
+          const targetUri = `spotify:track:${trackId}`;
+          if (playbackQueue.uris.length && playbackQueue.byId.has(trackId)) {
+            await playerApi.playQueue(playbackQueue.uris, targetUri);
+          } else {
+            await playerApi.playQueue([targetUri], targetUri, 0);
+          }
+          return;
+        }
         const playbackQueue = buildQueue();
         const targetUri = `spotify:track:${trackId}`;
+        const offsetPosition =
+          "position" in track && typeof track.position === "number"
+            ? track.position
+            : null;
         if (playbackQueue.uris.length && playbackQueue.byId.has(trackId)) {
-          await playerApi.playQueue(playbackQueue.uris, targetUri);
-        } else {
-          await playerApi.playContext(
-            "spotify:collection:tracks",
-            null,
-            targetUri
-          );
+          await playerApi.playQueue(playbackQueue.uris, targetUri, offsetPosition);
+          return;
         }
+        const contextUri = `spotify:playlist:${selectedPlaylist.id}`;
+        await playerApi.playContext(
+          contextUri,
+          offsetPosition,
+          targetUri
+        );
         return;
       }
+
       const playbackQueue = buildQueue();
+      if (!playbackQueue.uris.length) return;
       const targetUri = `spotify:track:${trackId}`;
       const offsetPosition =
         "position" in track && typeof track.position === "number"
           ? track.position
           : null;
-      if (playbackQueue.uris.length && playbackQueue.byId.has(trackId)) {
-        await playerApi.playQueue(playbackQueue.uris, targetUri, offsetPosition);
-        return;
+      await playerApi.playQueue(playbackQueue.uris, targetUri, offsetPosition);
+    } catch (error) {
+      const message = String(error).toLowerCase();
+      if (
+        message.includes("_403_") ||
+        message.includes("forbidden") ||
+        message.includes("insufficient_scope")
+      ) {
+        setError("Ontbrekende Spotify-rechten. Koppel Spotify opnieuw.");
+      } else if (message.includes("_401_") || message.includes("unauthenticated")) {
+        setError("Spotify-sessie verlopen. Koppel Spotify opnieuw.");
+      } else if (message.includes("quotaexceeded")) {
+        setError("Browser-opslag is vol. Ververs de pagina en probeer opnieuw.");
+      } else {
+        setError("Track afspelen lukt nu niet.");
       }
-      const contextUri = `spotify:playlist:${selectedPlaylist.id}`;
-      await playerApi.playContext(
-        contextUri,
-        offsetPosition,
-        targetUri
-      );
-      return;
     }
-
-    const playbackQueue = buildQueue();
-    if (!playbackQueue.uris.length) return;
-    const targetUri = `spotify:track:${trackId}`;
-    const offsetPosition =
-      "position" in track && typeof track.position === "number" ? track.position : null;
-    await playerApi.playQueue(playbackQueue.uris, targetUri, offsetPosition);
   }
 
 
@@ -2321,8 +2383,8 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
         style={{
           display: "grid",
           gridTemplateColumns: isGrid
-            ? "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px auto"
-            : "98px minmax(0, 1fr) auto",
+            ? "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px 128px"
+            : "98px minmax(0, 1fr) 128px",
           gap: 16,
           alignItems: "center",
           height: "64px",
@@ -2494,7 +2556,7 @@ function TrackItemRenderer({
         className={`track-row-inner${isPlaying ? " playing" : ""}`}
         style={{
           display: "grid",
-          gridTemplateColumns: "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px auto",
+          gridTemplateColumns: "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px 128px",
           gap: 16,
           alignItems: "center",
           height: "64px",

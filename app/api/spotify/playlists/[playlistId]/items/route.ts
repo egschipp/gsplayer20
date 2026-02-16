@@ -272,3 +272,53 @@ export async function POST(
     return jsonError("SPOTIFY_UPSTREAM", 502);
   }
 }
+
+export async function DELETE(
+  req: NextRequest,
+  ctx: { params: Promise<{ playlistId: string }> }
+) {
+  const originCheck = requireSameOrigin(req);
+  if (originCheck) return originCheck;
+
+  const { session, response } = await requireAppUser();
+  if (response) return response;
+
+  const rl = await rateLimitResponse({
+    key: `playlist-items:remove:${session.appUserId}`,
+    limit: 120,
+    windowMs: 60_000,
+    includeRetryAfter: true,
+  });
+  if (rl) return rl;
+
+  const { playlistId } = await ctx.params;
+  if (!playlistId) return jsonError("MISSING_PLAYLIST", 400);
+
+  const body = await req.json().catch(() => ({}));
+  const trackId = normalizeTrackId(body?.trackId);
+  if (!trackId) return jsonError("INVALID_TRACK_ID", 400);
+
+  try {
+    await spotifyFetch({
+      url: `https://api.spotify.com/v1/playlists/${encodeURIComponent(
+        playlistId
+      )}/tracks`,
+      method: "DELETE",
+      body: { tracks: [{ uri: `spotify:track:${trackId}` }] },
+      userLevel: true,
+    });
+    return jsonNoStore({ playlistId, trackId, removed: true });
+  } catch (error) {
+    if (error instanceof SpotifyFetchError) {
+      if (error.status === 401) return jsonError("UNAUTHENTICATED", 401);
+      if (error.status === 403) return jsonError("FORBIDDEN", 403);
+      if (error.status === 404) return jsonError("PLAYLIST_NOT_FOUND", 404);
+      if (error.status === 429) return jsonError("SPOTIFY_RATE_LIMIT", 429);
+      return jsonError("SPOTIFY_UPSTREAM", 502);
+    }
+    if (String(error).includes("UserNotAuthenticated")) {
+      return jsonError("UNAUTHENTICATED", 401);
+    }
+    return jsonError("SPOTIFY_UPSTREAM", 502);
+  }
+}

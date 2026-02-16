@@ -91,6 +91,7 @@ export default function PlaylistBrowser() {
   const [authRequired, setAuthRequired] = useState(false);
   const [tracksRefreshToken, setTracksRefreshToken] = useState(0);
   const [addingTargetKey, setAddingTargetKey] = useState<string | null>(null);
+  const [removingTargetKey, setRemovingTargetKey] = useState<string | null>(null);
   const { api: playerApi, currentTrackId } = usePlayer();
   const queue = useQueueStore();
   const comboListRef = useRef<HTMLDivElement | null>(null);
@@ -1137,6 +1138,51 @@ export default function PlaylistBrowser() {
     []
   );
 
+  const removePlaylistOnTrack = useCallback(
+    (trackId: string, targetPlaylistId: string) => {
+      setTracks((prev) => {
+        const selectedTargetPlaylist =
+          mode === "playlists" &&
+          selectedPlaylist?.type === "playlist" &&
+          selectedPlaylist.id === targetPlaylistId;
+        const selectedLiked =
+          mode === "playlists" &&
+          selectedPlaylist?.type === "liked" &&
+          targetPlaylistId === "liked";
+        if (selectedTargetPlaylist || selectedLiked) {
+          return prev.filter((row) => row.trackId !== trackId);
+        }
+        return prev.map((row) => {
+          if (!row.trackId || row.trackId !== trackId) return row;
+          const current = Array.isArray(row.playlists) ? row.playlists : [];
+          const next = current.filter((pl) => pl.id !== targetPlaylistId);
+          if (next.length === current.length) return row;
+          return { ...row, playlists: next };
+        });
+      });
+
+      setTrackItems((prev) =>
+        prev.map((item) => {
+          const itemTrackId = item.trackId || item.id;
+          if (!itemTrackId || itemTrackId !== trackId) return item;
+          const current = Array.isArray(item.playlists) ? item.playlists : [];
+          const next = current.filter((pl) => pl.id !== targetPlaylistId);
+          if (next.length === current.length) return item;
+          return { ...item, playlists: next };
+        })
+      );
+
+      setSelectedTrackDetail((prev) => {
+        if (!prev?.trackId || prev.trackId !== trackId) return prev;
+        const current = Array.isArray(prev.playlists) ? prev.playlists : [];
+        const next = current.filter((pl) => pl.id !== targetPlaylistId);
+        if (next.length === current.length) return prev;
+        return { ...prev, playlists: next };
+      });
+    },
+    [mode, selectedPlaylist?.id, selectedPlaylist?.type]
+  );
+
   const appendTrackToSelectedPlaylist = useCallback(
     (track: TrackRow | TrackItem, target: PlaylistOption) => {
       if (mode !== "playlists" || selectedPlaylist?.type !== "playlist") return;
@@ -1236,7 +1282,12 @@ export default function PlaylistBrowser() {
         appendTrackToSelectedPlaylist(track, target);
         setTracksRefreshToken((prev) => prev + 1);
 
-        if (mode === "playlists" && selectedPlaylist?.type === "playlist" && selectedPlaylist.id) {
+        if (
+          mode === "playlists" &&
+          selectedPlaylist?.type === "playlist" &&
+          selectedPlaylist.id &&
+          selectedPlaylist.id !== target.id
+        ) {
           void requestPlaylistItemsSync(selectedPlaylist.id);
         }
       } catch (error) {
@@ -1270,6 +1321,85 @@ export default function PlaylistBrowser() {
       selectedPlaylist?.id,
       selectedPlaylist?.type,
       upsertPlaylistOnTrack,
+    ]
+  );
+
+  const handleRemoveTrackFromPlaylist = useCallback(
+    async (playlist: PlaylistLink) => {
+      const trackId = selectedTrackDetail?.trackId ?? null;
+      if (!trackId) return;
+      const opKey = `${trackId}:${playlist.id}`;
+      setRemovingTargetKey(opKey);
+      setError(null);
+      try {
+        if (playlist.id === "liked") {
+          const likedRes = await fetch("/api/spotify/me/tracks/liked", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ trackId }),
+          });
+          if (!likedRes.ok) {
+            const data = await likedRes.json().catch(() => null);
+            const code = typeof data?.error === "string" ? data.error : "UNKNOWN";
+            throw new Error(`REMOVE_LIKED_FAILED_${likedRes.status}_${code}`);
+          }
+          emitLikedTracksUpdated(trackId, "removed");
+          setLikedRefreshNonce((prev) => prev + 1);
+        } else {
+          const playlistRes = await fetch(`/api/spotify/playlists/${playlist.id}/items`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ trackId }),
+          });
+          if (!playlistRes.ok) {
+            const data = await playlistRes.json().catch(() => null);
+            const code = typeof data?.error === "string" ? data.error : "UNKNOWN";
+            throw new Error(`REMOVE_PLAYLIST_FAILED_${playlistRes.status}_${code}`);
+          }
+          void requestPlaylistItemsSync(playlist.id);
+        }
+
+        removePlaylistOnTrack(trackId, playlist.id);
+
+        if (
+          mode === "playlists" &&
+          selectedPlaylist?.type === "playlist" &&
+          selectedPlaylist.id &&
+          selectedPlaylist.id !== playlist.id
+        ) {
+          void requestPlaylistItemsSync(selectedPlaylist.id);
+        }
+      } catch (error) {
+        const message = String(error);
+        if (
+          message.includes("_403_") ||
+          message.includes("FORBIDDEN") ||
+          message.includes("SPOTIFY_SCOPE_OR_PREMIUM")
+        ) {
+          setError("Ontbrekende Spotify-rechten. Koppel Spotify opnieuw.");
+        } else if (message.includes("_401_") || message.includes("UNAUTHENTICATED")) {
+          setError("Spotify-sessie verlopen. Koppel Spotify opnieuw.");
+        } else if (message.includes("_429_") || message.includes("RATE_LIMIT")) {
+          setError("Spotify rate limit bereikt. Probeer zo opnieuw.");
+        } else {
+          setError(
+            playlist.id === "liked"
+              ? "Track verwijderen uit Liked Songs lukt nu niet."
+              : "Track verwijderen uit playlist lukt nu niet."
+          );
+        }
+      } finally {
+        setRemovingTargetKey(null);
+      }
+    },
+    [
+      emitLikedTracksUpdated,
+      mode,
+      removePlaylistOnTrack,
+      requestPlaylistItemsSync,
+      selectedPlaylist?.id,
+      selectedPlaylist?.type,
+      selectedTrackDetail?.trackId,
     ]
   );
 
@@ -1886,15 +2016,36 @@ export default function PlaylistBrowser() {
                       {selectedTrackDetail.playlists?.length ? (
                         <div className="track-detail-playlists">
                           {selectedTrackDetail.playlists.map((pl) => (
-                            <a
-                              key={pl.id}
-                              href={pl.spotifyUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              {pl.name || "Naamloze playlist"}
-                            </a>
+                            <div key={pl.id} className="track-detail-playlist-row">
+                              <a
+                                href={pl.spotifyUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                {pl.name || "Naamloze playlist"}
+                              </a>
+                              <button
+                                type="button"
+                                className="playlist-remove-btn"
+                                aria-label={`Verwijder uit ${pl.name || "playlist"}`}
+                                title={`Verwijder uit ${pl.name || "playlist"}`}
+                                disabled={
+                                  !selectedTrackDetail.trackId ||
+                                  removingTargetKey ===
+                                    `${selectedTrackDetail.trackId}:${pl.id}`
+                                }
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void handleRemoveTrackFromPlaylist(pl);
+                                }}
+                              >
+                                {removingTargetKey ===
+                                `${selectedTrackDetail.trackId}:${pl.id}`
+                                  ? "…"
+                                  : "−"}
+                              </button>
+                            </div>
                           ))}
                         </div>
                       ) : (

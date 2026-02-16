@@ -928,6 +928,12 @@ details[open] > .details-summary::after {
   gap: 6px;
 }
 
+.track-detail-playlist-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .track-detail-playlists a {
   color: var(--text-primary);
   text-decoration: none;
@@ -935,6 +941,31 @@ details[open] > .details-summary::after {
 
 .track-detail-playlists a:hover {
   text-decoration: underline;
+}
+
+.playlist-remove-btn {
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.playlist-remove-btn:hover {
+  border-color: rgba(255, 106, 106, 0.8);
+  background: rgba(255, 106, 106, 0.16);
+}
+
+.playlist-remove-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .playing-indicator {

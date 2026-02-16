@@ -1748,18 +1748,13 @@ export default function PlaylistBrowser() {
             </div>
           ) : null}
           {tracks.length ? (
-            <div
-              className={`track-header${
-                mode === "artists" || mode === "playlists" ? " columns-5" : ""
-              }`}
-            >
+            <div className="track-header columns-6">
               <div />
               <div>Track</div>
-              {mode === "artists" || mode === "playlists" ? <div>Jaar</div> : null}
-              {mode === "artists" || mode === "playlists" ? (
-                <div>Playlists</div>
-              ) : null}
-              <div>Duur / Acties</div>
+              <div className="track-col-year">Jaar</div>
+              <div className="track-col-playlists">Playlists</div>
+              <div className="track-col-duration">Duur</div>
+              <div className="track-col-actions">Acties</div>
             </div>
           ) : null}
           {tracks.length ? (
@@ -1810,12 +1805,13 @@ export default function PlaylistBrowser() {
             </div>
           ) : null}
           {filteredTrackItems.length ? (
-            <div className="track-header columns-5">
+            <div className="track-header columns-6">
               <div />
               <div>Track</div>
-              <div>Jaar</div>
-              <div>Playlists</div>
-              <div>Acties</div>
+              <div className="track-col-year">Jaar</div>
+              <div className="track-col-playlists">Playlists</div>
+              <div className="track-col-duration">Duur</div>
+              <div className="track-col-actions">Acties</div>
             </div>
           ) : null}
           {filteredTrackItems.length ? (
@@ -2324,7 +2320,9 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
         className={`track-row-inner${isPlaying ? " playing" : ""}`}
         style={{
           display: "grid",
-          gridTemplateColumns: isGrid ? "98px 1fr 80px 1fr auto" : "98px 1fr auto",
+          gridTemplateColumns: isGrid
+            ? "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px auto"
+            : "98px minmax(0, 1fr) auto",
           gap: 16,
           alignItems: "center",
           height: "64px",
@@ -2365,7 +2363,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             />
           )}
         </div>
-        <div>
+        <div className="track-col-track">
           <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
             {track.name || "Onbekend"}
             {isPlaying ? (
@@ -2382,18 +2380,20 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
           ) : null}
         </div>
         {isGrid ? (
-          <div className="text-subtle">{track.releaseYear ?? "—"}</div>
+          <div className="text-subtle track-col-year">{track.releaseYear ?? "—"}</div>
         ) : null}
         {isGrid ? (
-          <div>
+          <div className="track-col-playlists">
             <PlaylistChips
               playlists={track.playlists}
               maxVisible={data.MAX_PLAYLIST_CHIPS}
             />
           </div>
         ) : null}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div className="text-subtle">{formatDuration(track.durationMs)}</div>
+        {isGrid ? (
+          <div className="text-subtle track-col-duration">{formatDuration(track.durationMs)}</div>
+        ) : null}
+        <div className="track-col-actions track-actions-group">
           <AddToPlaylistMenu
             track={track}
             options={data.addTargetOptions}
@@ -2494,7 +2494,7 @@ function TrackItemRenderer({
         className={`track-row-inner${isPlaying ? " playing" : ""}`}
         style={{
           display: "grid",
-          gridTemplateColumns: "98px 1fr 80px 1fr auto",
+          gridTemplateColumns: "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px auto",
           gap: 16,
           alignItems: "center",
           height: "64px",
@@ -2534,7 +2534,7 @@ function TrackItemRenderer({
             />
           )}
         </div>
-        <div>
+        <div className="track-col-track">
           <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
             {track.name}
             {isPlaying ? (
@@ -2546,14 +2546,15 @@ function TrackItemRenderer({
           <div className="text-body">{uniqueArtistNames || "Onbekende artiest"}</div>
           {track.album?.name ? <div className="text-subtle">{track.album.name}</div> : null}
         </div>
-        <div className="text-subtle">{track.releaseYear ?? "—"}</div>
-        <div>
+        <div className="text-subtle track-col-year">{track.releaseYear ?? "—"}</div>
+        <div className="track-col-playlists">
           <PlaylistChips
             playlists={track.playlists}
             maxVisible={data.MAX_PLAYLIST_CHIPS}
           />
         </div>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <div className="text-subtle track-col-duration">{formatDuration(track.durationMs)}</div>
+        <div className="track-col-actions track-actions-group">
           <AddToPlaylistMenu
             track={track}
             options={data.addTargetOptions}

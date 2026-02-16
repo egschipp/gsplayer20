@@ -570,6 +570,42 @@ a:focus-visible {
   grid-template-columns: 98px 1fr 80px 1fr auto;
 }
 
+.track-header.columns-6 {
+  grid-template-columns: 98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px auto;
+}
+
+.track-col-track {
+  min-width: 0;
+}
+
+.track-col-year {
+  justify-self: start;
+  text-align: left;
+}
+
+.track-col-playlists {
+  justify-self: start;
+  min-width: 0;
+  width: 100%;
+}
+
+.track-col-duration {
+  justify-self: end;
+  text-align: right;
+}
+
+.track-col-actions {
+  justify-self: end;
+  text-align: right;
+}
+
+.track-actions-group {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .track-context-title {
   padding-left: 114px;
 }
@@ -753,7 +789,12 @@ details[open] > .details-summary::after {
   color: rgba(234, 255, 242, 0.95);
   font-size: 20px;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease,
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 
 .play-btn:hover:not(:disabled) {
@@ -765,6 +806,39 @@ details[open] > .details-summary::after {
 .play-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.track-row .play-btn {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(0.92);
+}
+
+.track-row:hover .play-btn,
+.track-row:focus-within .play-btn {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+.track-row:hover .play-btn:disabled,
+.track-row:focus-within .play-btn:disabled {
+  opacity: 0.4;
+}
+
+@media (hover: none) {
+  .track-row .play-btn {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: scale(1);
+  }
+
+  .track-row .play-btn:disabled {
+    opacity: 0.4;
+  }
 }
 
 .detail-btn:hover {

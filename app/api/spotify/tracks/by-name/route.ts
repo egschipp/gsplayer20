@@ -8,13 +8,19 @@ import {
   userPlaylists,
 } from "@/lib/db/schema";
 import { and, eq, or } from "drizzle-orm";
-import { requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
+import { requireAppUser, jsonPrivateCache, rateLimitResponse } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
   const { session, response } = await requireAppUser();
   if (response) return response;
+  const rl = await rateLimitResponse({
+    key: `tracks-by-name:${session.appUserId}`,
+    limit: 300,
+    windowMs: 60_000,
+  });
+  if (rl) return rl;
 
   const { searchParams } = new URL(req.url);
   const name = (searchParams.get("name") ?? "").trim();

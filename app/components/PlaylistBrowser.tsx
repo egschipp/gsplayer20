@@ -169,6 +169,7 @@ export default function PlaylistBrowser() {
   const hasCachedArtistsRef = useRef(false);
   const hasCachedTrackOptionsRef = useRef(false);
   const lastHandledRefreshTokenRef = useRef(0);
+  const tracksLoadVersionRef = useRef(0);
   const cacheWriteBlockedRef = useRef(false);
   const cacheWriteTimerRef = useRef<number | null>(null);
   const trackDetailTriggerRef = useRef<HTMLElement | null>(null);
@@ -1144,6 +1145,7 @@ export default function PlaylistBrowser() {
           : null
         : null;
     async function loadTracks() {
+      const requestVersion = ++tracksLoadVersionRef.current;
       setLoadingTracks(true);
       setError(null);
       try {
@@ -1166,15 +1168,19 @@ export default function PlaylistBrowser() {
         }
         const data = (await res.json()) as CursorResponse<TrackRow>;
         const items = Array.isArray(data.items) ? data.items : [];
-        if (!cancelled) {
+        if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
           setTracks(items);
           setNextCursor(data.nextCursor ?? null);
           if (nextContextKey) setTracksContextKey(nextContextKey);
         }
       } catch {
-        if (!cancelled) setError("Tracks laden lukt nu niet.");
+        if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
+          setError("Tracks laden lukt nu niet.");
+        }
       } finally {
-        if (!cancelled) setLoadingTracks(false);
+        if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
+          setLoadingTracks(false);
+        }
       }
     }
 
@@ -1233,6 +1239,7 @@ export default function PlaylistBrowser() {
     if (!nextCursor || loadingMoreTracksRef.current) return;
     if (mode === "playlists" && !selectedPlaylist?.id) return;
     if (mode === "artists" && !selectedArtist?.id) return;
+    const requestVersion = tracksLoadVersionRef.current;
     const cursor = nextCursor;
     const baseUrl =
       mode === "playlists"
@@ -1251,6 +1258,7 @@ export default function PlaylistBrowser() {
       if (!res.ok) return;
       const data = (await res.json()) as CursorResponse<TrackRow>;
       const items = Array.isArray(data.items) ? data.items : [];
+      if (requestVersion !== tracksLoadVersionRef.current) return;
       setTracks((prev) => prev.concat(items));
       setNextCursor(data.nextCursor ?? null);
     } finally {
@@ -1648,8 +1656,11 @@ export default function PlaylistBrowser() {
       }
 
       const playbackQueue = buildQueue();
-      if (!playbackQueue.uris.length) return;
       const targetUri = `spotify:track:${trackId}`;
+      if (!playbackQueue.uris.length) {
+        await playerApi.playQueue([targetUri], targetUri, 0);
+        return;
+      }
       const offsetPosition =
         "position" in track && typeof track.position === "number"
           ? track.position

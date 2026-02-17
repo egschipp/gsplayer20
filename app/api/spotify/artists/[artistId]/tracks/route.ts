@@ -10,7 +10,12 @@ import {
 } from "@/lib/db/schema";
 import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { encodeCursor, tryDecodeCursor } from "@/lib/spotify/cursor";
-import { jsonError, requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
+import {
+  jsonError,
+  requireAppUser,
+  jsonPrivateCache,
+  rateLimitResponse,
+} from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -20,6 +25,12 @@ export async function GET(
 ) {
   const { session, response } = await requireAppUser();
   if (response) return response;
+  const rl = await rateLimitResponse({
+    key: `artist-tracks:${session.appUserId}`,
+    limit: 600,
+    windowMs: 60_000,
+  });
+  if (rl) return rl;
 
   const { artistId } = await ctx.params;
   if (!artistId) {

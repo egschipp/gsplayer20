@@ -8,7 +8,7 @@ import {
 } from "@/lib/db/schema";
 import { and, eq, or } from "drizzle-orm";
 import { spotifyFetch } from "@/lib/spotify/client";
-import { requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
+import { requireAppUser, jsonPrivateCache, rateLimitResponse } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -18,6 +18,12 @@ export async function GET(
 ) {
   const { session, response } = await requireAppUser();
   if (response) return response;
+  const rl = await rateLimitResponse({
+    key: `track-artists:${session.appUserId}`,
+    limit: 300,
+    windowMs: 60_000,
+  });
+  if (rl) return rl;
 
   const { trackId } = await ctx.params;
   if (!trackId) {

@@ -893,6 +893,28 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         deduped.set(d.id, d);
       }
     }
+    const currentSelectedId = activeDeviceIdRef.current;
+    if (currentSelectedId && !deduped.has(currentSelectedId)) {
+      deduped.set(currentSelectedId, {
+        id: currentSelectedId,
+        name: activeDeviceName || "Huidig apparaat",
+        is_active: true,
+        type: "Unknown",
+        is_restricted: false,
+        supports_volume: true,
+      });
+    }
+    const sdkDeviceId = sdkDeviceIdRef.current;
+    if (sdkDeviceId && !deduped.has(sdkDeviceId)) {
+      deduped.set(sdkDeviceId, {
+        id: sdkDeviceId,
+        name: "GSPlayer20 Web",
+        is_active: currentSelectedId === sdkDeviceId,
+        type: "Computer",
+        is_restricted: false,
+        supports_volume: true,
+      });
+    }
     const mapped = Array.from(deduped.values()).map((d: any) => ({
       id: d.id,
       name: d.name,
@@ -935,7 +957,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setActiveDeviceRestricted(Boolean(sdkDevice.is_restricted));
       setActiveDeviceSupportsVolume(sdkDevice.supports_volume !== false);
     }
-  }, [setActiveDevice, spotifyApiFetch]);
+  }, [activeDeviceName, setActiveDevice, spotifyApiFetch]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -1126,12 +1148,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
     };
 
-    const onNotReady = () => {
-      setDeviceId(null);
-      sdkDeviceIdRef.current = null;
+    const onNotReady = ({ device_id }: { device_id?: string } = {}) => {
+      const knownSdkId = device_id || sdkDeviceIdRef.current;
+      if (knownSdkId) {
+        sdkDeviceIdRef.current = knownSdkId;
+        setDeviceId(knownSdkId);
+      } else {
+        setDeviceId(null);
+      }
       sdkReadyRef.current = false;
       lastConfirmedActiveDeviceRef.current = null;
       setDeviceReady(false);
+      refreshDevices(true);
     };
 
     const onStateChanged = (state: any) => {

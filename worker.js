@@ -22,6 +22,8 @@ if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
+db.pragma("busy_timeout = 5000");
+db.pragma("synchronous = NORMAL");
 
 let inFlight = 0;
 const queue = [];
@@ -62,6 +64,84 @@ if (!hasColumn("tracks", "album_release_date")) {
 
 if (!hasColumn("tracks", "album_release_year")) {
   db.exec("ALTER TABLE tracks ADD COLUMN album_release_year INTEGER");
+}
+
+db.exec(
+  "CREATE INDEX IF NOT EXISTS playlist_items_track_idx ON playlist_items(track_id)"
+);
+
+const SPOTIFY_ID_REGEX = /^[A-Za-z0-9]{22}$/;
+
+function clampInt(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function parseJobPayload(rawPayload) {
+  if (!rawPayload) return {};
+  try {
+    const parsed = JSON.parse(rawPayload);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+    // ignore malformed payload
+  }
+  return {};
+}
+
+function normalizeCursor(value) {
+  if (typeof value !== "string") return "";
+  return value.slice(0, 128);
+}
+
+function normalizePlaylistId(value) {
+  if (typeof value !== "string") return null;
+  return SPOTIFY_ID_REGEX.test(value) ? value : null;
+}
+
+function envInt(name, min, max, fallback) {
+  return clampInt(process.env[name], min, max, fallback);
+}
+
+function sanitizeRequeuePayload(type, payload, result) {
+  const next = { ...payload };
+  if (result.nextOffset !== undefined) {
+    next.offset = clampInt(result.nextOffset, 0, 100_000, 0);
+  }
+  if (result.nextCursor !== undefined) {
+    next.cursor = normalizeCursor(result.nextCursor);
+  }
+
+  if (next.limit !== undefined) {
+    next.limit = clampInt(next.limit, 1, 50, 50);
+  }
+  if (next.maxPagesPerRun !== undefined) {
+    next.maxPagesPerRun = clampInt(next.maxPagesPerRun, 1, 200, 10);
+  }
+  if (next.maxBatches !== undefined) {
+    next.maxBatches = clampInt(next.maxBatches, 1, 200, 20);
+  }
+
+  if (type === "SYNC_PLAYLIST_ITEMS") {
+    const playlistId = normalizePlaylistId(next.playlistId);
+    if (!playlistId) {
+      delete next.playlistId;
+    } else {
+      next.playlistId = playlistId;
+    }
+    next.runId =
+      typeof next.runId === "string" && next.runId.length <= 128
+        ? next.runId
+        : crypto.randomUUID();
+    next.snapshotId =
+      typeof next.snapshotId === "string" && next.snapshotId.length <= 256
+        ? next.snapshotId
+        : null;
+  }
+
+  return next;
 }
 
 function sanitizeErrorMessage(message) {
@@ -305,10 +385,14 @@ const statements = {
   ),
   getUsers: db.prepare(`SELECT id FROM users`),
   countJobsByType: db.prepare(
-    `SELECT count(*) as c FROM jobs WHERE type=? AND status IN ('queued','running')`
+    `SELECT count(*) as c
+     FROM jobs
+     WHERE user_id=? AND type=? AND status IN ('queued','running')`
   ),
   countCoverJobs: db.prepare(
-    `SELECT count(*) as c FROM jobs WHERE type='SYNC_COVERS' AND status IN ('queued','running')`
+    `SELECT count(*) as c
+     FROM jobs
+     WHERE user_id=? AND type='SYNC_COVERS' AND status IN ('queued','running')`
   ),
   getSyncState: db.prepare(
     `SELECT status, last_successful_at as lastSuccessfulAt
@@ -585,12 +669,15 @@ async function getAccessTokenForUser(userId) {
 }
 
 async function syncTracksInitial(job) {
-  const payload = job.payload ? JSON.parse(job.payload) : {};
-  const offset = payload.offset || 0;
-  const limit = payload.limit || 50;
-  const maxPagesPerRun =
-    payload.maxPagesPerRun ||
-    Number(process.env.SYNC_TRACKS_INITIAL_PAGES || "50");
+  const payload = parseJobPayload(job.payload);
+  const offset = clampInt(payload.offset, 0, 100_000, 0);
+  const limit = clampInt(payload.limit, 1, 50, 50);
+  const maxPagesPerRun = clampInt(
+    payload.maxPagesPerRun,
+    1,
+    200,
+    envInt("SYNC_TRACKS_INITIAL_PAGES", 1, 200, 50)
+  );
 
   const accessToken = await getAccessTokenForUser(job.user_id);
 
@@ -642,11 +729,14 @@ async function syncTracksInitial(job) {
 }
 
 async function syncTracksIncremental(job) {
-  const payload = job.payload ? JSON.parse(job.payload) : {};
-  const limit = payload.limit || 50;
-  const maxPagesPerRun =
-    payload.maxPagesPerRun ||
-    Number(process.env.SYNC_TRACKS_INCREMENTAL_PAGES || "5");
+  const payload = parseJobPayload(job.payload);
+  const limit = clampInt(payload.limit, 1, 50, 50);
+  const maxPagesPerRun = clampInt(
+    payload.maxPagesPerRun,
+    1,
+    100,
+    envInt("SYNC_TRACKS_INCREMENTAL_PAGES", 1, 100, 5)
+  );
 
   const accessToken = await getAccessTokenForUser(job.user_id);
   const maxAddedRow = statements.getMaxAddedAt.get(job.user_id);
@@ -730,12 +820,15 @@ async function syncTracksIncremental(job) {
 }
 
 async function syncPlaylists(job) {
-  const payload = job.payload ? JSON.parse(job.payload) : {};
-  const limit = payload.limit || 50;
-  const maxPagesPerRun =
-    payload.maxPagesPerRun ||
-    Number(process.env.SYNC_PLAYLISTS_PAGES || "10");
-  const offsetStart = payload.offset || 0;
+  const payload = parseJobPayload(job.payload);
+  const limit = clampInt(payload.limit, 1, 50, 50);
+  const maxPagesPerRun = clampInt(
+    payload.maxPagesPerRun,
+    1,
+    100,
+    envInt("SYNC_PLAYLISTS_PAGES", 1, 100, 10)
+  );
+  const offsetStart = clampInt(payload.offset, 0, 100_000, 0);
 
   const accessToken = await getAccessTokenForUser(job.user_id);
 
@@ -787,15 +880,24 @@ async function syncPlaylists(job) {
 }
 
 async function syncPlaylistItems(job) {
-  const payload = job.payload ? JSON.parse(job.payload) : {};
-  const playlistId = payload.playlistId;
-  const snapshotId = payload.snapshotId || null;
-  const limit = payload.limit || 50;
-  const offsetStart = payload.offset || 0;
-  const maxPagesPerRun =
-    payload.maxPagesPerRun ||
-    Number(process.env.SYNC_PLAYLIST_ITEMS_PAGES || "5");
-  const runId = payload.runId || crypto.randomUUID();
+  const payload = parseJobPayload(job.payload);
+  const playlistId = normalizePlaylistId(payload.playlistId);
+  const snapshotId =
+    typeof payload.snapshotId === "string" && payload.snapshotId.length <= 256
+      ? payload.snapshotId
+      : null;
+  const limit = clampInt(payload.limit, 1, 50, 50);
+  const offsetStart = clampInt(payload.offset, 0, 100_000, 0);
+  const maxPagesPerRun = clampInt(
+    payload.maxPagesPerRun,
+    1,
+    100,
+    envInt("SYNC_PLAYLIST_ITEMS_PAGES", 1, 100, 5)
+  );
+  const runId =
+    typeof payload.runId === "string" && payload.runId.length <= 128
+      ? payload.runId
+      : crypto.randomUUID();
 
   if (!playlistId) {
     throw new Error("MissingPlaylistId");
@@ -853,11 +955,15 @@ async function syncPlaylistItems(job) {
 }
 
 async function syncTrackMetadata(job) {
-  const payload = job.payload ? JSON.parse(job.payload) : {};
-  const limit = payload.limit || 50;
-  const cursor = payload.cursor || "";
-  const maxBatches =
-    payload.maxBatches || Number(process.env.SYNC_TRACK_METADATA_BATCHES || "20");
+  const payload = parseJobPayload(job.payload);
+  const limit = clampInt(payload.limit, 1, 50, 50);
+  const cursor = normalizeCursor(payload.cursor);
+  const maxBatches = clampInt(
+    payload.maxBatches,
+    1,
+    200,
+    envInt("SYNC_TRACK_METADATA_BATCHES", 1, 200, 20)
+  );
 
   let batches = 0;
   let lastId = cursor;
@@ -927,11 +1033,15 @@ async function syncTrackMetadata(job) {
 }
 
 async function syncArtistMetadata(job) {
-  const payload = job.payload ? JSON.parse(job.payload) : {};
-  const limit = payload.limit || 50;
-  const cursor = payload.cursor || "";
-  const maxBatches =
-    payload.maxBatches || Number(process.env.SYNC_ARTIST_METADATA_BATCHES || "20");
+  const payload = parseJobPayload(job.payload);
+  const limit = clampInt(payload.limit, 1, 50, 50);
+  const cursor = normalizeCursor(payload.cursor);
+  const maxBatches = clampInt(
+    payload.maxBatches,
+    1,
+    200,
+    envInt("SYNC_ARTIST_METADATA_BATCHES", 1, 200, 20)
+  );
 
   let batches = 0;
   let lastId = cursor;
@@ -992,11 +1102,15 @@ async function syncArtistMetadata(job) {
 }
 
 async function syncCovers(job) {
-  const payload = job.payload ? JSON.parse(job.payload) : {};
-  const limit = payload.limit || 50;
-  const cursor = payload.cursor || "";
-  const maxBatches =
-    payload.maxBatches || Number(process.env.SYNC_COVERS_BATCHES || "20");
+  const payload = parseJobPayload(job.payload);
+  const limit = clampInt(payload.limit, 1, 50, 50);
+  const cursor = normalizeCursor(payload.cursor);
+  const maxBatches = clampInt(
+    payload.maxBatches,
+    1,
+    200,
+    envInt("SYNC_COVERS_BATCHES", 1, 200, 20)
+  );
 
   let batches = 0;
   let lastId = cursor;
@@ -1050,7 +1164,7 @@ async function syncCovers(job) {
 }
 
 function enqueueCoversIfMissing(userId) {
-  const existing = statements.countCoverJobs.get();
+  const existing = statements.countCoverJobs.get(userId);
   if (existing && existing.c > 0) return;
   statements.enqueueJob.run({
     id: crypto.randomUUID(),
@@ -1105,7 +1219,10 @@ function schedulePeriodicSync() {
       return true;
     }
 
-    const tracksJobs = statements.countJobsByType.get("SYNC_TRACKS_INCREMENTAL");
+    const tracksJobs = statements.countJobsByType.get(
+      user.id,
+      "SYNC_TRACKS_INCREMENTAL"
+    );
     if ((!tracksJobs || tracksJobs.c === 0) && shouldEnqueue("tracks")) {
       statements.enqueueJob.run({
         id: crypto.randomUUID(),
@@ -1131,7 +1248,7 @@ function schedulePeriodicSync() {
       });
     }
 
-    const playlistJobs = statements.countJobsByType.get("SYNC_PLAYLISTS");
+    const playlistJobs = statements.countJobsByType.get(user.id, "SYNC_PLAYLISTS");
     if ((!playlistJobs || playlistJobs.c === 0) && shouldEnqueue("playlists")) {
       statements.enqueueJob.run({
         id: crypto.randomUUID(),
@@ -1157,7 +1274,7 @@ function schedulePeriodicSync() {
       });
     }
 
-    const artistJobs = statements.countJobsByType.get("SYNC_ARTISTS");
+    const artistJobs = statements.countJobsByType.get(user.id, "SYNC_ARTISTS");
     if ((!artistJobs || artistJobs.c === 0) && shouldEnqueue("artists")) {
       statements.enqueueJob.run({
         id: crypto.randomUUID(),
@@ -1218,12 +1335,11 @@ function getResourceForJob(job) {
     return "playlists";
   }
   if (job.type === "SYNC_PLAYLIST_ITEMS") {
-    try {
-      const payload = job.payload ? JSON.parse(job.payload) : {};
-      if (payload.playlistId) {
-        return `playlist_items:${payload.playlistId}`;
-      }
-    } catch {}
+    const payload = parseJobPayload(job.payload);
+    const playlistId = normalizePlaylistId(payload.playlistId);
+    if (playlistId) {
+      return `playlist_items:${playlistId}`;
+    }
     return "playlist_items";
   }
   if (job.type === "SYNC_TRACK_METADATA") {
@@ -1272,11 +1388,10 @@ async function runLoop() {
       }
       const result = await handleJob(job);
       if (result && result.done === false) {
-        const nextPayload = Object.assign(
-          {},
-          job.payload ? JSON.parse(job.payload) : {},
-          result.nextOffset !== undefined ? { offset: result.nextOffset } : {},
-          result.nextCursor !== undefined ? { cursor: result.nextCursor } : {}
+        const nextPayload = sanitizeRequeuePayload(
+          job.type,
+          parseJobPayload(job.payload),
+          result
         );
         statements.requeueJob.run(
           Date.now() + 2000,

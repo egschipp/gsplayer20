@@ -103,6 +103,8 @@ CREATE INDEX IF NOT EXISTS playlist_items_playlist_pos_idx
   ON playlist_items(playlist_id, position);
 CREATE INDEX IF NOT EXISTS playlist_items_playlist_added_idx
   ON playlist_items(playlist_id, added_at);
+CREATE INDEX IF NOT EXISTS playlist_items_track_idx
+  ON playlist_items(track_id);
 
 CREATE TABLE IF NOT EXISTS sync_state (
   user_id TEXT NOT NULL,

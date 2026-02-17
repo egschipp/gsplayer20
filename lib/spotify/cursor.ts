@@ -3,10 +3,26 @@ export function encodeCursor(addedAt: number, id: string) {
 }
 
 export function decodeCursor(cursor: string) {
-  const raw = Buffer.from(cursor, "base64").toString("utf8");
-  const [addedAt, id] = raw.split("|");
-  if (!addedAt || !id) {
-    throw new Error("Invalid cursor");
+  const decoded = tryDecodeCursor(cursor);
+  if (!decoded) throw new Error("Invalid cursor");
+  return decoded;
+}
+
+export function tryDecodeCursor(cursor: string) {
+  try {
+    const raw = Buffer.from(cursor, "base64").toString("utf8");
+    const [addedAt, id] = raw.split("|");
+    const parsedAddedAt = Number(addedAt);
+    if (
+      !addedAt ||
+      !id ||
+      !Number.isFinite(parsedAddedAt) ||
+      !Number.isInteger(parsedAddedAt)
+    ) {
+      return null;
+    }
+    return { addedAt: parsedAddedAt, id };
+  } catch {
+    return null;
   }
-  return { addedAt: Number(addedAt), id };
 }

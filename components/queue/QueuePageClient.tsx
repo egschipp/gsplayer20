@@ -4,7 +4,7 @@ import Image from "next/image";
 import { type DragEvent, useMemo, useState } from "react";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
-import { usePlayer } from "@/app/components/player/PlayerProvider";
+import { QUEUE_GRID_COLUMNS } from "@/lib/ui/trackLayout";
 import styles from "./QueuePageClient.module.css";
 
 function formatDuration(ms: number | null) {
@@ -18,14 +18,14 @@ function formatDuration(ms: number | null) {
 export default function QueuePageClient() {
   const queue = useQueueStore();
   const playback = useQueuePlayback();
-  const { currentTrackId } = usePlayer();
   const [draggingQueueId, setDraggingQueueId] = useState<string | null>(null);
   const [dragOverQueueId, setDragOverQueueId] = useState<string | null>(null);
+  const activeQueueId = playback.activeQueueId ?? queue.currentQueueId;
 
   const currentIndex = useMemo(() => {
-    if (!queue.currentQueueId) return -1;
-    return queue.items.findIndex((item) => item.queueId === queue.currentQueueId);
-  }, [queue.currentQueueId, queue.items]);
+    if (!activeQueueId) return -1;
+    return queue.items.findIndex((item) => item.queueId === activeQueueId);
+  }, [activeQueueId, queue.items]);
 
   const nextQueueId =
     currentIndex >= 0 && currentIndex + 1 < queue.items.length
@@ -87,15 +87,11 @@ export default function QueuePageClient() {
     <section className={styles.page} aria-labelledby="queue-title">
       <div className={styles.header}>
         <div>
-          <h1 id="queue-title" className="heading-2" style={{ marginBottom: 6 }}>
+          <h1 id="queue-title" className="heading-2">
             Custom Queue
           </h1>
-          <p className="text-body" style={{ margin: 0 }}>
-            Beheer je afspeelvolgorde. Gebruik de player voor play/pause/vorige/volgende.
-          </p>
         </div>
         <div className={styles.headerActions}>
-          <span className={styles.controlsHint}>Bediening via player</span>
           <button
             type="button"
             className="btn btn-secondary"
@@ -133,7 +129,10 @@ export default function QueuePageClient() {
 
       {queue.hydrated && hasItems ? (
         <div className={`track-list ${styles.tableWrap}`}>
-          <div className={`track-header ${styles.queueHeader}`}>
+          <div
+            className={`track-header ${styles.queueHeader}`}
+            style={{ gridTemplateColumns: QUEUE_GRID_COLUMNS }}
+          >
             <div />
             <div>Track</div>
             <div className={styles.statusHeader}>Status</div>
@@ -142,10 +141,8 @@ export default function QueuePageClient() {
           </div>
           <ol className={styles.queueRows} aria-label="Custom queue tracks">
             {queue.items.map((item) => {
-              const isCurrent =
-                queue.mode === "queue" &&
-                item.queueId === queue.currentQueueId &&
-                currentTrackId === item.trackId;
+              const isCurrent = queue.mode === "queue" && item.queueId === activeQueueId;
+              const isStarting = playback.startingQueueId === item.queueId;
               const isNext = item.queueId === nextQueueId;
               const isDragged = draggingQueueId === item.queueId;
               const isDragOver = dragOverQueueId === item.queueId;
@@ -169,6 +166,7 @@ export default function QueuePageClient() {
                     } ${isDragged ? styles.queueRowDragging : ""} ${
                       isDragOver ? styles.queueRowDragOver : ""
                     }`}
+                    style={{ gridTemplateColumns: QUEUE_GRID_COLUMNS }}
                   >
                     <div className={styles.coverCell}>
                       <span className={styles.dragHandle} aria-hidden="true">
@@ -202,8 +200,12 @@ export default function QueuePageClient() {
 
                     <div className={`track-col-playlists ${styles.statusCell}`}>
                       {isCurrent ? (
-                        <span className={`${styles.statusPill} ${styles.statusNow}`}>
-                          Nu spelend
+                        <span
+                          className={`${styles.statusPill} ${styles.statusNow} ${
+                            isStarting ? styles.statusStarting : ""
+                          }`}
+                        >
+                          {isStarting ? "Starten..." : "Nu spelend"}
                         </span>
                       ) : isNext ? (
                         <span className={`${styles.statusPill} ${styles.statusNext}`}>

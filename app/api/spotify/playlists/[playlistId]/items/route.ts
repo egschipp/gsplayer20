@@ -11,7 +11,7 @@ import {
   playlists,
 } from "@/lib/db/schema";
 import { and, asc, eq, gt, inArray, or, sql } from "drizzle-orm";
-import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
+import { encodeCursor, tryDecodeCursor } from "@/lib/spotify/cursor";
 import {
   jsonError,
   jsonNoStore,
@@ -65,29 +65,43 @@ export async function GET(
   }
 
   const { searchParams } = new URL(req.url);
-  const limit = Math.min(Number(searchParams.get("limit") ?? "50"), 50);
+  const limitValue = Number(searchParams.get("limit") ?? "50");
+  const limit =
+    Number.isFinite(limitValue) && limitValue > 0
+      ? Math.min(Math.floor(limitValue), 50)
+      : 50;
   const cursor = searchParams.get("cursor");
 
   const db = getDb();
-  const whereClause = cursor
-    ? (() => {
-        const decoded = decodeCursor(cursor);
-        return and(
-          eq(userPlaylists.userId, session.appUserId as string),
-          eq(playlistItems.playlistId, playlistId),
-          or(
-            gt(playlistItems.position, decoded.addedAt),
-            and(
-              eq(playlistItems.position, decoded.addedAt),
-              gt(playlistItems.itemId, decoded.id)
-            )
-          )
-        );
-      })()
-    : and(
-        eq(userPlaylists.userId, session.appUserId as string),
-        eq(playlistItems.playlistId, playlistId)
-      );
+  const baseWhere = and(
+    eq(userPlaylists.userId, session.appUserId as string),
+    eq(playlistItems.playlistId, playlistId)
+  );
+  if (!baseWhere) {
+    return jsonError("INVALID_PLAYLIST", 400);
+  }
+  let whereClause = baseWhere;
+
+  if (cursor) {
+    const decoded = tryDecodeCursor(cursor);
+    if (!decoded) {
+      return jsonError("INVALID_CURSOR", 400);
+    }
+    const cursorWhere = and(
+      baseWhere,
+      or(
+        gt(playlistItems.position, decoded.addedAt),
+        and(
+          eq(playlistItems.position, decoded.addedAt),
+          gt(playlistItems.itemId, decoded.id)
+        )
+      )
+    );
+    if (!cursorWhere) {
+      return jsonError("INVALID_CURSOR", 400);
+    }
+    whereClause = cursorWhere;
+  }
 
   const rows = await db
     .select({

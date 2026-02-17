@@ -153,6 +153,7 @@ export const playlistItems = sqliteTable(
       table.playlistId,
       table.addedAt
     ),
+    trackIdx: index("playlist_items_track_idx").on(table.trackId),
   })
 );
 

@@ -18,11 +18,6 @@
   flex-wrap: wrap;
 }
 
-.controlsHint {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-}
-
 .error {
   display: flex;
   align-items: center;
@@ -66,7 +61,6 @@
 .queueHeader,
 .queueRowInner {
   min-width: 760px;
-  grid-template-columns: 98px minmax(0, 1fr) minmax(120px, 0.6fr) 72px 124px;
 }
 
 .statusHeader {
@@ -173,6 +167,10 @@
   color: #8cf5a9;
 }
 
+.statusStarting {
+  border-style: dashed;
+}
+
 .statusNext {
   border-color: rgba(56, 189, 248, 0.5);
   background: rgba(56, 189, 248, 0.14);
@@ -218,10 +216,4 @@
   border-color: rgba(239, 68, 68, 0.58);
   background: rgba(239, 68, 68, 0.16);
   color: #fecaca;
-}
-
-@media (max-width: 900px) {
-  .controlsHint {
-    display: none;
-  }
 }

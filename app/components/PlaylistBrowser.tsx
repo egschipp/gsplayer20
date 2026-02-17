@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FixedSizeList as List, type ListChildComponentProps } from "react-window";
 import { usePlayer } from "./player/PlayerProvider";
 import ChatGptButton from "./playlist/ChatGptButton";
@@ -29,6 +29,11 @@ import { mapSpotifyApiError } from "./playlist/errors";
 import { formatTrackMeta } from "@/lib/chatgpt/trackMeta";
 import { useStableMenu } from "@/lib/hooks/useStableMenu";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
+import {
+  TRACK_GRID_COLUMNS_COMPACT,
+  TRACK_GRID_COLUMNS_FULL,
+  TRACK_ROW_HEIGHT,
+} from "@/lib/ui/trackLayout";
 
 function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   if (!track) return null;
@@ -155,7 +160,6 @@ export default function PlaylistBrowser() {
   const loadingMoreTracksRef = useRef(false);
   const MAX_PLAYLIST_CHIPS = 2;
   const [listHeight, setListHeight] = useState(560);
-  const ROW_HEIGHT = 72;
   const hydratedSelectionRef = useRef(false);
   const skipModeResetRef = useRef(true);
   const [tracksContextKey, setTracksContextKey] = useState<string | null>(null);
@@ -166,6 +170,8 @@ export default function PlaylistBrowser() {
   const hasCachedTrackOptionsRef = useRef(false);
   const lastHandledRefreshTokenRef = useRef(0);
   const cacheWriteBlockedRef = useRef(false);
+  const cacheWriteTimerRef = useRef<number | null>(null);
+  const trackDetailTriggerRef = useRef<HTMLElement | null>(null);
   const comboMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setOpen(false),
   });
@@ -176,6 +182,17 @@ export default function PlaylistBrowser() {
       .map((pl) => pl.name || "Untitled playlist")
       .filter((name) => emojiStart.test(name));
   }, [playlistOptions]);
+
+  const closeTrackDetail = useCallback(() => {
+    setSelectedTrackDetail(null);
+    const trigger = trackDetailTriggerRef.current;
+    trackDetailTriggerRef.current = null;
+    if (!trigger) return;
+    if (!document.contains(trigger)) return;
+    window.requestAnimationFrame(() => {
+      trigger.focus();
+    });
+  }, []);
 
   const emitLikedTracksUpdated = useCallback(
     (trackId: string, action: "added" | "removed") => {
@@ -352,39 +369,53 @@ export default function PlaylistBrowser() {
     if (typeof window === "undefined") return;
     if (!cacheHydrated) return;
     if (cacheWriteBlockedRef.current) return;
-    const payload = {
-      playlistOptions,
-      artistOptions,
-      trackOptions,
-      trackItems,
-      tracks,
-      nextCursor,
-      playlistCursor,
-      artistCursor,
-      trackCursor,
-      tracksContextKey,
-    };
-    const full = JSON.stringify(payload);
-    if (safeWriteStorage(window.sessionStorage, CACHE_KEY, full)) return;
+    if (cacheWriteTimerRef.current) {
+      window.clearTimeout(cacheWriteTimerRef.current);
+      cacheWriteTimerRef.current = null;
+    }
 
-    // Fallback cache for browsers with low storage quota (e.g. mobile Safari).
-    const compactPayload = {
-      playlistOptions: playlistOptions.slice(0, 500),
-      artistOptions: artistOptions.slice(0, 500),
-      trackOptions: trackOptions.slice(0, 900),
-      trackItems: [] as TrackItem[],
-      tracks: [] as TrackRow[],
-      nextCursor: null as string | null,
-      playlistCursor,
-      artistCursor,
-      trackCursor,
-      tracksContextKey: null as string | null,
-    };
-    const compact = JSON.stringify(compactPayload);
-    if (safeWriteStorage(window.sessionStorage, CACHE_KEY, compact)) return;
+    cacheWriteTimerRef.current = window.setTimeout(() => {
+      const payload = {
+        playlistOptions,
+        artistOptions,
+        trackOptions,
+        trackItems,
+        tracks,
+        nextCursor,
+        playlistCursor,
+        artistCursor,
+        trackCursor,
+        tracksContextKey,
+      };
+      const full = JSON.stringify(payload);
+      if (safeWriteStorage(window.sessionStorage, CACHE_KEY, full)) return;
 
-    safeRemoveStorageKey(window.sessionStorage, CACHE_KEY);
-    cacheWriteBlockedRef.current = true;
+      // Fallback cache for browsers with low storage quota (e.g. mobile Safari).
+      const compactPayload = {
+        playlistOptions: playlistOptions.slice(0, 500),
+        artistOptions: artistOptions.slice(0, 500),
+        trackOptions: trackOptions.slice(0, 900),
+        trackItems: [] as TrackItem[],
+        tracks: [] as TrackRow[],
+        nextCursor: null as string | null,
+        playlistCursor,
+        artistCursor,
+        trackCursor,
+        tracksContextKey: null as string | null,
+      };
+      const compact = JSON.stringify(compactPayload);
+      if (safeWriteStorage(window.sessionStorage, CACHE_KEY, compact)) return;
+
+      safeRemoveStorageKey(window.sessionStorage, CACHE_KEY);
+      cacheWriteBlockedRef.current = true;
+    }, 350);
+
+    return () => {
+      if (cacheWriteTimerRef.current) {
+        window.clearTimeout(cacheWriteTimerRef.current);
+        cacheWriteTimerRef.current = null;
+      }
+    };
   }, [
     artistCursor,
     artistOptions,
@@ -526,7 +557,11 @@ export default function PlaylistBrowser() {
           setArtistOptions(list);
           setArtistCursor(data.nextCursor ?? null);
         }
-        } finally {
+      } catch {
+        if (!cancelled) {
+          setError("Artiesten laden lukt nu niet.");
+        }
+      } finally {
         if (!cancelled) setLoadingArtists(false);
       }
     }
@@ -635,7 +670,11 @@ export default function PlaylistBrowser() {
           setTrackCursor(data.nextCursor ?? null);
           hasCachedTrackOptionsRef.current = list.length > 0;
         }
-        } finally {
+      } catch {
+        if (!cancelled) {
+          setError("Tracks laden lukt nu niet.");
+        }
+      } finally {
         if (!cancelled) setLoadingTracksList(false);
       }
     }
@@ -724,42 +763,6 @@ export default function PlaylistBrowser() {
   }, [mode]);
 
   useEffect(() => {
-    const term = debouncedQuery.trim();
-    const shouldPrefetchBySearch = open && term.length >= 2;
-    const shouldAutoloadTracks = mode === "tracks";
-    if (!shouldPrefetchBySearch && !shouldAutoloadTracks) return;
-    if (
-      shouldPrefetchBySearch &&
-      mode === "playlists" &&
-      playlistCursor &&
-      !loadingMorePlaylists
-    ) {
-      loadMorePlaylists();
-    }
-    if (
-      shouldPrefetchBySearch &&
-      mode === "artists" &&
-      artistCursor &&
-      !loadingMoreArtists
-    ) {
-      loadMoreArtists();
-    }
-    if (mode === "tracks" && trackCursor && !loadingMoreTracksList) {
-      loadMoreTracksList();
-    }
-  }, [
-    debouncedQuery,
-    open,
-    mode,
-    playlistCursor,
-    artistCursor,
-    trackCursor,
-    loadingMorePlaylists,
-    loadingMoreArtists,
-    loadingMoreTracksList,
-  ]);
-
-  useEffect(() => {
     const handle = setTimeout(() => {
       setDebouncedQuery(query);
     }, 250);
@@ -773,7 +776,7 @@ export default function PlaylistBrowser() {
     );
   }, [trackItems, selectedTrackId]);
 
-  async function loadMorePlaylists() {
+  const loadMorePlaylists = useCallback(async () => {
     if (!playlistCursor || loadingMorePlaylists) return;
     setLoadingMorePlaylists(true);
     try {
@@ -807,9 +810,9 @@ export default function PlaylistBrowser() {
     } finally {
       setLoadingMorePlaylists(false);
     }
-  }
+  }, [playlistCursor, loadingMorePlaylists]);
 
-  async function loadMoreArtists() {
+  const loadMoreArtists = useCallback(async () => {
     if (!artistCursor || loadingMoreArtists) return;
     setLoadingMoreArtists(true);
     try {
@@ -839,9 +842,9 @@ export default function PlaylistBrowser() {
     } finally {
       setLoadingMoreArtists(false);
     }
-  }
+  }, [artistCursor, loadingMoreArtists]);
 
-  async function loadMoreTracksList() {
+  const loadMoreTracksList = useCallback(async () => {
     if (!trackCursor || loadingMoreTracksList) return;
     setLoadingMoreTracksList(true);
     try {
@@ -929,13 +932,57 @@ export default function PlaylistBrowser() {
         );
       });
       setTrackCursor(data.nextCursor ?? null);
+    } catch {
+      setError("Meer tracks laden lukt nu niet.");
     } finally {
       setLoadingMoreTracksList(false);
     }
-  }
+  }, [trackCursor, loadingMoreTracksList]);
+
+  useEffect(() => {
+    const term = debouncedQuery.trim();
+    const shouldPrefetchBySearch = open && term.length >= 2;
+    const shouldAutoloadTracks = mode === "tracks";
+    if (!shouldPrefetchBySearch && !shouldAutoloadTracks) return;
+    if (
+      shouldPrefetchBySearch &&
+      mode === "playlists" &&
+      playlistCursor &&
+      !loadingMorePlaylists
+    ) {
+      loadMorePlaylists();
+    }
+    if (
+      shouldPrefetchBySearch &&
+      mode === "artists" &&
+      artistCursor &&
+      !loadingMoreArtists
+    ) {
+      loadMoreArtists();
+    }
+    if (mode === "tracks" && trackCursor && !loadingMoreTracksList) {
+      loadMoreTracksList();
+    }
+  }, [
+    debouncedQuery,
+    open,
+    mode,
+    playlistCursor,
+    artistCursor,
+    trackCursor,
+    loadingMorePlaylists,
+    loadingMoreArtists,
+    loadingMoreTracksList,
+    loadMorePlaylists,
+    loadMoreArtists,
+    loadMoreTracksList,
+  ]);
 
 
-  function openDetailFromRow(track: TrackRow) {
+  function openDetailFromRow(track: TrackRow, trigger?: HTMLElement | null) {
+    if (trigger) {
+      trackDetailTriggerRef.current = trigger;
+    }
     const spotifyUrl = track.trackId
       ? `https://open.spotify.com/track/${track.trackId}`
       : null;
@@ -964,7 +1011,10 @@ export default function PlaylistBrowser() {
     });
   }
 
-  function openDetailFromItem(track: TrackItem) {
+  function openDetailFromItem(track: TrackItem, trigger?: HTMLElement | null) {
+    if (trigger) {
+      trackDetailTriggerRef.current = trigger;
+    }
     const coverUrl = track.album?.images?.[0]?.url ?? null;
     const spotifyUrl = track.id ? `https://open.spotify.com/track/${track.id}` : null;
     setSelectedTrackDetail({
@@ -1022,12 +1072,12 @@ export default function PlaylistBrowser() {
     if (!selectedTrackDetail) return;
     function handleEscape(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setSelectedTrackDetail(null);
+        closeTrackDetail();
       }
     }
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [selectedTrackDetail]);
+  }, [closeTrackDetail, selectedTrackDetail]);
 
   useEffect(() => {
     const trackId = selectedTrackDetail?.trackId ?? null;
@@ -1904,7 +1954,7 @@ export default function PlaylistBrowser() {
             <List
               height={listHeight}
               itemCount={tracks.length}
-              itemSize={ROW_HEIGHT}
+              itemSize={TRACK_ROW_HEIGHT}
               width="100%"
               overscanCount={6}
               onItemsRendered={({ visibleStopIndex }) => {
@@ -1962,7 +2012,7 @@ export default function PlaylistBrowser() {
             <List
               height={listHeight}
               itemCount={filteredTrackItems.length}
-              itemSize={ROW_HEIGHT}
+              itemSize={TRACK_ROW_HEIGHT}
               width="100%"
               overscanCount={6}
               itemKey={(index: number, data: TrackItemData) => {
@@ -2005,7 +2055,7 @@ export default function PlaylistBrowser() {
           role="dialog"
           aria-modal="true"
           aria-label="Track details"
-          onClick={() => setSelectedTrackDetail(null)}
+          onClick={closeTrackDetail}
         >
           <div
             className="track-detail-card"
@@ -2075,7 +2125,7 @@ export default function PlaylistBrowser() {
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  onClick={() => setSelectedTrackDetail(null)}
+                  onClick={closeTrackDetail}
                 >
                   Sluiten
                 </button>
@@ -2464,7 +2514,7 @@ type TrackRowData = {
   items: TrackRow[];
   mode: Mode;
   currentTrackId: string | null;
-  openDetailFromRow: (track: TrackRow) => void;
+  openDetailFromRow: (track: TrackRow, trigger?: HTMLElement | null) => void;
   handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
   addTrackToQueue: (track: TrackRow | TrackItem) => void;
   addTrackToPlaylist: (track: TrackRow | TrackItem, target: PlaylistOption) => Promise<void>;
@@ -2481,37 +2531,30 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
     data.currentTrackId &&
       (track.trackId === data.currentTrackId || track.id === data.currentTrackId)
   );
+  const rowColumnsStyle = {
+    ["--track-row-columns" as const]: isGrid
+      ? TRACK_GRID_COLUMNS_FULL
+      : TRACK_GRID_COLUMNS_COMPACT,
+  } as CSSProperties;
   return (
     <div
       style={style}
       className={`track-row${isPlaying ? " playing" : ""}`}
       role="button"
       tabIndex={0}
-      onClick={() => data.openDetailFromRow(track)}
+      onClick={(event) => data.openDetailFromRow(track, event.currentTarget)}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          data.openDetailFromRow(track);
+          data.openDetailFromRow(track, event.currentTarget);
         }
       }}
     >
       <div
-        className={`track-row-inner${isPlaying ? " playing" : ""}`}
-        style={{
-          display: "grid",
-          gridTemplateColumns: isGrid
-            ? "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px 148px"
-            : "98px minmax(0, 1fr) 148px",
-          gap: 16,
-          alignItems: "center",
-          height: "72px",
-          padding: "0 16px",
-        }}
+        className={`track-row-inner${isPlaying ? " playing" : ""} track-row-grid`}
+        style={rowColumnsStyle}
       >
-        <div
-          style={{ display: "flex", alignItems: "center", gap: 8 }}
-          onClick={(event) => event.stopPropagation()}
-        >
+        <div className="track-media-cell" onClick={(event) => event.stopPropagation()}>
           <button
             type="button"
             className="play-btn"
@@ -2529,17 +2572,10 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
               width={48}
               height={48}
               unoptimized
-              style={{ borderRadius: 12, objectFit: "cover" }}
+              className="track-cover-image"
             />
           ) : (
-            <div
-              style={{
-                width: 48,
-                height: 48,
-                borderRadius: 12,
-                background: "#2a2a2a",
-              }}
-            />
+            <div className="track-cover-placeholder" />
           )}
         </div>
         <div className="track-col-track">
@@ -2613,7 +2649,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
               rel="noreferrer"
               aria-label="Openen in Spotify"
               title="Openen in Spotify"
-              style={{ color: "var(--text-primary)", display: "inline-flex" }}
+              className="track-action-link"
               onClick={(event) => event.stopPropagation()}
             >
               <svg
@@ -2636,7 +2672,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
 type TrackItemData = {
   items: TrackItem[];
   currentTrackId: string | null;
-  openDetailFromItem: (track: TrackItem) => void;
+  openDetailFromItem: (track: TrackItem, trigger?: HTMLElement | null) => void;
   handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
   addTrackToQueue: (track: TrackRow | TrackItem) => void;
   addTrackToPlaylist: (track: TrackRow | TrackItem, target: PlaylistOption) => Promise<void>;
@@ -2662,35 +2698,28 @@ function TrackItemRenderer({
     .filter(Boolean)
     .join(", ");
   const uniqueArtistNames = dedupeArtistText(artistNames);
+  const rowColumnsStyle = {
+    ["--track-row-columns" as const]: TRACK_GRID_COLUMNS_FULL,
+  } as CSSProperties;
   return (
     <div
       style={style}
       className={`track-row${isPlaying ? " playing" : ""}`}
       role="button"
       tabIndex={0}
-      onClick={() => data.openDetailFromItem(track)}
+      onClick={(event) => data.openDetailFromItem(track, event.currentTarget)}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          data.openDetailFromItem(track);
+          data.openDetailFromItem(track, event.currentTarget);
         }
       }}
     >
       <div
-        className={`track-row-inner${isPlaying ? " playing" : ""}`}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px 148px",
-          gap: 16,
-          alignItems: "center",
-          height: "72px",
-          padding: "0 16px",
-        }}
+        className={`track-row-inner${isPlaying ? " playing" : ""} track-row-grid`}
+        style={rowColumnsStyle}
       >
-        <div
-          style={{ display: "flex", alignItems: "center", gap: 8 }}
-          onClick={(event) => event.stopPropagation()}
-        >
+        <div className="track-media-cell" onClick={(event) => event.stopPropagation()}>
           <button
             type="button"
             className="play-btn"
@@ -2707,17 +2736,10 @@ function TrackItemRenderer({
               width={48}
               height={48}
               unoptimized
-              style={{ borderRadius: 12, objectFit: "cover" }}
+              className="track-cover-image"
             />
           ) : (
-            <div
-              style={{
-                width: 48,
-                height: 48,
-                borderRadius: 12,
-                background: "#2a2a2a",
-              }}
-            />
+            <div className="track-cover-placeholder" />
           )}
         </div>
         <div className="track-col-track">
@@ -2778,7 +2800,7 @@ function TrackItemRenderer({
             rel="noreferrer"
             aria-label="Openen in Spotify"
             title="Openen in Spotify"
-            style={{ color: "var(--text-primary)", display: "inline-flex" }}
+            className="track-action-link"
             onClick={(event) => event.stopPropagation()}
           >
             <svg

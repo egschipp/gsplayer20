@@ -21,6 +21,8 @@ type QueuePlaybackContextValue = {
   playFromQueue: (queueId: string) => Promise<void>;
   playNextFromQueue: () => Promise<void>;
   playPreviousFromQueue: () => Promise<void>;
+  activeQueueId: string | null;
+  startingQueueId: string | null;
   busy: boolean;
   error: string | null;
   clearError: () => void;
@@ -57,6 +59,8 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
   const queueRef = useRef(queue);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeQueueId, setActiveQueueId] = useState<string | null>(null);
+  const [startingQueueId, setStartingQueueId] = useState<string | null>(null);
   const lastAutoAdvancedQueueIdRef = useRef<string | null>(null);
   const pendingQueueIdRef = useRef<string | null>(null);
 
@@ -101,6 +105,9 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     const snapshot = queueRef.current;
     snapshot.setMode("idle");
     snapshot.setCurrentQueueId(null);
+    setActiveQueueId(null);
+    setStartingQueueId(null);
+    pendingQueueIdRef.current = null;
 
     const fallback = snapshot.fallbackContext;
     if (!fallback?.contextUri || !api) {
@@ -114,23 +121,32 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
 
   const playFromQueue = useCallback(
     async (queueId: string) => {
+      setStartingQueueId(queueId);
+      setActiveQueueId(queueId);
       await runCommand(async () => {
         const snapshot = queueRef.current;
         const item = snapshot.items.find((entry) => entry.queueId === queueId);
-        if (!item) return;
+        if (!item) {
+          setStartingQueueId(null);
+          setActiveQueueId(null);
+          return;
+        }
         if (!api) throw new Error("Spotify Web Playback SDK is nog niet klaar.");
 
         if (snapshot.mode !== "queue") {
           await captureFallbackContext();
         }
 
+        pendingQueueIdRef.current = item.queueId;
         await api.playQueue([item.uri], item.uri, 0);
         snapshot.setMode("queue");
         snapshot.setCurrentQueueId(item.queueId);
-        pendingQueueIdRef.current = item.queueId;
         lastAutoAdvancedQueueIdRef.current = null;
         setError(null);
       }).catch((err) => {
+        pendingQueueIdRef.current = null;
+        setStartingQueueId(null);
+        setActiveQueueId((prev) => (prev === queueId ? null : prev));
         setError(mapPlaybackError(err));
       });
     },
@@ -157,13 +173,17 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       }
 
       const nextItem = snapshot.items[nextIndex];
+      setStartingQueueId(nextItem.queueId);
+      setActiveQueueId(nextItem.queueId);
+      pendingQueueIdRef.current = nextItem.queueId;
       await api.playQueue([nextItem.uri], nextItem.uri, 0);
       snapshot.setMode("queue");
       snapshot.setCurrentQueueId(nextItem.queueId);
-      pendingQueueIdRef.current = nextItem.queueId;
       lastAutoAdvancedQueueIdRef.current = null;
       setError(null);
     }).catch((err) => {
+      pendingQueueIdRef.current = null;
+      setStartingQueueId(null);
       setError(mapPlaybackError(err));
     });
   }, [api, resumeFallbackContext, runCommand]);
@@ -181,30 +201,55 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       const previousItem = snapshot.items[previousIndex];
       if (!previousItem) return;
 
+      setStartingQueueId(previousItem.queueId);
+      setActiveQueueId(previousItem.queueId);
+      pendingQueueIdRef.current = previousItem.queueId;
       await api.playQueue([previousItem.uri], previousItem.uri, 0);
       snapshot.setMode("queue");
       snapshot.setCurrentQueueId(previousItem.queueId);
-      pendingQueueIdRef.current = previousItem.queueId;
       lastAutoAdvancedQueueIdRef.current = null;
       setError(null);
     }).catch((err) => {
+      pendingQueueIdRef.current = null;
+      setStartingQueueId(null);
       setError(mapPlaybackError(err));
     });
   }, [api, runCommand]);
 
   useEffect(() => {
-    if (!currentTrackId) return;
-    if (queue.mode !== "queue") return;
-    const matchedItem = queue.items.find((item) => item.trackId === currentTrackId);
-    if (!matchedItem) return;
-    if (queue.currentQueueId === matchedItem.queueId) {
+    if (queue.mode !== "queue") {
+      setActiveQueueId(null);
+      setStartingQueueId(null);
       pendingQueueIdRef.current = null;
       return;
     }
-    queue.setCurrentQueueId(matchedItem.queueId);
+
+    if (!currentTrackId) {
+      setActiveQueueId(startingQueueId ?? queue.currentQueueId ?? null);
+      return;
+    }
+
+    const preferredQueueId = pendingQueueIdRef.current ?? queue.currentQueueId ?? null;
+    const preferredItem = preferredQueueId
+      ? queue.items.find((item) => item.queueId === preferredQueueId)
+      : null;
+    const resolvedQueueId =
+      preferredItem?.trackId === currentTrackId
+        ? preferredItem.queueId
+        : queue.items.find((item) => item.trackId === currentTrackId)?.queueId ?? null;
+    if (!resolvedQueueId) return;
+
+    if (queue.currentQueueId !== resolvedQueueId) {
+      queue.setCurrentQueueId(resolvedQueueId);
+    }
+
+    setActiveQueueId(resolvedQueueId);
+    if (startingQueueId === resolvedQueueId) {
+      setStartingQueueId(null);
+    }
     pendingQueueIdRef.current = null;
     lastAutoAdvancedQueueIdRef.current = null;
-  }, [currentTrackId, queue]);
+  }, [currentTrackId, queue, startingQueueId]);
 
   useEffect(() => {
     if (!queue.hydrated) return;
@@ -217,6 +262,8 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     if (currentInQueue) return;
     // External track selection should immediately release queue lock instead of forcing a rewind.
     queue.setMode("idle");
+    setActiveQueueId(null);
+    setStartingQueueId(null);
     pendingQueueIdRef.current = null;
     lastAutoAdvancedQueueIdRef.current = null;
   }, [
@@ -267,6 +314,10 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
           const matched = snapshot.items.find((item) => item.trackId === playback.trackId);
           if (matched) {
             snapshot.setCurrentQueueId(matched.queueId);
+            setActiveQueueId(matched.queueId);
+            if (startingQueueId === matched.queueId) {
+              setStartingQueueId(null);
+            }
             pendingQueueIdRef.current = null;
             lastAutoAdvancedQueueIdRef.current = null;
           }
@@ -301,18 +352,28 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [playNextFromQueue, queue.currentQueueId, queue.hydrated, queue.mode]);
+  }, [playNextFromQueue, queue.currentQueueId, queue.hydrated, queue.mode, startingQueueId]);
 
   const value = useMemo<QueuePlaybackContextValue>(
     () => ({
       playFromQueue,
       playNextFromQueue,
       playPreviousFromQueue,
+      activeQueueId,
+      startingQueueId,
       busy,
       error,
       clearError: () => setError(null),
     }),
-    [busy, error, playFromQueue, playNextFromQueue, playPreviousFromQueue]
+    [
+      activeQueueId,
+      busy,
+      error,
+      playFromQueue,
+      playNextFromQueue,
+      playPreviousFromQueue,
+      startingQueueId,
+    ]
   );
 
   return (

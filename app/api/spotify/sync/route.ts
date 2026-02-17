@@ -17,6 +17,68 @@ const jobMap: Record<string, string> = {
   covers: "SYNC_COVERS",
 };
 
+const SPOTIFY_ID_REGEX = /^[A-Za-z0-9]{22}$/;
+
+function clampInt(value: unknown, min: number, max: number, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(Math.floor(parsed), max));
+}
+
+function normalizePayload(type: string, payload: unknown) {
+  const raw =
+    payload && typeof payload === "object"
+      ? (payload as Record<string, unknown>)
+      : {};
+
+  if (
+    type === "SYNC_TRACKS_INITIAL" ||
+    type === "SYNC_TRACKS_INCREMENTAL" ||
+    type === "SYNC_PLAYLISTS"
+  ) {
+    return {
+      offset: clampInt(raw.offset, 0, 500_000, 0),
+      limit: clampInt(raw.limit, 1, 50, 50),
+      maxPagesPerRun: clampInt(raw.maxPagesPerRun, 1, 100, 10),
+    };
+  }
+
+  if (type === "SYNC_PLAYLIST_ITEMS") {
+    const playlistId =
+      typeof raw.playlistId === "string" && SPOTIFY_ID_REGEX.test(raw.playlistId)
+        ? raw.playlistId
+        : null;
+
+    if (!playlistId) {
+      return null;
+    }
+
+    return {
+      playlistId,
+      snapshotId:
+        typeof raw.snapshotId === "string" ? raw.snapshotId.slice(0, 128) : null,
+      offset: clampInt(raw.offset, 0, 200_000, 0),
+      limit: clampInt(raw.limit, 1, 50, 50),
+      maxPagesPerRun: clampInt(raw.maxPagesPerRun, 1, 100, 10),
+      runId: typeof raw.runId === "string" ? raw.runId.slice(0, 64) : undefined,
+    };
+  }
+
+  if (
+    type === "SYNC_ARTISTS" ||
+    type === "SYNC_TRACK_METADATA" ||
+    type === "SYNC_COVERS"
+  ) {
+    return {
+      cursor: typeof raw.cursor === "string" ? raw.cursor.slice(0, 128) : "",
+      limit: clampInt(raw.limit, 1, 50, 50),
+      maxBatches: clampInt(raw.maxBatches, 1, 100, 20),
+    };
+  }
+
+  return {};
+}
+
 export async function POST(req: Request) {
   const originCheck = requireSameOrigin(req);
   if (originCheck) return originCheck;
@@ -42,7 +104,11 @@ export async function POST(req: Request) {
 
   const db = getDb();
   const jobId = cryptoRandomId();
-  const payload = body?.payload ? JSON.stringify(body.payload) : null;
+  const normalizedPayload = normalizePayload(type, body?.payload);
+  if (normalizedPayload === null) {
+    return NextResponse.json({ error: "INVALID_PAYLOAD" }, { status: 400 });
+  }
+  const payload = JSON.stringify(normalizedPayload);
 
   await db.insert(jobs).values({
     id: jobId,

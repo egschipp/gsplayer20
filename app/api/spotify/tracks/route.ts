@@ -9,8 +9,8 @@ import {
   userPlaylists,
 } from "@/lib/db/schema";
 import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
-import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
-import { requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
+import { encodeCursor, tryDecodeCursor } from "@/lib/spotify/cursor";
+import { jsonError, requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -19,16 +19,25 @@ export async function GET(req: Request) {
   if (response) return response;
 
   const { searchParams } = new URL(req.url);
-  const limit = Math.min(Number(searchParams.get("limit") ?? "50"), 100);
+  const limitValue = Number(searchParams.get("limit") ?? "50");
+  const limit =
+    Number.isFinite(limitValue) && limitValue > 0
+      ? Math.min(Math.floor(limitValue), 100)
+      : 50;
   const cursor = searchParams.get("cursor");
 
   const db = getDb();
   const baseWhere = cursor
     ? (() => {
-        const decoded = decodeCursor(cursor);
+        const decoded = tryDecodeCursor(cursor);
+        if (!decoded) return null;
         return lt(tracks.trackId, decoded.id);
       })()
     : undefined;
+
+  if (cursor && !baseWhere) {
+    return jsonError("INVALID_CURSOR", 400);
+  }
 
   const userWhere = or(
     eq(userSavedTracks.userId, session.appUserId as string),

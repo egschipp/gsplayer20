@@ -6,6 +6,8 @@ const dbPath = process.env.DB_PATH || "/data/gsplayer.sqlite";
 const sqlite = new Database(dbPath);
 sqlite.pragma("journal_mode = WAL");
 sqlite.pragma("foreign_keys = ON");
+sqlite.pragma("busy_timeout = 5000");
+sqlite.pragma("synchronous = NORMAL");
 
 const migrationPath = path.join(__dirname, "..", "migrations", "0001_init.sql");
 const sql = fs.readFileSync(migrationPath, "utf8");
@@ -47,5 +49,9 @@ if (!hasColumn("tracks", "album_image_blob")) {
 if (!hasColumn("tracks", "album_image_mime")) {
   sqlite.exec("ALTER TABLE tracks ADD COLUMN album_image_mime TEXT");
 }
+
+sqlite.exec(
+  "CREATE INDEX IF NOT EXISTS playlist_items_track_idx ON playlist_items(track_id)"
+);
 
 console.log("Migrations applied");

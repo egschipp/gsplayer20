@@ -19,16 +19,24 @@ export async function requireAppUser() {
   return { session, response: null };
 }
 
+function normalizeIp(value: string | null | undefined) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 128);
+}
+
 export function getRequestIp(req: Request) {
   const trustProxy = process.env.TRUST_PROXY === "true";
-  if (trustProxy) {
-    const forwarded = req.headers.get("x-forwarded-for");
-    if (forwarded) {
-      return forwarded.split(",")[0]?.trim() || "unknown";
-    }
-  }
-  const realIp = req.headers.get("x-real-ip");
+  if (!trustProxy) return "direct";
+
+  const forwarded = req.headers.get("x-forwarded-for");
+  const forwardedIp = normalizeIp(forwarded?.split(",")[0]);
+  if (forwardedIp) return forwardedIp;
+
+  const realIp = normalizeIp(req.headers.get("x-real-ip"));
   if (realIp) return realIp;
+
   return "unknown";
 }
 

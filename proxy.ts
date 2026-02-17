@@ -62,7 +62,12 @@ async function verifyToken(token: string, secret: string, ua: string) {
 }
 
 function isPublicPath(pathname: string) {
+  if (pathname === "/api/auth/log") {
+    return false;
+  }
+
   if (
+    pathname === "/api/health" ||
     pathname === "/login" ||
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/api/pin-login") ||

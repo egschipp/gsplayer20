@@ -1,7 +1,7 @@
 import { getDb } from "@/lib/db/client";
 import { userSavedTracks, tracks, syncState, trackArtists, artists } from "@/lib/db/schema";
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
-import { decodeCursor, encodeCursor } from "@/lib/spotify/cursor";
+import { encodeCursor, tryDecodeCursor } from "@/lib/spotify/cursor";
 import { rateLimitResponse, requireAppUser, jsonNoStore, jsonPrivateCache } from "@/lib/api/guards";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
@@ -19,7 +19,11 @@ export async function GET(req: Request) {
   if (rl) return rl;
 
   const { searchParams } = new URL(req.url);
-  const limit = Math.min(Number(searchParams.get("limit") ?? "50"), 50);
+  const limitValue = Number(searchParams.get("limit") ?? "50");
+  const limit =
+    Number.isFinite(limitValue) && limitValue > 0
+      ? Math.min(Math.floor(limitValue), 50)
+      : 50;
   const cursor = searchParams.get("cursor");
   const live = searchParams.get("live") === "1";
 
@@ -130,21 +134,29 @@ export async function GET(req: Request) {
   }
 
   const db = getDb();
-  const whereClause = cursor
-    ? (() => {
-        const decoded = decodeCursor(cursor);
-        return and(
-          eq(userSavedTracks.userId, session.appUserId as string),
-          or(
-            lt(userSavedTracks.addedAt, decoded.addedAt),
-            and(
-              eq(userSavedTracks.addedAt, decoded.addedAt),
-              lt(userSavedTracks.trackId, decoded.id)
-            )
-          )
-        );
-      })()
-    : eq(userSavedTracks.userId, session.appUserId as string);
+  const baseWhere = eq(userSavedTracks.userId, session.appUserId as string);
+  let whereClause = baseWhere;
+
+  if (cursor) {
+    const decoded = tryDecodeCursor(cursor);
+    if (!decoded) {
+      return jsonNoStore({ error: "INVALID_CURSOR" }, 400);
+    }
+    const cursorWhere = and(
+      baseWhere,
+      or(
+        lt(userSavedTracks.addedAt, decoded.addedAt),
+        and(
+          eq(userSavedTracks.addedAt, decoded.addedAt),
+          lt(userSavedTracks.trackId, decoded.id)
+        )
+      )
+    );
+    if (!cursorWhere) {
+      return jsonNoStore({ error: "INVALID_CURSOR" }, 400);
+    }
+    whereClause = cursorWhere;
+  }
 
   const rows = await db
     .select({

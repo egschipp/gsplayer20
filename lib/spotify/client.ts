@@ -67,6 +67,17 @@ export async function spotifyFetch<T>(args: {
   return await doFetch<T>(url, method, body, refreshed.accessToken as string);
 }
 
+function isRetryableNetworkError(error: unknown) {
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  const message = String((error as Error)?.message ?? error).toLowerCase();
+  return (
+    message.includes("abort") ||
+    message.includes("timeout") ||
+    message.includes("fetch failed") ||
+    message.includes("network")
+  );
+}
+
 async function doFetch<T>(
   url: string,
   method: string,
@@ -81,16 +92,31 @@ async function doFetch<T>(
     attempt += 1;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    const res = await fetch(url, {
-      method,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+    let res: Response;
+
+    try {
+      res = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      const networkError =
+        error instanceof Error ? error : new Error(String(error));
+      lastError = networkError;
+      if (attempt < maxAttempts && isRetryableNetworkError(networkError)) {
+        const waitMs = Math.min(1000 * attempt * attempt, 4000);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        continue;
+      }
+      throw networkError;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (res.ok) {
       if (res.status === 204 || res.status === 205) {

@@ -169,6 +169,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     () => Boolean(accessToken) && playbackAllowed,
     [accessToken, playbackAllowed]
   );
+  const withDeviceId = (baseUrl: string, targetDeviceId: string) => {
+    const separator = baseUrl.includes("?") ? "&" : "?";
+    return `${baseUrl}${separator}device_id=${encodeURIComponent(targetDeviceId)}`;
+  };
   const isCustomQueueActive =
     customQueue.mode === "queue" && customQueue.items.length > 0;
   const isCurrentTrackFromCustomQueue = useMemo(() => {
@@ -444,9 +448,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (!ready) return false;
     }
     const res = await spotifyApiFetch(
-      `https://api.spotify.com/v1/me/player/shuffle?state=${
-        nextState ? "true" : "false"
-      }&device_id=${device}`,
+      withDeviceId(
+        `https://api.spotify.com/v1/me/player/shuffle?state=${
+          nextState ? "true" : "false"
+        }`,
+        device
+      ),
       { method: "PUT" }
     );
     if (!res?.ok) return false;
@@ -491,7 +498,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       position_ms: 0,
     };
     const res = await spotifyApiFetch(
-      `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
+      withDeviceId("https://api.spotify.com/v1/me/player/play", deviceId),
       { method: "PUT", body: JSON.stringify(payload) }
     );
     if (res && res.ok) {
@@ -499,7 +506,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       lastKnownPositionRef.current = 0;
       setTimeout(() => {
         spotifyApiFetch(
-          `https://api.spotify.com/v1/me/player/seek?device_id=${deviceId}&position_ms=0`,
+          withDeviceId(
+            "https://api.spotify.com/v1/me/player/seek?position_ms=0",
+            deviceId
+          ),
           { method: "PUT" }
         ).catch(() => undefined);
       }, 200);
@@ -892,12 +902,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       supportsVolume: d.supports_volume !== false,
     }));
     setDevices(mapped);
+    const selectedDevice = activeDeviceIdRef.current
+      ? deduped.get(activeDeviceIdRef.current)
+      : null;
     const sdkDevice = sdkDeviceIdRef.current
       ? deduped.get(sdkDeviceIdRef.current)
       : null;
-    if (preferSdkDeviceRef.current && sdkDeviceIdRef.current) {
+    if (preferSdkDeviceRef.current && sdkDevice?.id) {
       setActiveDevice(
-        sdkDeviceIdRef.current,
+        sdkDevice.id,
         sdkDevice?.name ?? "GSPlayer20 Web"
       );
       setActiveDeviceRestricted(Boolean(sdkDevice?.is_restricted));
@@ -910,10 +923,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setActiveDevice(active.id, active.name ?? null);
       setActiveDeviceRestricted(Boolean(active.is_restricted));
       setActiveDeviceSupportsVolume(active.supports_volume !== false);
-    } else if (sdkDeviceIdRef.current) {
-      setActiveDevice(sdkDeviceIdRef.current, "GSPlayer20 Web");
-      setActiveDeviceRestricted(false);
-      setActiveDeviceSupportsVolume(true);
+    } else if (selectedDevice?.id) {
+      setActiveDevice(selectedDevice.id, selectedDevice.name ?? null);
+      setActiveDeviceRestricted(Boolean(selectedDevice.is_restricted));
+      setActiveDeviceSupportsVolume(selectedDevice.supports_volume !== false);
+    } else if (
+      sdkDevice?.id &&
+      (preferSdkDeviceRef.current || !activeDeviceIdRef.current)
+    ) {
+      setActiveDevice(sdkDevice.id, sdkDevice.name ?? "GSPlayer20 Web");
+      setActiveDeviceRestricted(Boolean(sdkDevice.is_restricted));
+      setActiveDeviceSupportsVolume(sdkDevice.supports_volume !== false);
     }
   }, [setActiveDevice, spotifyApiFetch]);
 
@@ -978,21 +998,30 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     });
 
     const onSdkReady = async ({ device_id }: { device_id: string }) => {
-      preferSdkDeviceRef.current = true;
+      const shouldPreferSdk =
+        preferSdkDeviceRef.current ||
+        !activeDeviceIdRef.current ||
+        activeDeviceIdRef.current === device_id;
       setDeviceId(device_id);
       deviceIdRef.current = device_id;
       sdkDeviceIdRef.current = device_id;
       sdkReadyRef.current = true;
       lastSdkEventAtRef.current = Date.now();
-      // Default Spotify Connect selection to the web player on load.
-      setActiveDevice(device_id, "GSPlayer20 Web");
-      setActiveDeviceRestricted(false);
-      setActiveDeviceSupportsVolume(true);
+      if (shouldPreferSdk) {
+        preferSdkDeviceRef.current = true;
+        // Default Spotify Connect selection to the web player on load.
+        setActiveDevice(device_id, "GSPlayer20 Web");
+        setActiveDeviceRestricted(false);
+        setActiveDeviceSupportsVolume(true);
+      }
       if (accessTokenRef.current) {
-        let ready = await ensureActiveDevice(device_id, accessTokenRef.current, false);
-        if (!ready) {
-          await new Promise((resolve) => setTimeout(resolve, 700));
-          ready = await ensureActiveDevice(device_id, accessTokenRef.current!, false);
+        let ready = true;
+        if (shouldPreferSdk) {
+          ready = await ensureActiveDevice(device_id, accessTokenRef.current, false);
+          if (!ready) {
+            await new Promise((resolve) => setTimeout(resolve, 700));
+            ready = await ensureActiveDevice(device_id, accessTokenRef.current!, false);
+          }
         }
         setDeviceReady(ready);
       } else {
@@ -1012,11 +1041,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 !sdkDeviceIdRef.current ||
                 device.id === sdkDeviceIdRef.current;
               if (shouldAdoptRemote) {
-            setActiveDevice(device.id, device.name ?? null);
-            setActiveDeviceRestricted(Boolean(device.is_restricted));
-            setActiveDeviceSupportsVolume(device.supports_volume !== false);
-            lastConfirmedActiveDeviceRef.current = { id: device.id, at: Date.now() };
-          }
+                setActiveDevice(device.id, device.name ?? null);
+                setActiveDeviceRestricted(Boolean(device.is_restricted));
+                setActiveDeviceSupportsVolume(device.supports_volume !== false);
+                lastConfirmedActiveDeviceRef.current = { id: device.id, at: Date.now() };
+              }
             }
             const item = data?.item;
             if (item) {
@@ -1071,7 +1100,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               const targetDevice = stored.deviceId || device_id;
               await ensureActiveDevice(targetDevice, accessTokenRef.current!, false);
               await spotifyApiFetch(
-                `https://api.spotify.com/v1/me/player/play?device_id=${targetDevice}`,
+                withDeviceId("https://api.spotify.com/v1/me/player/play", targetDevice),
                 {
                   method: "PUT",
                   body: JSON.stringify({
@@ -1205,7 +1234,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
           const attemptPlay = async () => {
             return spotifyApiFetch(
-              `https://api.spotify.com/v1/me/player/play?device_id=${currentDevice}`,
+              withDeviceId(
+                "https://api.spotify.com/v1/me/player/play",
+                currentDevice as string
+              ),
               { method: "PUT", body: JSON.stringify(payload) }
             );
           };
@@ -1242,7 +1274,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             if (resolvedUri) {
               setTimeout(() => {
                 spotifyApiFetch(
-                  `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=0`,
+                  withDeviceId(
+                    "https://api.spotify.com/v1/me/player/seek?position_ms=0",
+                    currentDevice as string
+                  ),
                   { method: "PUT" }
                 ).catch(() => undefined);
               }, 200);
@@ -1304,7 +1339,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           };
 
           const res = await spotifyApiFetch(
-            `https://api.spotify.com/v1/me/player/play?device_id=${currentDevice}`,
+            withDeviceId(
+              "https://api.spotify.com/v1/me/player/play",
+              currentDevice as string
+            ),
             { method: "PUT", body: JSON.stringify(body) }
           );
           if (!res) return;
@@ -1317,7 +1355,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             lastKnownPositionRef.current = 0;
             setTimeout(() => {
               spotifyApiFetch(
-                `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=0`,
+                withDeviceId(
+                  "https://api.spotify.com/v1/me/player/seek?position_ms=0",
+                  currentDevice as string
+                ),
                 { method: "PUT" }
               ).catch(() => undefined);
             }, 200);
@@ -1354,7 +1395,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           const token = accessTokenRef.current;
           if (!currentDevice || !token) return;
           await spotifyApiFetch(
-            `https://api.spotify.com/v1/me/player/next?device_id=${currentDevice}`,
+            withDeviceId("https://api.spotify.com/v1/me/player/next", currentDevice),
             { method: "POST" }
           );
           setTimeout(() => {
@@ -1367,7 +1408,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           const token = accessTokenRef.current;
           if (!currentDevice || !token) return;
           await spotifyApiFetch(
-            `https://api.spotify.com/v1/me/player/previous?device_id=${currentDevice}`,
+            withDeviceId(
+              "https://api.spotify.com/v1/me/player/previous",
+              currentDevice
+            ),
             { method: "POST" }
           );
           setTimeout(() => {
@@ -1702,7 +1746,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       const endpoint = playerState?.paused ? "play" : "pause";
       await spotifyApiFetch(
-        `https://api.spotify.com/v1/me/player/${endpoint}?device_id=${currentDevice}`,
+        withDeviceId(
+          `https://api.spotify.com/v1/me/player/${endpoint}`,
+          currentDevice
+        ),
         { method: "PUT" }
       );
       setTimeout(() => {
@@ -1758,7 +1805,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         return;
       }
       await spotifyApiFetch(
-        `https://api.spotify.com/v1/me/player/next?device_id=${currentDevice}`,
+        withDeviceId("https://api.spotify.com/v1/me/player/next", currentDevice),
         { method: "POST" }
       );
       pendingTrackIdRef.current = null;
@@ -1815,7 +1862,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         return;
       }
       await spotifyApiFetch(
-        `https://api.spotify.com/v1/me/player/previous?device_id=${currentDevice}`,
+        withDeviceId("https://api.spotify.com/v1/me/player/previous", currentDevice),
         { method: "POST" }
       );
       setTimeout(() => {
@@ -1869,7 +1916,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         return;
       }
       const res = await spotifyApiFetch(
-        `https://api.spotify.com/v1/me/player/repeat?state=${next}&device_id=${currentDevice}`,
+        withDeviceId(
+          `https://api.spotify.com/v1/me/player/repeat?state=${next}`,
+          currentDevice
+        ),
         { method: "PUT" }
       );
       if (res?.ok) {
@@ -1922,9 +1972,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           return;
         }
         await spotifyApiFetch(
-          `https://api.spotify.com/v1/me/player/seek?device_id=${currentDevice}&position_ms=${Math.floor(
-            targetMs
-          )}`,
+          withDeviceId(
+            `https://api.spotify.com/v1/me/player/seek?position_ms=${Math.floor(
+              targetMs
+            )}`,
+            currentDevice
+          ),
           { method: "PUT" }
         );
         setTimeout(() => {
@@ -1955,10 +2008,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current);
       volumeTimerRef.current = setTimeout(async () => {
         await enqueuePlaybackCommand(async () => {
+          const volumeDevice = activeDeviceIdRef.current;
+          if (!volumeDevice) return;
           await spotifyApiFetch(
-            `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(
-              clamped * 100
-            )}&device_id=${activeDeviceIdRef.current}`,
+            withDeviceId(
+              `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(
+                clamped * 100
+              )}`,
+              volumeDevice
+            ),
             { method: "PUT" }
           );
         });

@@ -105,6 +105,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const accessTokenRef = useRef<string | undefined>(accessToken);
   const sdkDeviceIdRef = useRef<string | null>(null);
   const activeDeviceIdRef = useRef<string | null>(null);
+  const activeDeviceNameRef = useRef<string | null>(null);
   const readyRef = useRef(false);
   const rateLimitRef = useRef({ until: 0, backoffMs: 5000 });
   const lastRequestAtRef = useRef(0);
@@ -164,6 +165,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const lastProgressSyncRef = useRef(0);
   const lastKnownPositionRef = useRef(0);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptsRef = useRef(0);
 
   const canUseSdk = useMemo(
     () => Boolean(accessToken) && playbackAllowed,
@@ -183,6 +186,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   useEffect(() => {
     playerStateRef.current = playerState;
   }, [playerState]);
+
+  useEffect(() => {
+    activeDeviceNameRef.current = activeDeviceName;
+  }, [activeDeviceName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -864,6 +871,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
       if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current);
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     };
   }, []);
 
@@ -897,7 +905,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (currentSelectedId && !deduped.has(currentSelectedId)) {
       deduped.set(currentSelectedId, {
         id: currentSelectedId,
-        name: activeDeviceName || "Huidig apparaat",
+        name: activeDeviceNameRef.current || "Huidig apparaat",
         is_active: true,
         type: "Unknown",
         is_restricted: false,
@@ -957,7 +965,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setActiveDeviceRestricted(Boolean(sdkDevice.is_restricted));
       setActiveDeviceSupportsVolume(sdkDevice.supports_volume !== false);
     }
-  }, [activeDeviceName, setActiveDevice, spotifyApiFetch]);
+  }, [setActiveDevice, spotifyApiFetch]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -966,6 +974,42 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     }, 10000);
     return () => clearInterval(interval);
   }, [accessToken, refreshDevices]);
+
+  useEffect(() => {
+    if (!canUseSdk) return;
+    let cancelled = false;
+
+    const reconnect = async () => {
+      if (cancelled) return;
+      const player = playerRef.current;
+      if (player && !sdkReadyRef.current) {
+        try {
+          const connected = await player.connect?.();
+          if (connected) {
+            reconnectAttemptsRef.current = 0;
+            refreshDevices(true);
+          } else {
+            reconnectAttemptsRef.current += 1;
+          }
+        } catch {
+          reconnectAttemptsRef.current += 1;
+        }
+      } else {
+        reconnectAttemptsRef.current = 0;
+      }
+
+      const delay = sdkReadyRef.current
+        ? 12000
+        : Math.min(15000, 1200 + reconnectAttemptsRef.current * 700);
+      reconnectTimerRef.current = setTimeout(reconnect, delay);
+    };
+
+    reconnect();
+    return () => {
+      cancelled = true;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    };
+  }, [canUseSdk, refreshDevices]);
 
   useEffect(() => {
     if (!canUseSdk) {
@@ -1160,6 +1204,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       lastConfirmedActiveDeviceRef.current = null;
       setDeviceReady(false);
       refreshDevices(true);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      reconnectAttemptsRef.current = 0;
+      reconnectTimerRef.current = setTimeout(() => {
+        playerRef.current?.connect?.().catch?.(() => undefined);
+      }, 800);
     };
 
     const onStateChanged = (state: any) => {
@@ -2357,6 +2406,26 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               ? "Spotify Connect"
               : "Verbinden..."}
           </span>
+          {!deviceId ? (
+            <button
+              type="button"
+              className="detail-btn"
+              aria-label="Start lokale webplayer"
+              title="Start lokale webplayer"
+              onClick={async () => {
+                setPlaybackTouched(true);
+                try {
+                  await playerRef.current?.activateElement?.();
+                } catch {
+                  // ignore
+                }
+                await playerRef.current?.connect?.();
+                refreshDevices(true);
+              }}
+            >
+              ▶
+            </button>
+          ) : null}
           <button
             type="button"
             className="detail-btn"
@@ -2418,6 +2487,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             ) : null}
           </div>
         </div>
+        {!deviceId ? (
+          <div className="text-subtle" style={{ marginTop: 6 }}>
+            Lokale webplayer nog niet verbonden. Klik op ▶ en kies daarna dit apparaat.
+          </div>
+        ) : null}
         <div className="player-volume">
           <button
             type="button"

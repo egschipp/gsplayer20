@@ -16,6 +16,7 @@ import { sql, eq, isNotNull } from "drizzle-orm";
 import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
+const RUNNING_STALE_AFTER_MS = 120_000;
 
 function count(table: any, db: ReturnType<typeof getDb>) {
   return db.select({ count: sql<number>`count(*)` }).from(table).get();
@@ -69,7 +70,19 @@ export async function GET() {
     .from(syncState)
     .where(eq(syncState.userId, session.appUserId as string));
 
-  const running = syncRows.some((row) => row.status === "running");
+  const now = Date.now();
+  const running = syncRows.some(
+    (row) =>
+      row.status === "running" &&
+      typeof row.updatedAt === "number" &&
+      now - row.updatedAt < RUNNING_STALE_AFTER_MS
+  );
+  const staleRunning = syncRows.filter(
+    (row) =>
+      row.status === "running" &&
+      (typeof row.updatedAt !== "number" ||
+        now - row.updatedAt >= RUNNING_STALE_AFTER_MS)
+  ).length;
   const lastSuccessfulAt = syncRows
     .map((row) => row.lastSuccessfulAt || 0)
     .reduce((a, b) => Math.max(a, b), 0);
@@ -92,6 +105,7 @@ export async function GET() {
     },
     sync: {
       running,
+      staleRunning,
       lastSuccessfulAt: lastSuccessfulAt || null,
       resources: syncRows,
     },

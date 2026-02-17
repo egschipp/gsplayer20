@@ -170,6 +170,7 @@ export default function PlaylistBrowser() {
   const hasCachedTrackOptionsRef = useRef(false);
   const lastHandledRefreshTokenRef = useRef(0);
   const tracksLoadVersionRef = useRef(0);
+  const playlistAutoSyncAttemptRef = useRef<Record<string, number>>({});
   const cacheWriteBlockedRef = useRef(false);
   const cacheWriteTimerRef = useRef<number | null>(null);
   const trackDetailTriggerRef = useRef<HTMLElement | null>(null);
@@ -445,11 +446,12 @@ export default function PlaylistBrowser() {
   useEffect(() => {
     let cancelled = false;
     async function loadPlaylists() {
-      if (hasCachedPlaylistsRef.current) {
+      const hasCachedPlaylists = hasCachedPlaylistsRef.current;
+      if (!hasCachedPlaylists) {
+        setLoadingPlaylists(true);
+      } else {
         setLoadingPlaylists(false);
-        return;
       }
-      setLoadingPlaylists(true);
       setError(null);
       setAuthRequired(false);
       try {
@@ -461,13 +463,13 @@ export default function PlaylistBrowser() {
           const url = new URL("/api/spotify/me/playlists", window.location.origin);
           url.searchParams.set("limit", "50");
           if (cursor) url.searchParams.set("cursor", cursor);
-          const res = await fetch(url.toString());
+          const res = await fetch(url.toString(), { cache: "no-store" });
           if (!res.ok) {
             const mapped = mapSpotifyApiError(
               res.status,
               "Playlists laden lukt nu niet."
             );
-            if (!cancelled) {
+            if (!cancelled && !hasCachedPlaylists) {
               setAuthRequired(Boolean(mapped.authRequired));
               setError(mapped.message);
             }
@@ -503,7 +505,9 @@ export default function PlaylistBrowser() {
           setPlaylistCursor(cursor ?? null);
         }
       } catch {
-        if (!cancelled) setError("Playlists laden lukt nu niet.");
+        if (!cancelled && !hasCachedPlaylists) {
+          setError("Playlists laden lukt nu niet.");
+        }
       } finally {
         if (!cancelled) setLoadingPlaylists(false);
       }
@@ -531,7 +535,7 @@ export default function PlaylistBrowser() {
       try {
         const url = new URL("/api/spotify/artists", window.location.origin);
         url.searchParams.set("limit", "100");
-        const res = await fetch(url.toString());
+        const res = await fetch(url.toString(), { cache: "no-store" });
         if (!res.ok) {
           const mapped = mapSpotifyApiError(res.status, "Artiesten laden lukt nu niet.");
           if (!cancelled) {
@@ -585,7 +589,7 @@ export default function PlaylistBrowser() {
       try {
         const url = new URL("/api/spotify/tracks", window.location.origin);
         url.searchParams.set("limit", "100");
-        const res = await fetch(url.toString());
+        const res = await fetch(url.toString(), { cache: "no-store" });
         if (!res.ok) {
           const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
           if (!cancelled) {
@@ -784,7 +788,7 @@ export default function PlaylistBrowser() {
       const url = new URL("/api/spotify/me/playlists", window.location.origin);
       url.searchParams.set("limit", "50");
       url.searchParams.set("cursor", playlistCursor);
-      const res = await fetch(url.toString());
+      const res = await fetch(url.toString(), { cache: "no-store" });
       if (!res.ok) return;
       const data = (await res.json()) as CursorResponse<PlaylistApiItem>;
       const items = Array.isArray(data.items) ? data.items : [];
@@ -820,7 +824,7 @@ export default function PlaylistBrowser() {
       const url = new URL("/api/spotify/artists", window.location.origin);
       url.searchParams.set("limit", "100");
       url.searchParams.set("cursor", artistCursor);
-      const res = await fetch(url.toString());
+      const res = await fetch(url.toString(), { cache: "no-store" });
       if (!res.ok) return;
       const data = (await res.json()) as CursorResponse<ArtistApiItem>;
       const items = Array.isArray(data.items) ? data.items : [];
@@ -852,7 +856,7 @@ export default function PlaylistBrowser() {
       const url = new URL("/api/spotify/tracks", window.location.origin);
       url.searchParams.set("limit", "100");
       url.searchParams.set("cursor", trackCursor);
-      const res = await fetch(url.toString());
+      const res = await fetch(url.toString(), { cache: "no-store" });
       if (!res.ok) return;
       const data = (await res.json()) as CursorResponse<TrackApiItem>;
       const items = Array.isArray(data.items) ? data.items : [];
@@ -1047,7 +1051,9 @@ export default function PlaylistBrowser() {
       spotifyUrl: `https://open.spotify.com/artist/${artistId}`,
     });
     try {
-      const res = await fetch(`/api/spotify/artists/${artistId}`);
+      const res = await fetch(`/api/spotify/artists/${artistId}`, {
+        cache: "no-store",
+      });
       if (!res.ok) {
         return;
       }
@@ -1088,7 +1094,9 @@ export default function PlaylistBrowser() {
     async function loadTrackArtists() {
       try {
         setTrackArtistsLoading(true);
-        const res = await fetch(`/api/spotify/tracks/${trackId}/artists`);
+        const res = await fetch(`/api/spotify/tracks/${trackId}/artists`, {
+          cache: "no-store",
+        });
         if (!res.ok) return;
         const data = await res.json();
         const artists = Array.isArray(data?.items)
@@ -1157,7 +1165,7 @@ export default function PlaylistBrowser() {
             : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
         const url = new URL(baseUrl, window.location.origin);
         url.searchParams.set("limit", "50");
-        const res = await fetch(url.toString());
+        const res = await fetch(url.toString(), { cache: "no-store" });
         if (!res.ok) {
           const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
           if (!cancelled) {
@@ -1168,6 +1176,35 @@ export default function PlaylistBrowser() {
         }
         const data = (await res.json()) as CursorResponse<TrackRow>;
         const items = Array.isArray(data.items) ? data.items : [];
+        if (
+          mode === "playlists" &&
+          selectedPlaylist?.type === "playlist" &&
+          selectedPlaylist.id &&
+          items.length === 0
+        ) {
+          const now = Date.now();
+          const lastAttempt = playlistAutoSyncAttemptRef.current[selectedPlaylist.id] ?? 0;
+          if (now - lastAttempt > 30_000) {
+            playlistAutoSyncAttemptRef.current[selectedPlaylist.id] = now;
+            void fetch("/api/spotify/sync", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                type: "playlist_items",
+                payload: {
+                  playlistId: selectedPlaylist.id,
+                  offset: 0,
+                  limit: 50,
+                  maxPagesPerRun: 20,
+                  runId: `auto-empty-${Date.now()}`,
+                },
+              }),
+            }).catch(() => undefined);
+            window.setTimeout(() => {
+              setTracksRefreshToken((prev) => prev + 1);
+            }, 1200);
+          }
+        }
         if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
           setTracks(items);
           setNextCursor(data.nextCursor ?? null);
@@ -1254,7 +1291,7 @@ export default function PlaylistBrowser() {
     loadingMoreTracksRef.current = true;
     setLoadingMoreTracks(true);
     try {
-      const res = await fetch(url.toString());
+      const res = await fetch(url.toString(), { cache: "no-store" });
       if (!res.ok) return;
       const data = (await res.json()) as CursorResponse<TrackRow>;
       const items = Array.isArray(data.items) ? data.items : [];

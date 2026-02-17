@@ -120,9 +120,9 @@ export default function StatusBox() {
   const refresh = useCallback(async () => {
     try {
       const [dbRes, syncRes, workerRes] = await Promise.all([
-        fetch("/api/spotify/db-status"),
-        fetch("/api/spotify/sync-status"),
-        fetch("/api/spotify/worker-health"),
+        fetch("/api/spotify/db-status", { cache: "no-store" }),
+        fetch("/api/spotify/sync-status", { cache: "no-store" }),
+        fetch("/api/spotify/worker-health", { cache: "no-store" }),
       ]);
 
       if (dbRes.ok) setDbStatus(await dbRes.json());
@@ -160,7 +160,7 @@ export default function StatusBox() {
           const url = new URL("/api/spotify/me/playlists", window.location.origin);
           url.searchParams.set("limit", "50");
           if (cursor) url.searchParams.set("cursor", cursor);
-          const res = await fetch(url.toString());
+          const res = await fetch(url.toString(), { cache: "no-store" });
           if (!res.ok) break;
           const data = await res.json();
           const items = Array.isArray(data.items) ? data.items : [];
@@ -184,9 +184,9 @@ export default function StatusBox() {
   const refreshAuthStatus = useCallback(async () => {
     try {
       const [appRes, userRes, versionRes] = await Promise.all([
-        fetch("/api/spotify/app-status"),
-        fetch("/api/spotify/user-status"),
-        fetch("/api/version"),
+        fetch("/api/spotify/app-status", { cache: "no-store" }),
+        fetch("/api/spotify/user-status", { cache: "no-store" }),
+        fetch("/api/version", { cache: "no-store" }),
       ]);
 
       if (appRes.ok) setAppStatus(await appRes.json());

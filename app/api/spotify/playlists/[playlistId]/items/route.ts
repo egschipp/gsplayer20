@@ -152,6 +152,117 @@ export async function GET(
     .orderBy(asc(playlistItems.position), asc(playlistItems.itemId))
     .limit(limit);
 
+  if (!rows.length && !cursor) {
+    try {
+      const live = await spotifyFetch<{
+        items?: Array<{
+          added_at?: string;
+          added_by?: { id?: string };
+          track?: {
+            id?: string;
+            name?: string;
+            duration_ms?: number;
+            explicit?: boolean;
+            popularity?: number;
+            album?: {
+              id?: string;
+              name?: string;
+              release_date?: string;
+              images?: Array<{ url?: string }>;
+            };
+            artists?: Array<{ name?: string }>;
+          };
+        }>;
+      }>({
+        url: `https://api.spotify.com/v1/playlists/${encodeURIComponent(
+          playlistId
+        )}/tracks?limit=${limit}&offset=0`,
+        userLevel: true,
+      });
+
+      const now = Date.now();
+      const mapped = (Array.isArray(live?.items) ? live.items : [])
+        .map((item, index) => {
+          const track = item?.track;
+          const trackId = typeof track?.id === "string" ? track.id : null;
+          const releaseDate = track?.album?.release_date ?? null;
+          const releaseYear =
+            releaseDate && /^\d{4}/.test(releaseDate)
+              ? Number(releaseDate.slice(0, 4))
+              : null;
+          const addedAtValue = item?.added_at ? Date.parse(item.added_at) : NaN;
+          const albumImageUrl =
+            track?.album?.images?.find((img) => typeof img?.url === "string")?.url ??
+            null;
+          const trackName = track?.name ?? "Onbekend nummer";
+          return {
+            itemId: `${playlistId}:${index}:${trackId ?? "unknown"}`,
+            playlistId,
+            trackId,
+            name: trackName,
+            albumId: track?.album?.id ?? null,
+            albumName: track?.album?.name ?? null,
+            albumReleaseDate: releaseDate,
+            releaseYear,
+            albumImageUrl,
+            coverUrl: albumImageUrl,
+            durationMs:
+              typeof track?.duration_ms === "number" ? track.duration_ms : null,
+            explicit:
+              typeof track?.explicit === "boolean"
+                ? track.explicit
+                  ? 1
+                  : 0
+                : null,
+            popularity:
+              typeof track?.popularity === "number" ? track.popularity : null,
+            artists: Array.isArray(track?.artists)
+              ? track.artists
+                  .map((artist) => artist?.name)
+                  .filter(Boolean)
+                  .join(", ")
+              : null,
+            addedAt: Number.isFinite(addedAtValue) ? addedAtValue : null,
+            addedBySpotifyUserId: item?.added_by?.id ?? null,
+            position: index,
+            snapshotIdAtSync: null,
+            syncRunId: null,
+            playlists: [
+              {
+                id: playlistId,
+                name: "Geselecteerde playlist",
+                spotifyUrl: `https://open.spotify.com/playlist/${playlistId}`,
+              },
+            ],
+          };
+        })
+        .filter(Boolean);
+
+      return jsonNoStore({
+        items: mapped,
+        nextCursor: null,
+        asOf: now,
+        sync: {
+          status: "live",
+          lastSuccessfulAt: now,
+          lagSec: 0,
+        },
+      });
+    } catch (error) {
+      if (error instanceof SpotifyFetchError) {
+        if (error.status === 401) return jsonError("UNAUTHENTICATED", 401);
+        if (error.status === 403) return jsonError("FORBIDDEN", 403);
+        if (error.status === 404) return jsonError("PLAYLIST_NOT_FOUND", 404);
+        if (error.status === 429) return jsonError("SPOTIFY_RATE_LIMIT", 429);
+        return jsonError("SPOTIFY_UPSTREAM", 502);
+      }
+      if (String(error).includes("UserNotAuthenticated")) {
+        return jsonError("UNAUTHENTICATED", 401);
+      }
+      return jsonError("SPOTIFY_UPSTREAM", 502);
+    }
+  }
+
   const trackIds = rows
     .map((row) => row.trackId)
     .filter((id): id is string => Boolean(id));

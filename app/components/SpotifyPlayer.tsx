@@ -1500,11 +1500,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handleTogglePlay() {
     setPlaybackTouched(true);
-    if (
-      isCustomQueueActive &&
-      !isCurrentTrackFromCustomQueue &&
-      !customQueuePlayback.busy
-    ) {
+    if (isCustomQueueActive && !isCurrentTrackFromCustomQueue) {
       const targetQueueId =
         customQueue.currentQueueId ?? customQueue.items[0]?.queueId ?? null;
       if (targetQueueId) {
@@ -1545,7 +1541,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handleNext() {
     setPlaybackTouched(true);
-    if (isCustomQueueActive && !customQueuePlayback.busy) {
+    if (isCustomQueueActive) {
       await customQueuePlayback.playNextFromQueue();
       return;
     }
@@ -1596,7 +1592,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function handlePrevious() {
     setPlaybackTouched(true);
-    if (isCustomQueueActive && !customQueuePlayback.busy) {
+    if (isCustomQueueActive) {
       await customQueuePlayback.playPreviousFromQueue();
       return;
     }

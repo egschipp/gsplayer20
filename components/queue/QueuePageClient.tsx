@@ -26,6 +26,7 @@ export default function QueuePageClient() {
     if (!activeQueueId) return -1;
     return queue.items.findIndex((item) => item.queueId === activeQueueId);
   }, [activeQueueId, queue.items]);
+  const canStartPlayback = playback.ready && !playback.busy;
 
   const nextQueueId =
     currentIndex >= 0 && currentIndex + 1 < queue.items.length
@@ -109,6 +110,12 @@ export default function QueuePageClient() {
           <button type="button" className="btn btn-ghost" onClick={playback.clearError}>
             Sluiten
           </button>
+        </div>
+      ) : null}
+
+      {!playback.ready ? (
+        <div className={styles.info} role="status">
+          Player initialiseren...
         </div>
       ) : null}
 
@@ -229,7 +236,7 @@ export default function QueuePageClient() {
                         type="button"
                         className={`detail-btn ${styles.queueActionBtn} ${styles.queueStartBtn}`}
                         onClick={() => void playback.playFromQueue(item.queueId)}
-                        disabled={playback.busy}
+                        disabled={!canStartPlayback}
                         aria-label={`Start ${item.name} in queue`}
                         title="Start hier"
                       >

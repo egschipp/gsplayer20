@@ -30,6 +30,14 @@
   color: #fecaca;
 }
 
+.info {
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.26);
+  background: rgba(56, 189, 248, 0.09);
+  color: #bae6fd;
+}
+
 .empty {
   border: 1px solid var(--border-subtle);
   border-radius: 12px;

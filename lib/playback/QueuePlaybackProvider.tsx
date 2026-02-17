@@ -23,6 +23,7 @@ type QueuePlaybackContextValue = {
   playPreviousFromQueue: () => Promise<void>;
   activeQueueId: string | null;
   startingQueueId: string | null;
+  ready: boolean;
   busy: boolean;
   error: string | null;
   clearError: () => void;
@@ -61,15 +62,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
   const [error, setError] = useState<string | null>(null);
   const [activeQueueId, setActiveQueueId] = useState<string | null>(null);
   const [startingQueueId, setStartingQueueId] = useState<string | null>(null);
-  const lastAutoAdvancedQueueIdRef = useRef<string | null>(null);
   const pendingQueueIdRef = useRef<string | null>(null);
-  const queueTransitionUntilRef = useRef(0);
-  const queueMismatchSinceRef = useRef<number | null>(null);
-
-  const markQueueTransition = useCallback((ms = 4500) => {
-    queueTransitionUntilRef.current = Date.now() + ms;
-    queueMismatchSinceRef.current = null;
-  }, []);
 
   useEffect(() => {
     queueRef.current = queue;
@@ -126,32 +119,49 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     snapshot.setFallbackContext(null);
   }, [api]);
 
+  const playQueueAtIndex = useCallback(
+    async (
+      snapshot: typeof queueRef.current,
+      targetIndex: number,
+      captureFallback = false
+    ) => {
+      const item = snapshot.items[targetIndex];
+      if (!item) return;
+      if (!api) throw new Error("Spotify Web Playback SDK is nog niet klaar.");
+      if (captureFallback && snapshot.mode !== "queue") {
+        await captureFallbackContext();
+      }
+      const uris = snapshot.items.map((entry) => entry.uri);
+      if (!uris.length) return;
+      const offsetIndex = Math.max(0, Math.min(targetIndex, uris.length - 1));
+      const targetUri = uris[offsetIndex] ?? item.uri;
+      pendingQueueIdRef.current = item.queueId;
+      setStartingQueueId(item.queueId);
+      setActiveQueueId(item.queueId);
+      await api.playQueue(uris, targetUri, offsetIndex);
+      snapshot.setMode("queue");
+      snapshot.setCurrentQueueId(item.queueId);
+      setError(null);
+    },
+    [api, captureFallbackContext]
+  );
+
   const playFromQueue = useCallback(
     async (queueId: string) => {
-      markQueueTransition();
       setStartingQueueId(queueId);
       setActiveQueueId(queueId);
       await runCommand(async () => {
         const snapshot = queueRef.current;
-        const item = snapshot.items.find((entry) => entry.queueId === queueId);
-        if (!item) {
+        const targetIndex = snapshot.items.findIndex(
+          (entry) => entry.queueId === queueId
+        );
+        if (targetIndex < 0) {
           setStartingQueueId(null);
           setActiveQueueId(null);
+          pendingQueueIdRef.current = null;
           return;
         }
-        if (!api) throw new Error("Spotify Web Playback SDK is nog niet klaar.");
-
-        if (snapshot.mode !== "queue") {
-          await captureFallbackContext();
-        }
-
-        pendingQueueIdRef.current = item.queueId;
-        await api.playQueue([item.uri], item.uri, 0);
-        snapshot.setMode("queue");
-        snapshot.setCurrentQueueId(item.queueId);
-        lastAutoAdvancedQueueIdRef.current = null;
-        markQueueTransition();
-        setError(null);
+        await playQueueAtIndex(snapshot, targetIndex, true);
       }).catch((err) => {
         pendingQueueIdRef.current = null;
         setStartingQueueId(null);
@@ -159,89 +169,68 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
         setError(mapPlaybackError(err));
       });
     },
-    [api, captureFallbackContext, markQueueTransition, runCommand]
+    [playQueueAtIndex, runCommand]
   );
 
   const playNextFromQueue = useCallback(async () => {
-    markQueueTransition();
     await runCommand(async () => {
       const snapshot = queueRef.current;
       if (!snapshot.items.length) {
         await resumeFallbackContext();
         return;
       }
-      if (!api) throw new Error("Spotify Web Playback SDK is nog niet klaar.");
-
-      const currentIndex = snapshot.currentQueueId
+      const currentIndexByQueueId = snapshot.currentQueueId
         ? snapshot.items.findIndex((entry) => entry.queueId === snapshot.currentQueueId)
         : -1;
+      const currentIndexByTrackId = currentTrackId
+        ? snapshot.items.findIndex((entry) => entry.trackId === currentTrackId)
+        : -1;
+      const currentIndex =
+        currentIndexByQueueId >= 0 ? currentIndexByQueueId : currentIndexByTrackId;
       const nextIndex = currentIndex + 1;
 
       if (nextIndex < 0 || nextIndex >= snapshot.items.length) {
         await resumeFallbackContext();
         return;
       }
-
-      const nextItem = snapshot.items[nextIndex];
-      setStartingQueueId(nextItem.queueId);
-      setActiveQueueId(nextItem.queueId);
-      pendingQueueIdRef.current = nextItem.queueId;
-      await api.playQueue([nextItem.uri], nextItem.uri, 0);
-      snapshot.setMode("queue");
-      snapshot.setCurrentQueueId(nextItem.queueId);
-      lastAutoAdvancedQueueIdRef.current = null;
-      markQueueTransition();
-      setError(null);
+      await playQueueAtIndex(snapshot, nextIndex);
     }).catch((err) => {
       pendingQueueIdRef.current = null;
       setStartingQueueId(null);
       setError(mapPlaybackError(err));
     });
-  }, [api, markQueueTransition, resumeFallbackContext, runCommand]);
+  }, [currentTrackId, playQueueAtIndex, resumeFallbackContext, runCommand]);
 
   const playPreviousFromQueue = useCallback(async () => {
-    markQueueTransition();
     await runCommand(async () => {
       const snapshot = queueRef.current;
       if (!snapshot.items.length) return;
-      if (!api) throw new Error("Spotify Web Playback SDK is nog niet klaar.");
-
-      const currentIndex = snapshot.currentQueueId
+      const currentIndexByQueueId = snapshot.currentQueueId
         ? snapshot.items.findIndex((entry) => entry.queueId === snapshot.currentQueueId)
-        : 0;
+        : -1;
+      const currentIndexByTrackId = currentTrackId
+        ? snapshot.items.findIndex((entry) => entry.trackId === currentTrackId)
+        : -1;
+      const currentIndex =
+        currentIndexByQueueId >= 0
+          ? currentIndexByQueueId
+          : currentIndexByTrackId >= 0
+          ? currentIndexByTrackId
+          : 0;
       const previousIndex = Math.max(0, currentIndex - 1);
-      const previousItem = snapshot.items[previousIndex];
-      if (!previousItem) return;
-
-      setStartingQueueId(previousItem.queueId);
-      setActiveQueueId(previousItem.queueId);
-      pendingQueueIdRef.current = previousItem.queueId;
-      await api.playQueue([previousItem.uri], previousItem.uri, 0);
-      snapshot.setMode("queue");
-      snapshot.setCurrentQueueId(previousItem.queueId);
-      lastAutoAdvancedQueueIdRef.current = null;
-      markQueueTransition();
-      setError(null);
+      await playQueueAtIndex(snapshot, previousIndex);
     }).catch((err) => {
       pendingQueueIdRef.current = null;
       setStartingQueueId(null);
       setError(mapPlaybackError(err));
     });
-  }, [api, markQueueTransition, runCommand]);
+  }, [currentTrackId, playQueueAtIndex, runCommand]);
 
   useEffect(() => {
     if (queue.mode !== "queue") {
-      if (
-        pendingRef.current > 0 ||
-        Boolean(pendingQueueIdRef.current) ||
-        Boolean(startingQueueId)
-      ) {
-        return;
-      }
       setActiveQueueId(null);
       setStartingQueueId(null);
       pendingQueueIdRef.current = null;
-      queueMismatchSinceRef.current = null;
       return;
     }
 
@@ -269,56 +258,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       setStartingQueueId(null);
     }
     pendingQueueIdRef.current = null;
-    lastAutoAdvancedQueueIdRef.current = null;
-    queueMismatchSinceRef.current = null;
-    markQueueTransition(2500);
-  }, [currentTrackId, markQueueTransition, queue, startingQueueId]);
-
-  useEffect(() => {
-    if (!queue.hydrated) return;
-    if (queue.mode !== "queue") return;
-    if (!api) return;
-    if (!queue.currentQueueId) return;
-    if (!currentTrackId) return;
-    if (pendingQueueIdRef.current === queue.currentQueueId) {
-      queueMismatchSinceRef.current = null;
-      return;
-    }
-    if (Date.now() < queueTransitionUntilRef.current) {
-      return;
-    }
-    if (pendingRef.current > 0 || Boolean(startingQueueId)) {
-      return;
-    }
-    const currentInQueue = queue.items.some((item) => item.trackId === currentTrackId);
-    if (currentInQueue) {
-      queueMismatchSinceRef.current = null;
-      return;
-    }
-    if (!queueMismatchSinceRef.current) {
-      queueMismatchSinceRef.current = Date.now();
-      return;
-    }
-    if (Date.now() - queueMismatchSinceRef.current < 1800) {
-      return;
-    }
-    // External track selection should immediately release queue lock instead of forcing a rewind.
-    queue.setMode("idle");
-    setActiveQueueId(null);
-    setStartingQueueId(null);
-    pendingQueueIdRef.current = null;
-    lastAutoAdvancedQueueIdRef.current = null;
-    queueMismatchSinceRef.current = null;
-  }, [
-    api,
-    currentTrackId,
-    queue.currentQueueId,
-    queue.hydrated,
-    queue.items,
-    queue.mode,
-    queue,
-    startingQueueId,
-  ]);
+  }, [currentTrackId, queue, startingQueueId]);
 
   useEffect(() => {
     if (!queue.hydrated) return;
@@ -336,68 +276,6 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     void playFromQueue(first.queueId);
   }, [playFromQueue, queue, resumeFallbackContext]);
 
-  useEffect(() => {
-    if (!queue.hydrated) return;
-    if (queue.mode !== "queue" || !queue.currentQueueId) return;
-
-    let cancelled = false;
-
-    const tick = async () => {
-      if (cancelled) return;
-      try {
-        const playback = await fetchPlaybackStateSnapshot();
-        if (cancelled || !playback) return;
-
-        const snapshot = queueRef.current;
-        const activeItem = snapshot.items.find(
-          (item) => item.queueId === snapshot.currentQueueId
-        );
-        if (!activeItem) return;
-
-        if (playback.trackId && playback.trackId !== activeItem.trackId) {
-          const matched = snapshot.items.find((item) => item.trackId === playback.trackId);
-          if (matched) {
-            snapshot.setCurrentQueueId(matched.queueId);
-            setActiveQueueId(matched.queueId);
-            if (startingQueueId === matched.queueId) {
-              setStartingQueueId(null);
-            }
-            pendingQueueIdRef.current = null;
-            lastAutoAdvancedQueueIdRef.current = null;
-          }
-          return;
-        }
-
-        const nearEnd =
-          playback.durationMs > 0 && playback.progressMs >= playback.durationMs - 900;
-        const ended =
-          !playback.isPlaying &&
-          playback.durationMs > 0 &&
-          playback.progressMs >= playback.durationMs - 1200;
-
-        if (
-          (nearEnd || ended) &&
-          lastAutoAdvancedQueueIdRef.current !== activeItem.queueId
-        ) {
-          lastAutoAdvancedQueueIdRef.current = activeItem.queueId;
-          await playNextFromQueue();
-        }
-      } catch (err) {
-        setError(mapPlaybackError(err));
-      }
-    };
-
-    const interval = window.setInterval(() => {
-      void tick();
-    }, 1000);
-    void tick();
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [playNextFromQueue, queue.currentQueueId, queue.hydrated, queue.mode, startingQueueId]);
-
   const value = useMemo<QueuePlaybackContextValue>(
     () => ({
       playFromQueue,
@@ -405,11 +283,13 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       playPreviousFromQueue,
       activeQueueId,
       startingQueueId,
+      ready: Boolean(api),
       busy,
       error,
       clearError: () => setError(null),
     }),
     [
+      api,
       activeQueueId,
       busy,
       error,

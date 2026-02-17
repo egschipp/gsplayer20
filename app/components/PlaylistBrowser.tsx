@@ -1600,7 +1600,11 @@ export default function PlaylistBrowser() {
   }
 
   async function handlePlayTrack(track: TrackRow | TrackItem | null | undefined) {
-    if (!track || !playerApi) return;
+    if (!track) return;
+    if (!playerApi) {
+      setError("Spotify player is nog niet klaar. Probeer het over een paar seconden opnieuw.");
+      return;
+    }
     try {
       if (queue.mode === "queue") {
         queue.setMode("idle");

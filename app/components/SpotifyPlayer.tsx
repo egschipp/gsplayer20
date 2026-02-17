@@ -87,6 +87,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
   const lastDeviceSelectRef = useRef(0);
   const pendingDeviceIdRef = useRef<string | null>(null);
+  const preferSdkDeviceRef = useRef(true);
   const [error, setError] = useState<string | null>(null);
   const [playbackTouched, setPlaybackTouched] = useState(false);
   const [optimisticTrack, setOptimisticTrack] = useState<{
@@ -732,6 +733,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       supportsVolume: d.supports_volume !== false,
     }));
     setDevices(mapped);
+    const sdkDevice = sdkDeviceIdRef.current
+      ? deduped.get(sdkDeviceIdRef.current)
+      : null;
+    if (preferSdkDeviceRef.current && sdkDeviceIdRef.current) {
+      setActiveDevice(
+        sdkDeviceIdRef.current,
+        sdkDevice?.name ?? "GSPlayer20 Web"
+      );
+      setActiveDeviceRestricted(Boolean(sdkDevice?.is_restricted));
+      setActiveDeviceSupportsVolume(sdkDevice?.supports_volume !== false);
+      return;
+    }
     const active = Array.from(deduped.values()).find((d: any) => d.is_active);
     if (active?.id) {
       setActiveDevice(active.id, active.name ?? null);
@@ -755,8 +768,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   useEffect(() => {
     if (!canUseSdk) {
       onReady(null);
+      readyRef.current = false;
+      sdkReadyRef.current = false;
+      playerRef.current = null;
       setCurrentTrackIdState(null);
       setCurrentTrackLiked(null);
+      setDeviceReady(false);
       if (accessToken && !playbackAllowed) {
         setError("Ontbrekende Spotify‑rechten. Koppel opnieuw.");
       }
@@ -784,19 +801,24 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (typeof cleanup === "function") cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUseSdk, accessToken]);
+  }, [canUseSdk]);
 
   function initializePlayer() {
-    if (!accessToken || readyRef.current) return;
+    const initialToken = accessTokenRef.current;
+    if (!initialToken || readyRef.current) return;
     readyRef.current = true;
 
     const player = new window.Spotify.Player({
       name: "GSPlayer20 Web",
-      getOAuthToken: (cb: (token: string) => void) => cb(accessToken),
+      getOAuthToken: (cb: (token: string) => void) => {
+        const token = accessTokenRef.current ?? initialToken;
+        if (token) cb(token);
+      },
       volume: 0.5,
     });
 
     const onSdkReady = async ({ device_id }: { device_id: string }) => {
+      preferSdkDeviceRef.current = true;
       setDeviceId(device_id);
       deviceIdRef.current = device_id;
       sdkDeviceIdRef.current = device_id;
@@ -807,7 +829,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setActiveDeviceRestricted(false);
       setActiveDeviceSupportsVolume(true);
       if (accessTokenRef.current) {
-        await ensureActiveDevice(device_id, accessTokenRef.current, false);
+        let ready = await ensureActiveDevice(device_id, accessTokenRef.current, false);
+        if (!ready) {
+          await new Promise((resolve) => setTimeout(resolve, 700));
+          ready = await ensureActiveDevice(device_id, accessTokenRef.current!, false);
+        }
+        setDeviceReady(ready);
       } else {
         setDeviceReady(false);
       }
@@ -820,9 +847,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             const data = await res.json();
             const device = data?.device;
             if (device?.id) {
-              setActiveDevice(device.id, device.name ?? null);
-              setActiveDeviceRestricted(Boolean(device.is_restricted));
-              setActiveDeviceSupportsVolume(device.supports_volume !== false);
+              const shouldAdoptRemote =
+                !preferSdkDeviceRef.current ||
+                !sdkDeviceIdRef.current ||
+                device.id === sdkDeviceIdRef.current;
+              if (shouldAdoptRemote) {
+                setActiveDevice(device.id, device.name ?? null);
+                setActiveDeviceRestricted(Boolean(device.is_restricted));
+                setActiveDeviceSupportsVolume(device.supports_volume !== false);
+              }
             }
             const item = data?.item;
             if (item) {
@@ -907,6 +940,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setDeviceId(null);
       sdkDeviceIdRef.current = null;
       sdkReadyRef.current = false;
+      setDeviceReady(false);
     };
 
     const onStateChanged = (state: any) => {
@@ -1173,6 +1207,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       player.removeListener("account_error", onAccountError);
       player.removeListener("autoplay_failed", onAutoplayFailed);
       player.disconnect();
+      playerRef.current = null;
+      readyRef.current = false;
+      sdkReadyRef.current = false;
+      setDeviceReady(false);
+      onReady(null);
     };
   }
 
@@ -1412,6 +1451,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const token = accessTokenRef.current;
     if (!token || !targetId) return;
     if (Date.now() < rateLimitRef.current.until) return;
+    preferSdkDeviceRef.current = targetId === sdkDeviceIdRef.current;
     setActiveDevice(targetId);
     const deviceName = devices.find((d) => d.id === targetId)?.name;
     if (deviceName) setActiveDeviceName(deviceName);

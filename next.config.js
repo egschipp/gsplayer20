@@ -4,13 +4,15 @@ const contentSecurityPolicy = [
   "base-uri 'self'",
   "frame-ancestors 'none'",
   "object-src 'none'",
-  "script-src 'self' 'unsafe-inline' https://sdk.scdn.co",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://sdk.scdn.co",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   "media-src 'self' https:",
-  "connect-src 'self' https://api.spotify.com https://accounts.spotify.com https://api-partner.spotify.com https://*.spotify.com https://*.scdn.co wss://*.spotify.com",
+  "connect-src 'self' https://api.spotify.com https://accounts.spotify.com https://api-partner.spotify.com https://*.spotify.com https://*.scdn.co wss://*.spotify.com wss://*.scdn.co",
   "worker-src 'self' blob:",
+  "child-src 'self' blob:",
+  "frame-src 'self' https://open.spotify.com https://*.spotify.com",
 ].join("; ");
 
 const nextConfig = {

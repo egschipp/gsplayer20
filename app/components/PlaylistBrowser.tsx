@@ -41,6 +41,38 @@ function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   return null;
 }
 
+function buildQueueTrackInput(track: TrackRow | TrackItem) {
+  const trackId = resolveTrackId(track);
+  if (!trackId) return null;
+  const artists =
+    "artists" in track
+      ? Array.isArray(track.artists)
+        ? dedupeArtistText(
+            track.artists.map((artist) => artist?.name).filter(Boolean).join(", ")
+          ) || "Onbekende artiest"
+        : dedupeArtistText(track.artists || "") || "Onbekende artiest"
+      : "Onbekende artiest";
+  const artworkUrl =
+    "album" in track
+      ? track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null
+      : track.coverUrl ?? track.albumImageUrl ?? null;
+  return {
+    uri: `spotify:track:${trackId}`,
+    trackId,
+    name: track.name || "Onbekend",
+    artists,
+    durationMs: track.durationMs ?? null,
+    artworkUrl,
+  };
+}
+
+function normalizeTrackName(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("nl");
+}
+
 function toPlaylistLink(option: PlaylistOption): PlaylistLink {
   return option.type === "liked"
     ? {
@@ -251,8 +283,39 @@ export default function PlaylistBrowser() {
         setLoadingArtists(false);
       }
       if (Array.isArray(parsed.trackOptions)) {
-        hasCachedTrackOptionsRef.current = parsed.trackOptions.length > 0;
-        setTrackOptions(parsed.trackOptions);
+        const unique = new Map<string, TrackOption>();
+        for (const option of parsed.trackOptions) {
+          const name = String(option?.name ?? "").trim();
+          const key = normalizeTrackName(name);
+          if (!key) continue;
+          const normalized: TrackOption = {
+            id: key,
+            name,
+            spotifyUrl:
+              typeof option?.spotifyUrl === "string" && option.spotifyUrl
+                ? option.spotifyUrl
+                : "https://open.spotify.com",
+            coverUrl: option?.coverUrl ?? null,
+            trackId:
+              typeof option?.trackId === "string" && option.trackId
+                ? option.trackId
+                : null,
+          };
+          const existing = unique.get(key);
+          if (!existing) {
+            unique.set(key, normalized);
+          } else if (
+            (!existing.coverUrl && normalized.coverUrl) ||
+            existing.name.length > name.length
+          ) {
+            unique.set(key, normalized);
+          }
+        }
+        const list = Array.from(unique.values()).sort((a, b) =>
+          a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+        );
+        hasCachedTrackOptionsRef.current = list.length > 0;
+        setTrackOptions(list);
         setLoadingTracksList(false);
       }
       if (Array.isArray(parsed.trackItems)) setTrackItems(parsed.trackItems);
@@ -545,25 +608,25 @@ export default function PlaylistBrowser() {
         const unique = new Map<string, TrackOption>();
         for (const track of mappedItems) {
           const name = String(track.name ?? "").trim();
-          const key = track.id || track.trackId || "";
+          const key = normalizeTrackName(name);
           if (!key) continue;
-          const artistNames = track.artists
-            .map((artist) => artist?.name)
-            .filter(Boolean)
-            .join(", ");
           const coverUrl = track.album?.images?.[0]?.url ?? null;
           const option: TrackOption = {
             id: key,
             name,
-            spotifyUrl: `https://open.spotify.com/track/${track.id}`,
+            spotifyUrl: track.id
+              ? `https://open.spotify.com/track/${track.id}`
+              : "https://open.spotify.com",
             coverUrl,
             trackId: track.id ?? null,
-            artistNames: artistNames || null,
           };
           const existing = unique.get(key);
           if (!existing) {
             unique.set(key, option);
-          } else if (!existing.coverUrl && option.coverUrl) {
+          } else if (
+            (!existing.coverUrl && option.coverUrl) ||
+            existing.name.length > name.length
+          ) {
             unique.set(key, option);
           }
         }
@@ -696,7 +759,9 @@ export default function PlaylistBrowser() {
 
   const filteredTrackItems = useMemo(() => {
     if (!selectedTrackId) return [];
-    return trackItems.filter((track) => track.id === selectedTrackId);
+    return trackItems.filter(
+      (track) => normalizeTrackName(track.name) === selectedTrackId
+    );
   }, [trackItems, selectedTrackId]);
 
   async function loadMorePlaylists() {
@@ -828,25 +893,25 @@ export default function PlaylistBrowser() {
         for (const option of prev) unique.set(option.id, option);
         for (const track of mappedItems) {
           const name = String(track.name ?? "").trim();
-          const key = track.id || track.trackId || "";
+          const key = normalizeTrackName(name);
           if (!key) continue;
-          const artistNames = track.artists
-            .map((artist) => artist?.name)
-            .filter(Boolean)
-            .join(", ");
           const coverUrl = track.album?.images?.[0]?.url ?? null;
           const option: TrackOption = {
             id: key,
             name,
-            spotifyUrl: `https://open.spotify.com/track/${track.id}`,
+            spotifyUrl: track.id
+              ? `https://open.spotify.com/track/${track.id}`
+              : "https://open.spotify.com",
             coverUrl,
             trackId: track.id ?? null,
-            artistNames: artistNames || null,
           };
           const existing = unique.get(key);
           if (!existing) {
             unique.set(key, option);
-          } else if (!existing.coverUrl && option.coverUrl) {
+          } else if (
+            (!existing.coverUrl && option.coverUrl) ||
+            existing.name.length > name.length
+          ) {
             unique.set(key, option);
           }
         }
@@ -1450,6 +1515,16 @@ export default function PlaylistBrowser() {
     ]
   );
 
+  const handleAddTrackToQueue = useCallback(
+    (track: TrackRow | TrackItem) => {
+      const queueTrack = buildQueueTrackInput(track);
+      if (!queueTrack) return;
+      queue.addTracks([queueTrack]);
+      setError(null);
+    },
+    [queue]
+  );
+
   function buildQueue(): { uris: string[]; byId: Set<string> } {
     if (mode === "tracks") {
       const uris = filteredTrackItems
@@ -1695,9 +1770,6 @@ export default function PlaylistBrowser() {
                       )}
                       <span>
                         <span className="combo-track-name">{opt.name}</span>
-                        {opt.artistNames ? (
-                          <span className="text-subtle"> {opt.artistNames}</span>
-                        ) : null}
                       </span>
                     </span>
                   </button>
@@ -1778,9 +1850,9 @@ export default function PlaylistBrowser() {
           Tracks laden...
         </p>
       ) : null}
-      {mode === "tracks" && selectedTrack?.artistNames ? (
+      {mode === "tracks" && selectedTrack?.name ? (
         <div className="text-subtle track-context-title" style={{ marginTop: 6 }}>
-          Geselecteerd: {selectedTrack.name} • {selectedTrack.artistNames}
+          Geselecteerd: {selectedTrack.name}
         </div>
       ) : null}
       {error ? (
@@ -1841,6 +1913,7 @@ export default function PlaylistBrowser() {
                 currentTrackId,
                 openDetailFromRow,
                 handlePlayTrack,
+                addTrackToQueue: handleAddTrackToQueue,
                 addTrackToPlaylist: handleAddTrackToPlaylist,
                 addTargetOptions,
                 addingTargetKey,
@@ -1892,6 +1965,7 @@ export default function PlaylistBrowser() {
                 currentTrackId,
                 openDetailFromItem,
                 handlePlayTrack,
+                addTrackToQueue: handleAddTrackToQueue,
                 addTrackToPlaylist: handleAddTrackToPlaylist,
                 addTargetOptions,
                 addingTargetKey,
@@ -2344,12 +2418,46 @@ function AddToPlaylistMenu({
   );
 }
 
+type AddToQueueButtonProps = {
+  track: TrackRow | TrackItem;
+  onAdd: (track: TrackRow | TrackItem) => void;
+};
+
+function AddToQueueButton({ track, onAdd }: AddToQueueButtonProps) {
+  const trackId = resolveTrackId(track);
+  return (
+    <button
+      type="button"
+      className="queue-row-btn"
+      aria-label="Toevoegen aan queue"
+      title="Toevoegen aan queue"
+      disabled={!trackId}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (!trackId) return;
+        onAdd(track);
+      }}
+    >
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none">
+        <path
+          d="M4 7h10M4 12h10M4 17h6M18 11v6M15 14h6"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  );
+}
+
 type TrackRowData = {
   items: TrackRow[];
   mode: Mode;
   currentTrackId: string | null;
   openDetailFromRow: (track: TrackRow) => void;
   handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
+  addTrackToQueue: (track: TrackRow | TrackItem) => void;
   addTrackToPlaylist: (track: TrackRow | TrackItem, target: PlaylistOption) => Promise<void>;
   addTargetOptions: PlaylistOption[];
   addingTargetKey: string | null;
@@ -2383,8 +2491,8 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
         style={{
           display: "grid",
           gridTemplateColumns: isGrid
-            ? "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px 128px"
-            : "98px minmax(0, 1fr) 128px",
+            ? "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px 148px"
+            : "98px minmax(0, 1fr) 148px",
           gap: 16,
           alignItems: "center",
           height: "64px",
@@ -2426,19 +2534,24 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
           )}
         </div>
         <div className="track-col-track">
-          <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
-            {track.name || "Onbekend"}
+          <div className="track-title-line" title={track.name || "Onbekend"}>
+            <span className="track-title-text">{track.name || "Onbekend"}</span>
             {isPlaying ? (
               <span className="playing-indicator" aria-label="Now playing">
                 ▶
               </span>
             ) : null}
           </div>
-          <div className="text-body">
+          <div
+            className="text-body track-artist-line"
+            title={dedupeArtistText(track.artists || "") || "Onbekende artiest"}
+          >
             {dedupeArtistText(track.artists || "") || "Onbekende artiest"}
           </div>
           {track.albumName ? (
-            <div className="text-subtle">{track.albumName}</div>
+            <div className="text-subtle track-album-line" title={track.albumName}>
+              {track.albumName}
+            </div>
           ) : null}
         </div>
         {isGrid ? (
@@ -2456,6 +2569,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
           <div className="text-subtle track-col-duration">{formatDuration(track.durationMs)}</div>
         ) : null}
         <div className="track-col-actions track-actions-group">
+          <AddToQueueButton track={track} onAdd={data.addTrackToQueue} />
           <AddToPlaylistMenu
             track={track}
             options={data.addTargetOptions}
@@ -2515,6 +2629,7 @@ type TrackItemData = {
   currentTrackId: string | null;
   openDetailFromItem: (track: TrackItem) => void;
   handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
+  addTrackToQueue: (track: TrackRow | TrackItem) => void;
   addTrackToPlaylist: (track: TrackRow | TrackItem, target: PlaylistOption) => Promise<void>;
   addTargetOptions: PlaylistOption[];
   addingTargetKey: string | null;
@@ -2556,7 +2671,7 @@ function TrackItemRenderer({
         className={`track-row-inner${isPlaying ? " playing" : ""}`}
         style={{
           display: "grid",
-          gridTemplateColumns: "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px 128px",
+          gridTemplateColumns: "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px 148px",
           gap: 16,
           alignItems: "center",
           height: "64px",
@@ -2597,16 +2712,25 @@ function TrackItemRenderer({
           )}
         </div>
         <div className="track-col-track">
-          <div style={{ fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
-            {track.name}
+          <div className="track-title-line" title={track.name || "Onbekend"}>
+            <span className="track-title-text">{track.name || "Onbekend"}</span>
             {isPlaying ? (
               <span className="playing-indicator" aria-label="Now playing">
                 ▶
               </span>
             ) : null}
           </div>
-          <div className="text-body">{uniqueArtistNames || "Onbekende artiest"}</div>
-          {track.album?.name ? <div className="text-subtle">{track.album.name}</div> : null}
+          <div
+            className="text-body track-artist-line"
+            title={uniqueArtistNames || "Onbekende artiest"}
+          >
+            {uniqueArtistNames || "Onbekende artiest"}
+          </div>
+          {track.album?.name ? (
+            <div className="text-subtle track-album-line" title={track.album.name}>
+              {track.album.name}
+            </div>
+          ) : null}
         </div>
         <div className="text-subtle track-col-year">{track.releaseYear ?? "—"}</div>
         <div className="track-col-playlists">
@@ -2617,6 +2741,7 @@ function TrackItemRenderer({
         </div>
         <div className="text-subtle track-col-duration">{formatDuration(track.durationMs)}</div>
         <div className="track-col-actions track-actions-group">
+          <AddToQueueButton track={track} onAdd={data.addTrackToQueue} />
           <AddToPlaylistMenu
             track={track}
             options={data.addTargetOptions}

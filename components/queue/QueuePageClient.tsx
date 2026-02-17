@@ -34,12 +34,21 @@ export default function QueuePageClient() {
 
   const hasItems = queue.items.length > 0;
 
-  function handleDragStart(queueId: string) {
+  function handleDragStart(queueId: string, event: DragEvent<HTMLLIElement>) {
     setDraggingQueueId(queueId);
+    setDragOverQueueId(null);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.dropEffect = "move";
+    try {
+      event.dataTransfer.setData("text/plain", queueId);
+    } catch {
+      // Some browsers can reject custom drag payloads; reorder still works via state.
+    }
   }
 
   function handleDragOver(queueId: string, event: DragEvent<HTMLLIElement>) {
     event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
     if (dragOverQueueId !== queueId) {
       setDragOverQueueId(queueId);
     }
@@ -47,13 +56,15 @@ export default function QueuePageClient() {
 
   function handleDrop(targetQueueId: string, event: DragEvent<HTMLLIElement>) {
     event.preventDefault();
-    if (!draggingQueueId || draggingQueueId === targetQueueId) {
+    const sourceQueueId =
+      draggingQueueId || event.dataTransfer.getData("text/plain") || null;
+    if (!sourceQueueId || sourceQueueId === targetQueueId) {
       setDraggingQueueId(null);
       setDragOverQueueId(null);
       return;
     }
 
-    const fromIndex = queue.items.findIndex((item) => item.queueId === draggingQueueId);
+    const fromIndex = queue.items.findIndex((item) => item.queueId === sourceQueueId);
     const toIndex = queue.items.findIndex((item) => item.queueId === targetQueueId);
     if (fromIndex >= 0 && toIndex >= 0) {
       queue.reorderTracks(fromIndex, toIndex);
@@ -121,82 +132,122 @@ export default function QueuePageClient() {
       ) : null}
 
       {queue.hydrated && hasItems ? (
-        <ol className={styles.list} aria-label="Custom queue tracks">
-          {queue.items.map((item) => {
-            const isCurrent =
-              queue.mode === "queue" &&
-              item.queueId === queue.currentQueueId &&
-              currentTrackId === item.trackId;
-            const isNext = item.queueId === nextQueueId;
-            const isDragged = draggingQueueId === item.queueId;
-            const isDragOver = dragOverQueueId === item.queueId;
+        <div className={`track-list ${styles.tableWrap}`}>
+          <div className={`track-header ${styles.queueHeader}`}>
+            <div />
+            <div>Track</div>
+            <div className={styles.statusHeader}>Status</div>
+            <div className={styles.durationHeader}>Duur</div>
+            <div className={styles.actionsHeader}>Acties</div>
+          </div>
+          <ol className={styles.queueRows} aria-label="Custom queue tracks">
+            {queue.items.map((item) => {
+              const isCurrent =
+                queue.mode === "queue" &&
+                item.queueId === queue.currentQueueId &&
+                currentTrackId === item.trackId;
+              const isNext = item.queueId === nextQueueId;
+              const isDragged = draggingQueueId === item.queueId;
+              const isDragOver = dragOverQueueId === item.queueId;
 
-            return (
-              <li
-                key={item.queueId}
-                className={`${styles.item} ${isCurrent ? styles.itemCurrent : ""} ${
-                  isNext ? styles.itemNext : ""
-                } ${isDragged ? styles.itemDragging : ""} ${
-                  isDragOver ? styles.itemDragOver : ""
-                }`}
-                draggable
-                onDragStart={() => handleDragStart(item.queueId)}
-                onDragOver={(event) => handleDragOver(item.queueId, event)}
-                onDrop={(event) => handleDrop(item.queueId, event)}
-                onDragEnd={() => {
-                  setDraggingQueueId(null);
-                  setDragOverQueueId(null);
-                }}
-              >
-                <div className={styles.itemLeft}>
-                  {item.artworkUrl ? (
-                    <Image
-                      src={item.artworkUrl}
-                      alt={item.name}
-                      width={52}
-                      height={52}
-                      className={styles.artwork}
-                      unoptimized
-                    />
-                  ) : (
-                    <div className={`${styles.artwork} ${styles.artworkPlaceholder}`} />
-                  )}
-                  <div className={styles.itemCopy}>
-                    <div className={styles.itemName}>{item.name}</div>
-                    <div className={styles.itemArtist}>{item.artists || "Onbekende artiest"}</div>
+              return (
+                <li
+                  key={item.queueId}
+                  className={`track-row ${styles.queueRow}`}
+                  draggable
+                  onDragStart={(event) => handleDragStart(item.queueId, event)}
+                  onDragOver={(event) => handleDragOver(item.queueId, event)}
+                  onDrop={(event) => handleDrop(item.queueId, event)}
+                  onDragEnd={() => {
+                    setDraggingQueueId(null);
+                    setDragOverQueueId(null);
+                  }}
+                >
+                  <div
+                    className={`track-row-inner${isCurrent ? " playing" : ""} ${
+                      styles.queueRowInner
+                    } ${isDragged ? styles.queueRowDragging : ""} ${
+                      isDragOver ? styles.queueRowDragOver : ""
+                    }`}
+                  >
+                    <div className={styles.coverCell}>
+                      <span className={styles.dragHandle} aria-hidden="true">
+                        ⋮⋮
+                      </span>
+                      {item.artworkUrl ? (
+                        <Image
+                          src={item.artworkUrl}
+                          alt={item.name}
+                          width={48}
+                          height={48}
+                          className={styles.artwork}
+                          unoptimized
+                        />
+                      ) : (
+                        <div className={`${styles.artwork} ${styles.artworkPlaceholder}`} />
+                      )}
+                    </div>
+
+                    <div className="track-col-track">
+                      <div className="track-title-line" title={item.name}>
+                        <span className="track-title-text">{item.name}</span>
+                      </div>
+                      <div
+                        className="text-body track-artist-line"
+                        title={item.artists || "Onbekende artiest"}
+                      >
+                        {item.artists || "Onbekende artiest"}
+                      </div>
+                    </div>
+
+                    <div className={`track-col-playlists ${styles.statusCell}`}>
+                      {isCurrent ? (
+                        <span className={`${styles.statusPill} ${styles.statusNow}`}>
+                          Nu spelend
+                        </span>
+                      ) : isNext ? (
+                        <span className={`${styles.statusPill} ${styles.statusNext}`}>
+                          Volgende
+                        </span>
+                      ) : (
+                        <span className={`${styles.statusPill} ${styles.statusQueued}`}>
+                          Queue
+                        </span>
+                      )}
+                    </div>
+
+                    <div className={`text-subtle track-col-duration ${styles.durationCell}`}>
+                      {formatDuration(item.durationMs)}
+                    </div>
+
+                    <div className={`track-col-actions track-actions-group ${styles.actionsCell}`}>
+                      <button
+                        type="button"
+                        className={`detail-btn ${styles.queueActionBtn} ${styles.queueStartBtn}`}
+                        onClick={() => void playback.playFromQueue(item.queueId)}
+                        disabled={playback.busy}
+                        aria-label={`Start ${item.name} in queue`}
+                        title="Start hier"
+                      >
+                        ▶
+                      </button>
+                      <button
+                        type="button"
+                        className={`detail-btn ${styles.queueActionBtn} ${styles.queueRemoveBtn}`}
+                        onClick={() => queue.removeTrack(item.queueId)}
+                        disabled={playback.busy}
+                        aria-label={`Verwijder ${item.name} uit custom queue`}
+                        title="Verwijder"
+                      >
+                        −
+                      </button>
+                    </div>
                   </div>
-                </div>
-
-                <div className={styles.itemMeta}>
-                  {isCurrent ? (
-                    <span className={`${styles.pill} ${styles.pillNow}`}>Nu spelend</span>
-                  ) : null}
-                  {!isCurrent && isNext ? (
-                    <span className={`${styles.pill} ${styles.pillNext}`}>Volgende</span>
-                  ) : null}
-                  <span className={styles.duration}>{formatDuration(item.durationMs)}</span>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => void playback.playFromQueue(item.queueId)}
-                    disabled={playback.busy}
-                  >
-                    Start hier
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => queue.removeTrack(item.queueId)}
-                    disabled={playback.busy}
-                    aria-label={`Verwijder ${item.name} uit custom queue`}
-                  >
-                    Verwijder
-                  </button>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
       ) : null}
     </section>
   );

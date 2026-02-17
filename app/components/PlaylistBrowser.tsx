@@ -155,7 +155,7 @@ export default function PlaylistBrowser() {
   const loadingMoreTracksRef = useRef(false);
   const MAX_PLAYLIST_CHIPS = 2;
   const [listHeight, setListHeight] = useState(560);
-  const ROW_HEIGHT = 64;
+  const ROW_HEIGHT = 72;
   const hydratedSelectionRef = useRef(false);
   const skipModeResetRef = useRef(true);
   const [tracksContextKey, setTracksContextKey] = useState<string | null>(null);
@@ -545,11 +545,7 @@ export default function PlaylistBrowser() {
   useEffect(() => {
     let cancelled = false;
     async function loadTracksList() {
-      if (hasCachedTrackOptionsRef.current) {
-        setLoadingTracksList(false);
-        return;
-      }
-      setLoadingTracksList(true);
+      setLoadingTracksList(!hasCachedTrackOptionsRef.current);
       try {
         const url = new URL("/api/spotify/tracks", window.location.origin);
         url.searchParams.set("limit", "100");
@@ -637,6 +633,7 @@ export default function PlaylistBrowser() {
           setTrackOptions(list);
           setTrackItems(mappedItems);
           setTrackCursor(data.nextCursor ?? null);
+          hasCachedTrackOptionsRef.current = list.length > 0;
         }
         } finally {
         if (!cancelled) setLoadingTracksList(false);
@@ -650,9 +647,10 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     if (!selectedTrackId || loadingTracksList) return;
+    if (trackCursor) return;
     const exists = trackOptions.some((option) => option.id === selectedTrackId);
     if (!exists) setSelectedTrackId("");
-  }, [loadingTracksList, trackOptions, selectedTrackId]);
+  }, [loadingTracksList, trackCursor, trackOptions, selectedTrackId]);
 
   const selectedPlaylist = useMemo(() => {
     if (!selectedPlaylistId) return null;
@@ -726,13 +724,24 @@ export default function PlaylistBrowser() {
   }, [mode]);
 
   useEffect(() => {
-    if (!open) return;
     const term = debouncedQuery.trim();
-    if (term.length < 2) return;
-    if (mode === "playlists" && playlistCursor && !loadingMorePlaylists) {
+    const shouldPrefetchBySearch = open && term.length >= 2;
+    const shouldAutoloadTracks = mode === "tracks";
+    if (!shouldPrefetchBySearch && !shouldAutoloadTracks) return;
+    if (
+      shouldPrefetchBySearch &&
+      mode === "playlists" &&
+      playlistCursor &&
+      !loadingMorePlaylists
+    ) {
       loadMorePlaylists();
     }
-    if (mode === "artists" && artistCursor && !loadingMoreArtists) {
+    if (
+      shouldPrefetchBySearch &&
+      mode === "artists" &&
+      artistCursor &&
+      !loadingMoreArtists
+    ) {
       loadMoreArtists();
     }
     if (mode === "tracks" && trackCursor && !loadingMoreTracksList) {
@@ -2495,7 +2504,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             : "98px minmax(0, 1fr) 148px",
           gap: 16,
           alignItems: "center",
-          height: "64px",
+          height: "72px",
           padding: "0 16px",
         }}
       >
@@ -2674,7 +2683,7 @@ function TrackItemRenderer({
           gridTemplateColumns: "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px 148px",
           gap: 16,
           alignItems: "center",
-          height: "64px",
+          height: "72px",
           padding: "0 16px",
         }}
       >

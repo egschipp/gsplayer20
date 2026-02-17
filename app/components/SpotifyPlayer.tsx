@@ -88,6 +88,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const lastDeviceSelectRef = useRef(0);
   const pendingDeviceIdRef = useRef<string | null>(null);
   const preferSdkDeviceRef = useRef(true);
+  const lastConfirmedActiveDeviceRef = useRef<{ id: string; at: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playbackTouched, setPlaybackTouched] = useState(false);
   const [optimisticTrack, setOptimisticTrack] = useState<{
@@ -238,11 +239,21 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     token: string,
     shouldPlay = false
   ) {
+    const confirmed = lastConfirmedActiveDeviceRef.current;
+    if (
+      confirmed &&
+      confirmed.id === targetId &&
+      Date.now() - confirmed.at < 12000
+    ) {
+      setDeviceReady(true);
+      return true;
+    }
     try {
       const currentRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
       if (currentRes?.ok) {
         const current = await currentRes.json();
         if (current?.device?.id === targetId) {
+          lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
           setDeviceReady(true);
           return true;
         }
@@ -259,6 +270,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         if (res?.ok) {
           const data = await res.json();
           if (data?.device?.id === targetId) {
+            lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
             setDeviceReady(true);
             return true;
           }
@@ -268,6 +280,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
     }
+    lastConfirmedActiveDeviceRef.current = null;
     setDeviceReady(false);
     return false;
   }
@@ -747,6 +760,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     }
     const active = Array.from(deduped.values()).find((d: any) => d.is_active);
     if (active?.id) {
+      lastConfirmedActiveDeviceRef.current = { id: active.id, at: Date.now() };
       setActiveDevice(active.id, active.name ?? null);
       setActiveDeviceRestricted(Boolean(active.is_restricted));
       setActiveDeviceSupportsVolume(active.supports_volume !== false);
@@ -852,10 +866,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 !sdkDeviceIdRef.current ||
                 device.id === sdkDeviceIdRef.current;
               if (shouldAdoptRemote) {
-                setActiveDevice(device.id, device.name ?? null);
-                setActiveDeviceRestricted(Boolean(device.is_restricted));
-                setActiveDeviceSupportsVolume(device.supports_volume !== false);
-              }
+            setActiveDevice(device.id, device.name ?? null);
+            setActiveDeviceRestricted(Boolean(device.is_restricted));
+            setActiveDeviceSupportsVolume(device.supports_volume !== false);
+            lastConfirmedActiveDeviceRef.current = { id: device.id, at: Date.now() };
+          }
             }
             const item = data?.item;
             if (item) {
@@ -940,6 +955,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setDeviceId(null);
       sdkDeviceIdRef.current = null;
       sdkReadyRef.current = false;
+      lastConfirmedActiveDeviceRef.current = null;
       setDeviceReady(false);
     };
 
@@ -1316,6 +1332,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         setActiveDevice(device.id, device.name ?? null);
         setActiveDeviceRestricted(Boolean(device.is_restricted));
         setActiveDeviceSupportsVolume(device.supports_volume !== false);
+        lastConfirmedActiveDeviceRef.current = { id: device.id, at: Date.now() };
         if (device.id === pendingDeviceIdRef.current) {
           pendingDeviceIdRef.current = null;
         }
@@ -1463,6 +1480,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     await enqueuePlaybackCommand(async () => {
       const ready = await ensureActiveDevice(targetId, token, shouldPlay);
       if (ready) {
+        lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
+      }
+      if (ready) {
         const shuffleReady = await setRemoteShuffleState(
           shuffleOnRef.current,
           targetId,
@@ -1534,6 +1554,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
     await enqueuePlaybackCommand(async () => {
+      if (
+        currentDevice === sdkDeviceIdRef.current &&
+        queueModeRef.current !== "queue"
+      ) {
+        await playerRef.current?.nextTrack?.();
+        return;
+      }
       if (queueModeRef.current === "queue" && queueUrisRef.current?.length) {
         const ready = await ensureActiveDevice(currentDevice, token, true);
         if (!ready) {
@@ -1578,6 +1605,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
     await enqueuePlaybackCommand(async () => {
+      if (
+        currentDevice === sdkDeviceIdRef.current &&
+        queueModeRef.current !== "queue"
+      ) {
+        await playerRef.current?.previousTrack?.();
+        return;
+      }
       if (queueModeRef.current === "queue" && queueUrisRef.current?.length) {
         const ready = await ensureActiveDevice(currentDevice, token, true);
         if (!ready) {

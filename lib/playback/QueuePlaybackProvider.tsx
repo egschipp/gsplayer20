@@ -63,6 +63,13 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
   const [startingQueueId, setStartingQueueId] = useState<string | null>(null);
   const lastAutoAdvancedQueueIdRef = useRef<string | null>(null);
   const pendingQueueIdRef = useRef<string | null>(null);
+  const queueTransitionUntilRef = useRef(0);
+  const queueMismatchSinceRef = useRef<number | null>(null);
+
+  const markQueueTransition = useCallback((ms = 4500) => {
+    queueTransitionUntilRef.current = Date.now() + ms;
+    queueMismatchSinceRef.current = null;
+  }, []);
 
   useEffect(() => {
     queueRef.current = queue;
@@ -121,6 +128,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
 
   const playFromQueue = useCallback(
     async (queueId: string) => {
+      markQueueTransition();
       setStartingQueueId(queueId);
       setActiveQueueId(queueId);
       await runCommand(async () => {
@@ -142,6 +150,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
         snapshot.setMode("queue");
         snapshot.setCurrentQueueId(item.queueId);
         lastAutoAdvancedQueueIdRef.current = null;
+        markQueueTransition();
         setError(null);
       }).catch((err) => {
         pendingQueueIdRef.current = null;
@@ -150,10 +159,11 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
         setError(mapPlaybackError(err));
       });
     },
-    [api, captureFallbackContext, runCommand]
+    [api, captureFallbackContext, markQueueTransition, runCommand]
   );
 
   const playNextFromQueue = useCallback(async () => {
+    markQueueTransition();
     await runCommand(async () => {
       const snapshot = queueRef.current;
       if (!snapshot.items.length) {
@@ -180,15 +190,17 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       snapshot.setMode("queue");
       snapshot.setCurrentQueueId(nextItem.queueId);
       lastAutoAdvancedQueueIdRef.current = null;
+      markQueueTransition();
       setError(null);
     }).catch((err) => {
       pendingQueueIdRef.current = null;
       setStartingQueueId(null);
       setError(mapPlaybackError(err));
     });
-  }, [api, resumeFallbackContext, runCommand]);
+  }, [api, markQueueTransition, resumeFallbackContext, runCommand]);
 
   const playPreviousFromQueue = useCallback(async () => {
+    markQueueTransition();
     await runCommand(async () => {
       const snapshot = queueRef.current;
       if (!snapshot.items.length) return;
@@ -208,19 +220,28 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       snapshot.setMode("queue");
       snapshot.setCurrentQueueId(previousItem.queueId);
       lastAutoAdvancedQueueIdRef.current = null;
+      markQueueTransition();
       setError(null);
     }).catch((err) => {
       pendingQueueIdRef.current = null;
       setStartingQueueId(null);
       setError(mapPlaybackError(err));
     });
-  }, [api, runCommand]);
+  }, [api, markQueueTransition, runCommand]);
 
   useEffect(() => {
     if (queue.mode !== "queue") {
+      if (
+        pendingRef.current > 0 ||
+        Boolean(pendingQueueIdRef.current) ||
+        Boolean(startingQueueId)
+      ) {
+        return;
+      }
       setActiveQueueId(null);
       setStartingQueueId(null);
       pendingQueueIdRef.current = null;
+      queueMismatchSinceRef.current = null;
       return;
     }
 
@@ -249,7 +270,9 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     }
     pendingQueueIdRef.current = null;
     lastAutoAdvancedQueueIdRef.current = null;
-  }, [currentTrackId, queue, startingQueueId]);
+    queueMismatchSinceRef.current = null;
+    markQueueTransition(2500);
+  }, [currentTrackId, markQueueTransition, queue, startingQueueId]);
 
   useEffect(() => {
     if (!queue.hydrated) return;
@@ -257,15 +280,35 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     if (!api) return;
     if (!queue.currentQueueId) return;
     if (!currentTrackId) return;
-    if (pendingQueueIdRef.current === queue.currentQueueId) return;
+    if (pendingQueueIdRef.current === queue.currentQueueId) {
+      queueMismatchSinceRef.current = null;
+      return;
+    }
+    if (Date.now() < queueTransitionUntilRef.current) {
+      return;
+    }
+    if (pendingRef.current > 0 || Boolean(startingQueueId)) {
+      return;
+    }
     const currentInQueue = queue.items.some((item) => item.trackId === currentTrackId);
-    if (currentInQueue) return;
+    if (currentInQueue) {
+      queueMismatchSinceRef.current = null;
+      return;
+    }
+    if (!queueMismatchSinceRef.current) {
+      queueMismatchSinceRef.current = Date.now();
+      return;
+    }
+    if (Date.now() - queueMismatchSinceRef.current < 1800) {
+      return;
+    }
     // External track selection should immediately release queue lock instead of forcing a rewind.
     queue.setMode("idle");
     setActiveQueueId(null);
     setStartingQueueId(null);
     pendingQueueIdRef.current = null;
     lastAutoAdvancedQueueIdRef.current = null;
+    queueMismatchSinceRef.current = null;
   }, [
     api,
     currentTrackId,
@@ -274,6 +317,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     queue.items,
     queue.mode,
     queue,
+    startingQueueId,
   ]);
 
   useEffect(() => {

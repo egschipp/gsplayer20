@@ -20,7 +20,7 @@ export default function QueuePageClient() {
   const playback = useQueuePlayback();
   const [draggingQueueId, setDraggingQueueId] = useState<string | null>(null);
   const [dragOverQueueId, setDragOverQueueId] = useState<string | null>(null);
-  const activeQueueId = playback.activeQueueId ?? queue.currentQueueId;
+  const activeQueueId = playback.startingQueueId ?? playback.activeQueueId ?? queue.currentQueueId;
 
   const currentIndex = useMemo(() => {
     if (!activeQueueId) return -1;
@@ -141,9 +141,11 @@ export default function QueuePageClient() {
           </div>
           <ol className={styles.queueRows} aria-label="Custom queue tracks">
             {queue.items.map((item) => {
-              const isCurrent = queue.mode === "queue" && item.queueId === activeQueueId;
               const isStarting = playback.startingQueueId === item.queueId;
-              const isNext = item.queueId === nextQueueId;
+              const isCurrent =
+                item.queueId === activeQueueId &&
+                (queue.mode === "queue" || isStarting || playback.busy);
+              const isNext = queue.mode === "queue" && !isCurrent && item.queueId === nextQueueId;
               const isDragged = draggingQueueId === item.queueId;
               const isDragOver = dragOverQueueId === item.queueId;
 

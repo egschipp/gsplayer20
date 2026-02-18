@@ -99,6 +99,19 @@ function toneFromStatus(value: string | null | undefined): BadgeTone {
   return "warn";
 }
 
+function buildApiUrl(
+  path: string,
+  params?: Record<string, string | null | undefined>
+) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value == null || value === "") continue;
+    query.set(key, value);
+  }
+  const qs = query.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
 export default function StatusBox() {
   const [appStatus, setAppStatus] = useState<AppStatus>(null);
   const [userStatus, setUserStatus] = useState<UserStatus>(null);
@@ -157,20 +170,31 @@ export default function StatusBox() {
         let cursor: string | null = null;
         let safety = 0;
         do {
-          const url = new URL("/api/spotify/me/playlists", window.location.origin);
-          url.searchParams.set("limit", "50");
-          if (cursor) url.searchParams.set("cursor", cursor);
-          const res = await fetch(url.toString(), { cache: "no-store" });
+          const res: Response = await fetch(
+            buildApiUrl("/api/spotify/me/playlists", { limit: "50", cursor }),
+            { cache: "no-store" }
+          );
           if (!res.ok) break;
-          const data = await res.json();
-          const items = Array.isArray(data.items) ? data.items : [];
+          const data = (await res.json().catch(() => null)) as
+            | {
+                items?: Array<{ playlistId?: string; name?: string }>;
+                nextCursor?: string | null;
+              }
+            | null;
+          const items = Array.isArray(data?.items) ? data.items : [];
           for (const item of items) {
-            map[item.playlistId] = {
-              name: item.name,
-              spotifyUrl: `https://open.spotify.com/playlist/${item.playlistId}`,
+            const playlistId =
+              typeof item?.playlistId === "string" ? item.playlistId : "";
+            if (!playlistId) continue;
+            map[playlistId] = {
+              name:
+                typeof item?.name === "string" && item.name
+                  ? item.name
+                  : "Untitled playlist",
+              spotifyUrl: `https://open.spotify.com/playlist/${playlistId}`,
             };
           }
-          cursor = data.nextCursor ?? null;
+          cursor = data?.nextCursor ?? null;
           safety += 1;
         } while (cursor && safety < 20);
         setPlaylistMap(map);

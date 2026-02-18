@@ -117,6 +117,19 @@ function safeRemoveStorageKey(storage: Storage, key: string) {
   }
 }
 
+function buildApiUrl(
+  path: string,
+  params?: Record<string, string | null | undefined>
+) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value == null || value === "") continue;
+    query.set(key, value);
+  }
+  const qs = query.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
 function mapTrackApiItems(items: TrackApiItem[]): TrackItem[] {
   return items.map((track): TrackItem => ({
     id: String(track.id ?? track.trackId ?? ""),
@@ -236,6 +249,9 @@ export default function PlaylistBrowser() {
   const hydratedSelectionRef = useRef(false);
   const skipModeResetRef = useRef(true);
   const [tracksContextKey, setTracksContextKey] = useState<string | null>(null);
+  const [pendingTracksContextKey, setPendingTracksContextKey] = useState<string | null>(
+    null
+  );
   const [likedRefreshNonce, setLikedRefreshNonce] = useState(0);
   const [cacheHydrated, setCacheHydrated] = useState(false);
   const hasCachedPlaylistsRef = useRef(false);
@@ -533,10 +549,10 @@ export default function PlaylistBrowser() {
         let pages = 0;
         const MAX_PAGES = 20;
         do {
-          const url = new URL("/api/spotify/me/playlists", window.location.origin);
-          url.searchParams.set("limit", "50");
-          if (cursor) url.searchParams.set("cursor", cursor);
-          const res = await fetch(url.toString(), { cache: "no-store" });
+          const res = await fetch(
+            buildApiUrl("/api/spotify/me/playlists", { limit: "50", cursor }),
+            { cache: "no-store" }
+          );
           if (!res.ok) {
             const mapped = mapSpotifyApiError(
               res.status,
@@ -606,9 +622,9 @@ export default function PlaylistBrowser() {
       }
       setLoadingArtists(true);
       try {
-        const url = new URL("/api/spotify/artists", window.location.origin);
-        url.searchParams.set("limit", "100");
-        const res = await fetch(url.toString(), { cache: "no-store" });
+        const res = await fetch(buildApiUrl("/api/spotify/artists", { limit: "100" }), {
+          cache: "no-store",
+        });
         if (!res.ok) {
           const mapped = mapSpotifyApiError(res.status, "Artiesten laden lukt nu niet.");
           if (!cancelled) {
@@ -667,10 +683,10 @@ export default function PlaylistBrowser() {
         let allMappedItems: TrackItem[] = [];
 
         do {
-          const url = new URL("/api/spotify/tracks", window.location.origin);
-          url.searchParams.set("limit", "100");
-          if (cursor) url.searchParams.set("cursor", cursor);
-          const res = await fetch(url.toString(), { cache: "no-store" });
+          const res = await fetch(
+            buildApiUrl("/api/spotify/tracks", { limit: "100", cursor }),
+            { cache: "no-store" }
+          );
           if (!res.ok) {
             const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
             if (!cancelled && !hasCachedTrackOptions) {
@@ -792,14 +808,23 @@ export default function PlaylistBrowser() {
     );
   }, [trackItems, selectedTrackId]);
 
+  const isContextSwitchLoading = Boolean(
+    loadingTracks &&
+      pendingTracksContextKey &&
+      pendingTracksContextKey !== tracksContextKey
+  );
+
   const loadMorePlaylists = useCallback(async () => {
     if (!playlistCursor || loadingMorePlaylists) return;
     setLoadingMorePlaylists(true);
     try {
-      const url = new URL("/api/spotify/me/playlists", window.location.origin);
-      url.searchParams.set("limit", "50");
-      url.searchParams.set("cursor", playlistCursor);
-      const res = await fetch(url.toString(), { cache: "no-store" });
+      const res = await fetch(
+        buildApiUrl("/api/spotify/me/playlists", {
+          limit: "50",
+          cursor: playlistCursor,
+        }),
+        { cache: "no-store" }
+      );
       if (!res.ok) return;
       const data = (await res.json()) as CursorResponse<PlaylistApiItem>;
       const items = Array.isArray(data.items) ? data.items : [];
@@ -832,10 +857,13 @@ export default function PlaylistBrowser() {
     if (!artistCursor || loadingMoreArtists) return;
     setLoadingMoreArtists(true);
     try {
-      const url = new URL("/api/spotify/artists", window.location.origin);
-      url.searchParams.set("limit", "100");
-      url.searchParams.set("cursor", artistCursor);
-      const res = await fetch(url.toString(), { cache: "no-store" });
+      const res = await fetch(
+        buildApiUrl("/api/spotify/artists", {
+          limit: "100",
+          cursor: artistCursor,
+        }),
+        { cache: "no-store" }
+      );
       if (!res.ok) return;
       const data = (await res.json()) as CursorResponse<ArtistApiItem>;
       const items = Array.isArray(data.items) ? data.items : [];
@@ -1072,9 +1100,10 @@ export default function PlaylistBrowser() {
               ? "/api/spotify/me/tracks?live=1"
               : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
             : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
-        const url = new URL(baseUrl, window.location.origin);
-        url.searchParams.set("limit", "50");
-        const res = await fetch(url.toString(), { cache: "no-store" });
+        const connector = baseUrl.includes("?") ? "&" : "?";
+        const res = await fetch(`${baseUrl}${connector}limit=50`, {
+          cache: "no-store",
+        });
         if (!res.ok) {
           const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
           if (!cancelled) {
@@ -1118,10 +1147,12 @@ export default function PlaylistBrowser() {
           setTracks(items);
           setNextCursor(data.nextCursor ?? null);
           if (nextContextKey) setTracksContextKey(nextContextKey);
+          setPendingTracksContextKey(null);
         }
       } catch {
         if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
           setError("Tracks laden lukt nu niet.");
+          setPendingTracksContextKey(null);
         }
       } finally {
         if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
@@ -1158,12 +1189,12 @@ export default function PlaylistBrowser() {
       !shouldRefreshRequested
     ) {
       setLoadingTracks(false);
+      setPendingTracksContextKey(null);
       return;
     }
     if (contextChanged) {
-      setTracks([]);
+      setPendingTracksContextKey(nextContextKey);
       setNextCursor(null);
-      setTracksContextKey(nextContextKey);
     }
     loadTracks();
 
@@ -1193,14 +1224,13 @@ export default function PlaylistBrowser() {
           ? "/api/spotify/me/tracks?live=1"
           : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
         : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
-    const url = new URL(baseUrl, window.location.origin);
-    url.searchParams.set("limit", "50");
-    url.searchParams.set("cursor", cursor);
+    const connector = baseUrl.includes("?") ? "&" : "?";
+    const url = `${baseUrl}${connector}limit=50&cursor=${encodeURIComponent(cursor)}`;
 
     loadingMoreTracksRef.current = true;
     setLoadingMoreTracks(true);
     try {
-      const res = await fetch(url.toString(), { cache: "no-store" });
+      const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) return;
       const data = (await res.json()) as CursorResponse<TrackRow>;
       const items = Array.isArray(data.items) ? data.items : [];
@@ -1884,7 +1914,11 @@ export default function PlaylistBrowser() {
               Tracks van: <strong>{selectedArtist.name}</strong>
             </div>
           ) : null}
-          {!loadingTracks && !tracks.length && selectedPlaylist?.id ? (
+          {!isContextSwitchLoading &&
+          !loadingTracks &&
+          !tracks.length &&
+          ((mode === "playlists" && selectedPlaylist?.id) ||
+            (mode === "artists" && selectedArtist?.id)) ? (
             <div className="empty-state">
               <div style={{ fontWeight: 600 }}>Geen tracks gevonden</div>
               <div className="text-body">

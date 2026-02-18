@@ -10,6 +10,7 @@ import {
   isAuthLogEnabled,
   logAuthEvent,
   redactHeaders,
+  redactQuery,
   startAuthLog,
 } from "@/lib/auth/authLog";
 
@@ -64,7 +65,7 @@ async function authHandler(req: NextRequest, ctx: AuthRouteContext) {
       url,
       errorCode: error,
       data: {
-        query: Object.fromEntries(req.nextUrl.searchParams.entries()),
+        query: redactQuery(req.nextUrl.searchParams),
         headers: redactHeaders(headers),
         cookieKeys: cookieKeys(headers),
         cookieFlags: cookieFlags(headers),

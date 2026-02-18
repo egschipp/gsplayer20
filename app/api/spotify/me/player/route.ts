@@ -4,8 +4,9 @@ import {
   jsonNoStore,
   rateLimitResponse,
   requireAppUser,
+  requireSameOrigin,
 } from "@/lib/api/guards";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
@@ -33,7 +34,8 @@ type SpotifyPlayerResponse = {
   repeat_state?: "off" | "track" | "context";
 };
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const raw = req.nextUrl.searchParams.get("raw") === "1";
   const { session, response } = await requireAppUser();
   if (response) return response;
 
@@ -51,7 +53,32 @@ export async function GET() {
       userLevel: true,
     });
 
-    if (!data || !data.item) {
+    if (!data) {
+      return new NextResponse(null, {
+        status: 204,
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    if (raw) {
+      return jsonNoStore({
+        device: data.device ?? null,
+        context: data.context ?? null,
+        item: data.item ?? null,
+        progress_ms:
+          typeof data.progress_ms === "number" ? Math.max(0, data.progress_ms) : 0,
+        is_playing: Boolean(data.is_playing),
+        shuffle_state: Boolean(data.shuffle_state),
+        repeat_state:
+          data.repeat_state === "track" || data.repeat_state === "context"
+            ? data.repeat_state
+            : "off",
+      });
+    }
+
+    if (!data.item) {
       return new NextResponse(null, {
         status: 204,
         headers: {
@@ -119,5 +146,61 @@ export async function GET() {
     }
 
     return jsonNoStore({ error: "PLAYBACK_STATE_FAILED" }, 500);
+  }
+}
+
+export async function PUT(req: NextRequest) {
+  const originError = requireSameOrigin(req);
+  if (originError) return originError;
+
+  const { session, response } = await requireAppUser();
+  if (response) return response;
+
+  const rl = await rateLimitResponse({
+    key: `me-player-put:${session.appUserId}`,
+    limit: 180,
+    windowMs: 60_000,
+    includeRetryAfter: true,
+  });
+  if (rl) return rl;
+
+  let body: any = null;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonNoStore({ error: "INVALID_BODY" }, 400);
+  }
+
+  const deviceIds = Array.isArray(body?.device_ids)
+    ? body.device_ids
+        .map((value: unknown) => (typeof value === "string" ? value.trim() : ""))
+        .filter(Boolean)
+        .slice(0, 5)
+    : [];
+  if (!deviceIds.length) {
+    return jsonNoStore({ error: "INVALID_DEVICE_IDS" }, 400);
+  }
+  const play = body?.play === true;
+
+  try {
+    await spotifyFetch({
+      url: "https://api.spotify.com/v1/me/player",
+      method: "PUT",
+      body: { device_ids: deviceIds, play },
+      userLevel: true,
+    });
+    return jsonNoStore({ ok: true, deviceIds, play });
+  } catch (error) {
+    if (error instanceof SpotifyFetchError) {
+      if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
+      if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
+      if (error.status === 404) return jsonNoStore({ error: "DEVICE_NOT_FOUND" }, 404);
+      if (error.status === 429) return jsonNoStore({ error: "RATE_LIMIT" }, 429);
+      return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
+    }
+    if (String(error).includes("UserNotAuthenticated")) {
+      return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
+    }
+    return jsonNoStore({ error: "PLAYBACK_TRANSFER_FAILED" }, 500);
   }
 }

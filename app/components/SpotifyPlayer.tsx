@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSession, useSession } from "next-auth/react";
+import { usePathname } from "next/navigation";
 import {
   SPOTIFY_PLAYBACK_SCOPES,
   hasPlaybackScopes,
@@ -22,6 +23,7 @@ declare global {
 
 const PLAYER_FETCH_TIMEOUT_MS = 12000;
 const PLAYER_FETCH_MAX_ATTEMPTS = 3;
+const LOCAL_WEBPLAYER_NAME = "Georgies Webplayer";
 
 export type PlayerApi = {
   playQueue: (uris: string[], offsetUri?: string, offsetIndex?: number | null) => Promise<void>;
@@ -63,8 +65,22 @@ function getWebPlaybackSdkSupport() {
   return { supported: true, reason: null as string | null };
 }
 
+async function readJsonSafely<T = any>(
+  res: Response | null | undefined
+): Promise<T | null> {
+  if (!res) return null;
+  if (res.status === 204 || res.status === 205 || res.status === 304) return null;
+  if (res.headers.get("content-length") === "0") return null;
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const { data: session, status: sessionStatus } = useSession();
+  const pathname = usePathname();
   const customQueue = useQueueStore();
   const customQueuePlayback = useQueuePlayback();
   const accessToken = session?.accessToken as string | undefined;
@@ -95,7 +111,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [queueItems, setQueueItems] = useState<
     { id: string; name: string; artists: string; coverUrl: string | null }[]
   >([]);
-  const [appVersion, setAppVersion] = useState<string | null>(null);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
   const [devices, setDevices] = useState<
@@ -123,7 +138,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [accountProductChecked, setAccountProductChecked] = useState(false);
   const [deviceMissing, setDeviceMissing] = useState(false);
   const [devicesLoaded, setDevicesLoaded] = useState(false);
-  const [lastDevicesSyncedAt, setLastDevicesSyncedAt] = useState<number | null>(null);
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
   const lastDeviceSelectRef = useRef(0);
   const pendingDeviceIdRef = useRef<string | null>(null);
@@ -261,6 +275,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }, [canUseSdk]);
   const isCustomQueueActive =
     customQueue.mode === "queue" && customQueue.items.length > 0;
+  const isQueuePage = (pathname ?? "").startsWith("/queue");
   const isCurrentTrackFromCustomQueue = useMemo(() => {
     if (!currentTrackIdState) return false;
     return customQueue.items.some((item) => item.trackId === currentTrackIdState);
@@ -278,23 +293,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     activeDeviceNameRef.current = activeDeviceName;
   }, [activeDeviceName]);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/version", { cache: "no-store" })
-      .then(async (res) => {
-        if (!res.ok) return null;
-        return res.json().catch(() => null);
-      })
-      .then((data) => {
-        if (cancelled) return;
-        const version = typeof data?.version === "string" ? data.version.trim() : "";
-        if (version) setAppVersion(version);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     shuffleOnRef.current = shuffleOn;
@@ -335,6 +333,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (!token) return null;
       if (Date.now() < rateLimitRef.current.until) return null;
       const method = String(options?.method ?? "GET").toUpperCase();
+      const isPlayerStateGet =
+        method === "GET" && url === "https://api.spotify.com/v1/me/player";
+      const isPlayerDevicesGet =
+        method === "GET" && url === "https://api.spotify.com/v1/me/player/devices";
+      const playerProxyUrl = isPlayerStateGet
+        ? "/api/spotify/me/player?raw=1"
+        : isPlayerDevicesGet
+        ? "/api/spotify/me/player/devices"
+        : null;
       const isPlaybackCommand =
         method !== "GET" && url.includes("https://api.spotify.com/v1/me/player");
 
@@ -343,11 +350,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), PLAYER_FETCH_TIMEOUT_MS);
         try {
-          const res = await fetch(url, {
-            ...options,
-            headers: { Authorization: `Bearer ${token}`, ...options?.headers },
-            signal: controller.signal,
-          });
+          const res = playerProxyUrl
+            ? await fetch(playerProxyUrl, {
+                method: "GET",
+                cache: "no-store",
+                credentials: "include",
+                signal: controller.signal,
+              })
+            : await fetch(url, {
+                ...options,
+                headers: { Authorization: `Bearer ${token}`, ...options?.headers },
+                signal: controller.signal,
+              });
 
           if (applyRateLimit(res)) return null;
 
@@ -357,6 +371,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
 
           if (res.status === 401) {
+            if (playerProxyUrl) {
+              setError("Spotify‑sessie verlopen. Koppel opnieuw.");
+              return res;
+            }
             const refreshed = await refreshClientAccessToken();
             if (refreshed && refreshed !== token) {
               token = refreshed;
@@ -397,7 +415,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             String((error as Error)?.message ?? error)
               .toLowerCase()
               .includes("fetch");
-          const retryable = isAbort || isFetchError;
+          const isAccessControlError =
+            String((error as Error)?.message ?? error)
+              .toLowerCase()
+              .includes("access control");
+          const retryable = isAbort || isFetchError || isAccessControlError;
           if (!retryable || attempt >= PLAYER_FETCH_MAX_ATTEMPTS) {
             if (isPlaybackCommand) {
               setError("Spotify‑verbinding is instabiel. Probeer opnieuw.");
@@ -441,7 +463,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     try {
       const currentRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
       if (currentRes?.ok) {
-        const current = await currentRes.json();
+        const current = await readJsonSafely(currentRes);
         if (current?.device?.id === targetId) {
           lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
           setDeviceReady(true);
@@ -463,7 +485,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       try {
         const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
         if (res?.ok) {
-          const data = await res.json();
+          const data = await readJsonSafely(res);
           if (data?.device?.id === targetId) {
             lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
             setDeviceReady(true);
@@ -540,7 +562,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
       if (!res?.ok) continue;
-      const data = await res.json();
+      const data = await readJsonSafely(res);
       if (typeof data?.shuffle_state !== "boolean") continue;
       if (typeof expectedState === "boolean" && data.shuffle_state !== expectedState) {
         continue;
@@ -653,7 +675,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         setQueueError("Queue ophalen lukt nu niet.");
         return;
       }
-      const data = await res.json();
+      const data = await readJsonSafely(res);
       const nextTracks = Array.isArray(data?.queue) ? data.queue : [];
       const mapped = nextTracks.map((track: any) => ({
         id: track?.id ?? crypto.randomUUID(),
@@ -674,7 +696,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const syncPlaybackState = useCallback(async () => {
     const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
     if (!res?.ok) return;
-    const data = await res.json();
+    const data = await readJsonSafely(res);
     const device = data?.device;
     const recentlySelected = Date.now() - lastDeviceSelectRef.current < 3000;
     if (device?.id && (!recentlySelected || device.id === pendingDeviceIdRef.current)) {
@@ -1103,7 +1125,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (canUseSdk && sdkDeviceId && !deduped.has(sdkDeviceId)) {
       deduped.set(sdkDeviceId, {
         id: sdkDeviceId,
-        name: "GSPlayer20 Web",
+        name: LOCAL_WEBPLAYER_NAME,
         is_active: currentSelectedId === sdkDeviceId,
         type: "Computer",
         is_restricted: false,
@@ -1124,7 +1146,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           : "Open Spotify op dit apparaat en start een track zodat het als Connect-device beschikbaar wordt.",
     }));
     setDevices(mapped);
-    setLastDevicesSyncedAt(Date.now());
     const selectableById = new Map(
       mapped
         .filter((device) => device.selectable)
@@ -1138,7 +1159,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       : null;
     const active = mapped.find((device) => device.isActive && device.selectable);
     if (sdkDevice?.id && canUseSdk && preferSdkDeviceRef.current) {
-      setActiveDevice(sdkDevice.id, sdkDevice.name ?? "GSPlayer20 Web");
+      setActiveDevice(sdkDevice.id, sdkDevice.name ?? LOCAL_WEBPLAYER_NAME);
       setActiveDeviceRestricted(Boolean(sdkDevice.isRestricted));
       setActiveDeviceSupportsVolume(sdkDevice.supportsVolume !== false);
     } else if (active?.id) {
@@ -1151,7 +1172,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setActiveDeviceRestricted(Boolean(selectedDevice.isRestricted));
       setActiveDeviceSupportsVolume(selectedDevice.supportsVolume !== false);
     } else if (sdkDevice?.id && canUseSdk && !activeDeviceIdRef.current) {
-      setActiveDevice(sdkDevice.id, sdkDevice.name ?? "GSPlayer20 Web");
+      setActiveDevice(sdkDevice.id, sdkDevice.name ?? LOCAL_WEBPLAYER_NAME);
       setActiveDeviceRestricted(Boolean(sdkDevice.isRestricted));
       setActiveDeviceSupportsVolume(sdkDevice.supportsVolume !== false);
     }
@@ -1358,7 +1379,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     setSdkLifecycle("connecting");
 
     const player = new window.Spotify.Player({
-      name: "GSPlayer20 Web",
+      name: LOCAL_WEBPLAYER_NAME,
       getOAuthToken: (cb: (token: string) => void) => {
         const token = accessTokenRef.current ?? initialToken;
         if (token) cb(token);
@@ -1383,7 +1404,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (shouldPreferSdk) {
         preferSdkDeviceRef.current = true;
         // Default Spotify Connect selection to the web player on load.
-        setActiveDevice(device_id, "GSPlayer20 Web");
+        setActiveDevice(device_id, LOCAL_WEBPLAYER_NAME);
         setActiveDeviceRestricted(false);
         setActiveDeviceSupportsVolume(true);
       }
@@ -1406,7 +1427,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         try {
           const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
           if (res?.ok) {
-            const data = await res.json();
+            const data = await readJsonSafely(res);
             const device = data?.device;
             if (device?.id) {
               const shouldAdoptRemote =
@@ -1591,7 +1612,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
           if (!currentDevice && sdkDeviceIdRef.current) {
             currentDevice = sdkDeviceIdRef.current;
-            setActiveDevice(currentDevice, "GSPlayer20 Web");
+            setActiveDevice(currentDevice, LOCAL_WEBPLAYER_NAME);
           }
           if (!currentDevice) {
             setError(
@@ -1717,7 +1738,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
           if (!currentDevice && sdkDeviceIdRef.current) {
             currentDevice = sdkDeviceIdRef.current;
-            setActiveDevice(currentDevice, "GSPlayer20 Web");
+            setActiveDevice(currentDevice, LOCAL_WEBPLAYER_NAME);
           }
           if (!currentDevice) {
             setError(
@@ -1901,147 +1922,156 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     }
 
     async function poll() {
-      const token = accessTokenRef.current;
-      if (!token || cancelled) return;
-      const now = Date.now();
-      const activeDevice = activeDeviceIdRef.current;
-      const sdkDevice = sdkDeviceIdRef.current;
-      const sdkStatePrimary =
-        sdkReadyRef.current &&
-        Boolean(sdkDevice) &&
-        (!activeDevice || activeDevice === sdkDevice);
-      if (
-        sdkStatePrimary &&
-        playerStateRef.current?.name &&
-        now - lastSdkEventAtRef.current < 15000 &&
-        now - lastShuffleSyncRef.current < 8000
-      ) {
-        scheduleNext(false, 20000);
-        return;
-      }
-      if (sdkStatePrimary && now - lastSdkEventAtRef.current < 7000) {
-        scheduleNext(false, 14000);
-        return;
-      }
-      const res = await spotifyRequest("https://api.spotify.com/v1/me/player");
-      if (!res) {
-        scheduleNext();
-        return;
-      }
-      const data = await res.json();
-      if (!data || cancelled) return;
-      const device = data.device;
-      const recentlySelected = Date.now() - lastDeviceSelectRef.current < 3000;
-      if (device?.id && (!recentlySelected || device.id === pendingDeviceIdRef.current)) {
-        setActiveDevice(device.id, device.name ?? null);
-        setActiveDeviceRestricted(Boolean(device.is_restricted));
-        setActiveDeviceSupportsVolume(device.supports_volume !== false);
-        lastConfirmedActiveDeviceRef.current = { id: device.id, at: Date.now() };
-        if (device.id === pendingDeviceIdRef.current) {
-          pendingDeviceIdRef.current = null;
-        }
+      try {
+        const token = accessTokenRef.current;
+        if (!token || cancelled) return;
+        const now = Date.now();
+        const activeDevice = activeDeviceIdRef.current;
+        const sdkDevice = sdkDeviceIdRef.current;
+        const sdkStatePrimary =
+          sdkReadyRef.current &&
+          Boolean(sdkDevice) &&
+          (!activeDevice || activeDevice === sdkDevice);
         if (
-          sdkDeviceIdRef.current &&
-          device.id !== sdkDeviceIdRef.current &&
-          playerRef.current
+          sdkStatePrimary &&
+          playerStateRef.current?.name &&
+          now - lastSdkEventAtRef.current < 15000 &&
+          now - lastShuffleSyncRef.current < 8000
         ) {
-          playerRef.current.pause().catch(() => undefined);
+          scheduleNext(false, 20000);
+          return;
         }
-      }
-      const item = data.item;
-      if (item) {
-        const trackId = item.id ?? null;
-        const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
-        if (isNewTrack) {
-          lastTrackIdRef.current = trackId;
-          if (pendingTrackIdRef.current === trackId) {
-            pendingTrackIdRef.current = null;
+        if (sdkStatePrimary && now - lastSdkEventAtRef.current < 7000) {
+          scheduleNext(false, 14000);
+          return;
+        }
+        const res = await spotifyRequest("https://api.spotify.com/v1/me/player");
+        if (!res) {
+          scheduleNext();
+          return;
+        }
+        const data = await readJsonSafely(res);
+        if (!data || cancelled) {
+          scheduleNext();
+          return;
+        }
+        const device = data.device;
+        const recentlySelected = Date.now() - lastDeviceSelectRef.current < 3000;
+        if (device?.id && (!recentlySelected || device.id === pendingDeviceIdRef.current)) {
+          setActiveDevice(device.id, device.name ?? null);
+          setActiveDeviceRestricted(Boolean(device.is_restricted));
+          setActiveDeviceSupportsVolume(device.supports_volume !== false);
+          lastConfirmedActiveDeviceRef.current = { id: device.id, at: Date.now() };
+          if (device.id === pendingDeviceIdRef.current) {
+            pendingDeviceIdRef.current = null;
           }
-          trackChangeLockUntilRef.current = Date.now() + 1200;
-        }
-        const nextPosition = isNewTrack ? 0 : data.progress_ms ?? 0;
-        const positionDelta = nextPosition - lastKnownPositionRef.current;
-        const shouldSyncPosition =
-          Math.abs(positionDelta) > 2200 ||
-          Date.now() - lastProgressSyncRef.current > 6000;
-        setPlayerState((prev) => {
-          const next = {
-            name: item.name ?? prev?.name ?? "Unknown track",
-            artists: (item.artists ?? []).map((a: any) => a.name).join(", "),
-            album: item.album?.name ?? prev?.album ?? "",
-            coverUrl: item.album?.images?.[0]?.url ?? prev?.coverUrl ?? null,
-            paused: Boolean(!data.is_playing),
-            positionMs: nextPosition,
-            durationMs: item.duration_ms ?? 0,
-          };
           if (
-            prev &&
-            prev.name === next.name &&
-            prev.artists === next.artists &&
-            prev.album === next.album &&
-            prev.coverUrl === next.coverUrl &&
-            prev.paused === next.paused &&
-            prev.positionMs === next.positionMs &&
-            prev.durationMs === next.durationMs
+            sdkDeviceIdRef.current &&
+            device.id !== sdkDeviceIdRef.current &&
+            playerRef.current
           ) {
-            return prev;
-          }
-          return next;
-        });
-        const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
-        if (shouldSyncPosition && !isScrubbingRef.current) {
-          lastProgressSyncRef.current = Date.now();
-          const synced = isNewTrack || !allowProgressUpdate ? 0 : nextPosition;
-          if (
-            positionDelta < -1200 &&
-            data?.is_playing &&
-            Date.now() - lastUserSeekAtRef.current > 1500
-          ) {
-            // Avoid small backward jumps while playing unless the user just sought.
-          } else {
-            setPositionMs(synced);
-            lastKnownPositionRef.current = synced;
+            playerRef.current.pause().catch(() => undefined);
           }
         }
-        setDurationMs(item.duration_ms ?? 0);
-        setCurrentTrackIdState(item.id ?? null);
-        if (onTrackChange) onTrackChange(item.id ?? null);
-        syncQueuePositionFromTrack(trackId);
-      }
-      if (typeof device?.volume_percent === "number") {
-        if (Date.now() - lastUserVolumeAtRef.current > 1500) {
-          const nextVol = device.volume_percent / 100;
-          setVolume(nextVol);
-          if (nextVol > 0) {
-            lastNonZeroVolumeRef.current = nextVol;
-            setMuted(false);
-          } else {
-            setMuted(true);
+        const item = data.item;
+        if (item) {
+          const trackId = item.id ?? null;
+          const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
+          if (isNewTrack) {
+            lastTrackIdRef.current = trackId;
+            if (pendingTrackIdRef.current === trackId) {
+              pendingTrackIdRef.current = null;
+            }
+            trackChangeLockUntilRef.current = Date.now() + 1200;
+          }
+          const nextPosition = isNewTrack ? 0 : data.progress_ms ?? 0;
+          const positionDelta = nextPosition - lastKnownPositionRef.current;
+          const shouldSyncPosition =
+            Math.abs(positionDelta) > 2200 ||
+            Date.now() - lastProgressSyncRef.current > 6000;
+          setPlayerState((prev) => {
+            const next = {
+              name: item.name ?? prev?.name ?? "Unknown track",
+              artists: (item.artists ?? []).map((a: any) => a.name).join(", "),
+              album: item.album?.name ?? prev?.album ?? "",
+              coverUrl: item.album?.images?.[0]?.url ?? prev?.coverUrl ?? null,
+              paused: Boolean(!data.is_playing),
+              positionMs: nextPosition,
+              durationMs: item.duration_ms ?? 0,
+            };
+            if (
+              prev &&
+              prev.name === next.name &&
+              prev.artists === next.artists &&
+              prev.album === next.album &&
+              prev.coverUrl === next.coverUrl &&
+              prev.paused === next.paused &&
+              prev.positionMs === next.positionMs &&
+              prev.durationMs === next.durationMs
+            ) {
+              return prev;
+            }
+            return next;
+          });
+          const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
+          if (shouldSyncPosition && !isScrubbingRef.current) {
+            lastProgressSyncRef.current = Date.now();
+            const synced = isNewTrack || !allowProgressUpdate ? 0 : nextPosition;
+            if (
+              positionDelta < -1200 &&
+              data?.is_playing &&
+              Date.now() - lastUserSeekAtRef.current > 1500
+            ) {
+              // Avoid small backward jumps while playing unless the user just sought.
+            } else {
+              setPositionMs(synced);
+              lastKnownPositionRef.current = synced;
+            }
+          }
+          setDurationMs(item.duration_ms ?? 0);
+          setCurrentTrackIdState(item.id ?? null);
+          if (onTrackChange) onTrackChange(item.id ?? null);
+          syncQueuePositionFromTrack(trackId);
+        }
+        if (typeof device?.volume_percent === "number") {
+          if (Date.now() - lastUserVolumeAtRef.current > 1500) {
+            const nextVol = device.volume_percent / 100;
+            setVolume(nextVol);
+            if (nextVol > 0) {
+              lastNonZeroVolumeRef.current = nextVol;
+              setMuted(false);
+            } else {
+              setMuted(true);
+            }
           }
         }
-      }
-      if (typeof data?.shuffle_state === "boolean") {
-        if (!(queueModeRef.current === "queue" && queueUrisRef.current?.length)) {
-          setShuffleOn(data.shuffle_state);
-          shuffleOnRef.current = data.shuffle_state;
-          lastShuffleSyncRef.current = Date.now();
-          rebuildQueueOrder(data.shuffle_state, false);
+        if (typeof data?.shuffle_state === "boolean") {
+          if (!(queueModeRef.current === "queue" && queueUrisRef.current?.length)) {
+            setShuffleOn(data.shuffle_state);
+            shuffleOnRef.current = data.shuffle_state;
+            lastShuffleSyncRef.current = Date.now();
+            rebuildQueueOrder(data.shuffle_state, false);
+          }
+        }
+        if (typeof data?.repeat_state === "string") {
+          const mode =
+            data.repeat_state === "track"
+              ? "track"
+              : data.repeat_state === "context"
+              ? "context"
+              : "off";
+          setRepeatMode(mode);
+        }
+        if (typeof data?.is_playing === "boolean") {
+          lastIsPlayingRef.current = data.is_playing;
+        }
+        setError(null);
+        scheduleNext(data?.is_playing);
+      } catch {
+        if (!cancelled) {
+          scheduleNext();
         }
       }
-      if (typeof data?.repeat_state === "string") {
-        const mode =
-          data.repeat_state === "track"
-            ? "track"
-            : data.repeat_state === "context"
-            ? "context"
-            : "off";
-        setRepeatMode(mode);
-      }
-      if (typeof data?.is_playing === "boolean") {
-        lastIsPlayingRef.current = data.is_playing;
-      }
-      setError(null);
-      scheduleNext(data?.is_playing);
     }
 
     function scheduleNext(isPlaying?: boolean, overrideDelay?: number) {
@@ -2093,6 +2123,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (deviceName) setActiveDeviceName(deviceName);
     pendingDeviceIdRef.current = targetId;
     lastDeviceSelectRef.current = Date.now();
+    lastConfirmedActiveDeviceRef.current = null;
+    setDeviceReady(false);
     setDeviceId(targetId);
     deviceIdRef.current = targetId;
     const shouldPlay = lastIsPlayingRef.current;
@@ -2458,18 +2490,44 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (!token) return false;
     if (Date.now() < rateLimitRef.current.until) return false;
     const waits = [0, 250, 600];
-    for (let i = 0; i < waits.length; i += 1) {
-      if (waits[i] > 0) {
-        await new Promise((resolve) => setTimeout(resolve, waits[i]));
+
+    const attemptTransfer = async (playFlag: boolean) => {
+      for (let i = 0; i < waits.length; i += 1) {
+        if (waits[i] > 0) {
+          await new Promise((resolve) => setTimeout(resolve, waits[i]));
+        }
+
+        try {
+          const proxyRes = await fetch("/api/spotify/me/player", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ device_ids: [id], play: playFlag }),
+          });
+          if (proxyRes.ok) return true;
+          if (proxyRes.status === 401 || proxyRes.status === 403) return false;
+        } catch {
+          // fall back to direct call
+        }
+
+        const directRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player", {
+          method: "PUT",
+          body: JSON.stringify({ device_ids: [id], play: playFlag }),
+        });
+        if (directRes?.ok) return true;
+        if (directRes && (directRes.status === 401 || directRes.status === 403)) return false;
       }
-      const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player", {
-        method: "PUT",
-        body: JSON.stringify({ device_ids: [id], play }),
-      });
-      if (res?.ok) return true;
-      if (res && (res.status === 401 || res.status === 403)) return false;
+      return false;
+    };
+
+    const primary = await attemptTransfer(play);
+    if (primary) return true;
+
+    // iOS/Web autoplay can block transfer-with-play; retry transfer only.
+    if (play) {
+      return await attemptTransfer(false);
     }
-    return false;
+    return primary;
   }
 
   if (sessionStatus === "loading") {
@@ -2602,7 +2660,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             Geen Spotify‑apparaat geselecteerd. Kies een apparaat om af te spelen.
           </div>
         ) : null}
-        {isCustomQueueActive ? (
+        {isCustomQueueActive && !isQueuePage ? (
           <div className="text-subtle">
             Custom queue actief. Bedien play/vorige/volgende vanuit de player.
           </div>
@@ -2823,7 +2881,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                       setDeviceMenuOpen(false);
                     }}
                   >
-                    GSPlayer20 Web <span className="text-subtle">(start lokaal)</span>
+                    {LOCAL_WEBPLAYER_NAME} <span className="text-subtle">(start lokaal)</span>
                   </button>
                 ) : null}
                 {devices.length === 0 ? (
@@ -2895,11 +2953,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             </button>
           </div>
         ) : null}
-        {lastDevicesSyncedAt ? (
-          <div className="text-subtle" style={{ marginTop: 6 }}>
-            Connect bijgewerkt: {new Date(lastDevicesSyncedAt).toLocaleTimeString("nl-NL")}
-          </div>
-        ) : null}
         <div className="player-volume">
           <button
             type="button"
@@ -2964,11 +3017,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               ))}
             </div>
           )}
-        </div>
-      ) : null}
-      {appVersion ? (
-        <div className="player-release" aria-label={`Versie ${appVersion}`}>
-          v{appVersion}
         </div>
       ) : null}
     </div>

@@ -2,14 +2,34 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function MainNav() {
   const pathname = usePathname();
   const isHome = pathname === "/";
   const isStatus = pathname === "/status";
+  const isAbout = pathname === "/about";
   const isQueue = pathname === "/queue";
   const [loggingOut, setLoggingOut] = useState(false);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/version", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return res.json().catch(() => null);
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const version = typeof data?.version === "string" ? data.version.trim() : "";
+        if (version) setAppVersion(version);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -44,8 +64,20 @@ export default function MainNav() {
         >
           Settings
         </Link>
+        <Link
+          href="/about"
+          className={`nav-link${isAbout ? " active" : " secondary"}`}
+          aria-current={isAbout ? "page" : undefined}
+        >
+          About
+        </Link>
       </div>
       <div className="nav-right">
+        {appVersion ? (
+          <span className="nav-version" aria-label={`Versie ${appVersion}`}>
+            v{appVersion}
+          </span>
+        ) : null}
         <button
           type="button"
           className="btn btn-ghost"

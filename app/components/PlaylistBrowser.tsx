@@ -689,13 +689,6 @@ export default function PlaylistBrowser() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!selectedTrackId || loadingTracksList) return;
-    if (trackCursor) return;
-    const exists = trackOptions.some((option) => option.id === selectedTrackId);
-    if (!exists) setSelectedTrackId("");
-  }, [loadingTracksList, trackCursor, trackOptions, selectedTrackId]);
-
   const selectedPlaylist = useMemo(() => {
     if (!selectedPlaylistId) return null;
     return playlistOptions.find((opt) => opt.id === selectedPlaylistId) || null;
@@ -1956,11 +1949,6 @@ export default function PlaylistBrowser() {
           </div>
         </div>
       ) : null}
-      {loadingTracksList && mode === "tracks" && selectedTrackId ? (
-        <p className="text-body" role="status">
-          Tracks laden...
-        </p>
-      ) : null}
       {mode === "tracks" && selectedTrack?.name ? (
         <div className="text-subtle track-context-title" style={{ marginTop: 6 }}>
           Geselecteerd: {selectedTrack.name}
@@ -2093,7 +2081,7 @@ export default function PlaylistBrowser() {
 
       <div style={{ marginTop: 12 }}>
         {mode === "tracks" ? (
-          loadingTracksList || loadingMoreTracksList ? (
+          !selectedTrackId && (loadingTracksList || loadingMoreTracksList) ? (
             <span className="text-body">Tracks laden...</span>
           ) : null
         ) : loadingTracks || loadingMoreTracks ? (

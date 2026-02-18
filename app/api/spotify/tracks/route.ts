@@ -12,12 +12,101 @@ import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { encodeCursor, tryDecodeCursor } from "@/lib/spotify/cursor";
 import {
   jsonError,
+  jsonNoStore,
   requireAppUser,
   jsonPrivateCache,
   rateLimitResponse,
 } from "@/lib/api/guards";
+import { spotifyFetch } from "@/lib/spotify/client";
+import { SpotifyFetchError } from "@/lib/spotify/errors";
 
 export const runtime = "nodejs";
+
+type LiveTrackItem = {
+  track?: {
+    id?: string;
+    name?: string;
+    duration_ms?: number;
+    explicit?: boolean;
+    popularity?: number;
+    artists?: Array<{ id?: string; name?: string }>;
+    album?: {
+      id?: string;
+      name?: string;
+      release_date?: string;
+      images?: Array<{ url?: string }>;
+    };
+  };
+};
+
+async function fetchLiveTracks(limit: number, offset: number) {
+  const data = await spotifyFetch<{
+    items?: LiveTrackItem[];
+    next?: string | null;
+  }>({
+    url: `https://api.spotify.com/v1/me/tracks?limit=${limit}&offset=${offset}`,
+    userLevel: true,
+  });
+
+  const items = (Array.isArray(data?.items) ? data.items : [])
+    .map((row) => {
+      const track = row?.track;
+      const trackId = typeof track?.id === "string" ? track.id : null;
+      if (!trackId) return null;
+      const albumImageUrl =
+        track?.album?.images?.find((image) => typeof image?.url === "string")?.url ??
+        null;
+      const releaseDate = track?.album?.release_date ?? null;
+      return {
+        id: trackId,
+        trackId,
+        name: track?.name ?? "Onbekend nummer",
+        artists: Array.isArray(track?.artists)
+          ? track.artists
+              .map((artist) => {
+                const id = typeof artist?.id === "string" ? artist.id : "";
+                const name = typeof artist?.name === "string" ? artist.name : "";
+                if (!id || !name) return null;
+                return { id, name };
+              })
+              .filter((artist): artist is { id: string; name: string } => Boolean(artist))
+          : [],
+        playlists: [
+          {
+            id: "liked",
+            name: "Liked Songs",
+            spotifyUrl: "https://open.spotify.com/collection/tracks",
+          },
+        ],
+        album: {
+          id: track?.album?.id ?? null,
+          name: track?.album?.name ?? null,
+          images: albumImageUrl ? [{ url: albumImageUrl }] : [],
+          release_date: releaseDate,
+        },
+        releaseYear:
+          releaseDate && /^\d{4}/.test(releaseDate)
+            ? Number(releaseDate.slice(0, 4))
+            : null,
+        durationMs:
+          typeof track?.duration_ms === "number" ? track.duration_ms : null,
+        explicit:
+          typeof track?.explicit === "boolean"
+            ? track.explicit
+            : null,
+        popularity:
+          typeof track?.popularity === "number" ? track.popularity : null,
+        albumImageUrl,
+        coverUrl: albumImageUrl,
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    items,
+    nextCursor: data?.next ? String(offset + items.length) : null,
+  };
+}
 
 export async function GET(req: Request) {
   const { session, response } = await requireAppUser();
@@ -90,6 +179,32 @@ export async function GET(req: Request) {
     .groupBy(tracks.trackId)
     .orderBy(desc(tracks.trackId))
     .limit(limit);
+
+  if (!rows.length && !cursor) {
+    try {
+      const live = await fetchLiveTracks(limit, 0);
+      return jsonNoStore({
+        items: live.items,
+        nextCursor: live.nextCursor,
+        asOf: Date.now(),
+        sync: {
+          status: "live",
+          lastSuccessfulAt: Date.now(),
+          lagSec: 0,
+        },
+      });
+    } catch (error) {
+      if (error instanceof SpotifyFetchError) {
+        if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
+        if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
+        if (error.status === 429) return jsonNoStore({ error: "RATE_LIMIT" }, 429);
+      }
+      if (String(error).includes("UserNotAuthenticated")) {
+        return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
+      }
+      return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
+    }
+  }
 
   const trackIds = rows.map((row) => row.trackId).filter(Boolean);
   const artistRows = trackIds.length

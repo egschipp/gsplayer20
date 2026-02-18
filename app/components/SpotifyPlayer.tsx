@@ -36,6 +36,30 @@ type PlayerProps = {
   onTrackChange?: (trackId: string | null) => void;
 };
 
+function isIosFamilyBrowser() {
+  if (typeof window === "undefined") return false;
+  const ua = window.navigator.userAgent || "";
+  const platform = window.navigator.platform || "";
+  const maxTouch = Number(window.navigator.maxTouchPoints || 0);
+  return (
+    /iPad|iPhone|iPod/i.test(ua) ||
+    (platform === "MacIntel" && maxTouch > 1)
+  );
+}
+
+function getWebPlaybackSdkSupport() {
+  if (typeof window === "undefined") {
+    return { supported: true, reason: null as string | null };
+  }
+  if (isIosFamilyBrowser()) {
+    return {
+      supported: false,
+      reason: "Lokale webplayer is niet beschikbaar op iOS/iPadOS. Gebruik Spotify Connect met de Spotify app.",
+    };
+  }
+  return { supported: true, reason: null as string | null };
+}
+
 export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const { data: session, status: sessionStatus } = useSession();
   const customQueue = useQueueStore();
@@ -79,6 +103,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       type: string;
       isRestricted?: boolean;
       supportsVolume?: boolean;
+      selectable?: boolean;
+      unavailableReason?: string | null;
     }[]
   >([]);
   const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
@@ -170,10 +196,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
 
-  const canUseSdk = useMemo(
+  const playbackSessionReady = useMemo(
     () => Boolean(accessToken) && playbackAllowed,
     [accessToken, playbackAllowed]
   );
+  const sdkSupport = useMemo(() => getWebPlaybackSdkSupport(), []);
+  const canUseSdk = playbackSessionReady;
+  const sdkSupported = sdkSupport.supported;
   const withDeviceId = (baseUrl: string, targetDeviceId: string) => {
     const separator = baseUrl.includes("?") ? "&" : "?";
     return `${baseUrl}${separator}device_id=${encodeURIComponent(targetDeviceId)}`;
@@ -201,6 +230,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (!currentTrackIdState) return false;
     return customQueue.items.some((item) => item.trackId === currentTrackIdState);
   }, [currentTrackIdState, customQueue.items]);
+  const selectableDevicesCount = useMemo(
+    () => devices.filter((device) => device.selectable).length,
+    [devices]
+  );
 
   useEffect(() => {
     playerStateRef.current = playerState;
@@ -903,6 +936,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (!force && now < rateLimitRef.current.until) return;
 
     let data: any = null;
+    let playbackState: any = null;
     const direct = await spotifyApiFetch("https://api.spotify.com/v1/me/player/devices");
     if (direct?.ok) {
       data = await direct.json().catch(() => null);
@@ -911,6 +945,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       try {
         const proxyRes = await fetch("/api/spotify/me/player/devices", {
           cache: "no-store",
+          credentials: "include",
         });
         if (proxyRes.ok) {
           data = await proxyRes.json().catch(() => null);
@@ -919,26 +954,51 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         // ignore proxy fallback issues
       }
     }
+    try {
+      const playbackRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
+      if (playbackRes?.ok) {
+        playbackState = await playbackRes.json().catch(() => null);
+      }
+    } catch {
+      // ignore playback-state merge errors
+    }
 
     setDevicesLoaded(true);
-    if (!data) {
+    if (!data && !playbackState?.device) {
       return;
     }
-    const list = Array.isArray(data.devices) ? data.devices : [];
+    const list = Array.isArray(data?.devices) ? data.devices : [];
+    const mergedList = [...list];
+    if (playbackState?.device) {
+      mergedList.push({
+        ...playbackState.device,
+        is_active: true,
+      });
+    }
     const deduped = new Map<string, any>();
-    for (const d of list) {
-      if (!d?.id) continue;
-      if (!deduped.has(d.id)) {
-        deduped.set(d.id, d);
+    let unavailableCounter = 0;
+    for (const d of mergedList) {
+      const key =
+        typeof d?.id === "string" && d.id
+          ? d.id
+          : `unavailable:${String(d?.name ?? "Onbekend")}:${String(
+              d?.type ?? "Unknown"
+            )}:${unavailableCounter++}`;
+      if (!deduped.has(key)) {
+        deduped.set(key, d);
         continue;
       }
-      const existing = deduped.get(d.id);
-      if (existing && !existing.is_active && d.is_active) {
-        deduped.set(d.id, d);
+      const existing = deduped.get(key);
+      if (existing && !existing.is_active && d?.is_active) {
+        deduped.set(key, d);
       }
     }
     const currentSelectedId = activeDeviceIdRef.current;
-    if (currentSelectedId && !deduped.has(currentSelectedId)) {
+    if (
+      currentSelectedId &&
+      !currentSelectedId.startsWith("unavailable:") &&
+      !deduped.has(currentSelectedId)
+    ) {
       deduped.set(currentSelectedId, {
         id: currentSelectedId,
         name: activeDeviceNameRef.current || "Huidig apparaat",
@@ -949,7 +1009,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       });
     }
     const sdkDeviceId = sdkDeviceIdRef.current;
-    if (sdkDeviceId && !deduped.has(sdkDeviceId)) {
+    if (canUseSdk && sdkDeviceId && !deduped.has(sdkDeviceId)) {
       deduped.set(sdkDeviceId, {
         id: sdkDeviceId,
         name: "GSPlayer20 Web",
@@ -959,49 +1019,51 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         supports_volume: true,
       });
     }
-    const mapped = Array.from(deduped.values()).map((d: any) => ({
-      id: d.id,
-      name: d.name,
+    const mapped = Array.from(deduped.entries()).map(([key, d]: [string, any]) => ({
+      id: typeof d?.id === "string" && d.id ? d.id : key,
+      name: d?.name ?? "Onbekend apparaat",
       isActive: Boolean(d.is_active),
-      type: d.type,
+      type: d?.type ?? "Unknown",
       isRestricted: Boolean(d.is_restricted),
       supportsVolume: d.supports_volume !== false,
+      selectable: Boolean(d?.id),
+      unavailableReason:
+        typeof d?.id === "string" && d.id
+          ? null
+          : "Open Spotify op dit apparaat en start een track zodat het als Connect-device beschikbaar wordt.",
     }));
     setDevices(mapped);
+    const selectableById = new Map(
+      mapped
+        .filter((device) => device.selectable)
+        .map((device) => [device.id, device])
+    );
     const selectedDevice = activeDeviceIdRef.current
-      ? deduped.get(activeDeviceIdRef.current)
+      ? selectableById.get(activeDeviceIdRef.current)
       : null;
     const sdkDevice = sdkDeviceIdRef.current
-      ? deduped.get(sdkDeviceIdRef.current)
+      ? selectableById.get(sdkDeviceIdRef.current)
       : null;
-    if (preferSdkDeviceRef.current && sdkDevice?.id) {
-      setActiveDevice(
-        sdkDevice.id,
-        sdkDevice?.name ?? "GSPlayer20 Web"
-      );
-      setActiveDeviceRestricted(Boolean(sdkDevice?.is_restricted));
-      setActiveDeviceSupportsVolume(sdkDevice?.supports_volume !== false);
-      return;
-    }
-    const active = Array.from(deduped.values()).find((d: any) => d.is_active);
+    const active = mapped.find((device) => device.isActive && device.selectable);
     if (active?.id) {
       lastConfirmedActiveDeviceRef.current = { id: active.id, at: Date.now() };
       setActiveDevice(active.id, active.name ?? null);
-      setActiveDeviceRestricted(Boolean(active.is_restricted));
-      setActiveDeviceSupportsVolume(active.supports_volume !== false);
+      setActiveDeviceRestricted(Boolean(active.isRestricted));
+      setActiveDeviceSupportsVolume(active.supportsVolume !== false);
     } else if (selectedDevice?.id) {
       setActiveDevice(selectedDevice.id, selectedDevice.name ?? null);
-      setActiveDeviceRestricted(Boolean(selectedDevice.is_restricted));
-      setActiveDeviceSupportsVolume(selectedDevice.supports_volume !== false);
+      setActiveDeviceRestricted(Boolean(selectedDevice.isRestricted));
+      setActiveDeviceSupportsVolume(selectedDevice.supportsVolume !== false);
     } else if (
       sdkDevice?.id &&
+      canUseSdk &&
       (preferSdkDeviceRef.current || !activeDeviceIdRef.current)
     ) {
       setActiveDevice(sdkDevice.id, sdkDevice.name ?? "GSPlayer20 Web");
-      setActiveDeviceRestricted(Boolean(sdkDevice.is_restricted));
-      setActiveDeviceSupportsVolume(sdkDevice.supports_volume !== false);
+      setActiveDeviceRestricted(Boolean(sdkDevice.isRestricted));
+      setActiveDeviceSupportsVolume(sdkDevice.supportsVolume !== false);
     }
-  }, [setActiveDevice, spotifyApiFetch]);
+  }, [canUseSdk, setActiveDevice, spotifyApiFetch]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -1542,42 +1604,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
         }),
       togglePlay: async () =>
-        enqueuePlaybackCommand(async () => {
-          if (!playerRef.current) return;
-          await playerRef.current.togglePlay();
-          setTimeout(() => {
-            syncPlaybackState().catch(() => undefined);
-          }, 220);
-        }),
-      next: async () =>
-        enqueuePlaybackCommand(async () => {
-          const currentDevice = deviceIdRef.current;
-          const token = accessTokenRef.current;
-          if (!currentDevice || !token) return;
-          await spotifyApiFetch(
-            withDeviceId("https://api.spotify.com/v1/me/player/next", currentDevice),
-            { method: "POST" }
-          );
-          setTimeout(() => {
-            syncPlaybackState().catch(() => undefined);
-          }, 220);
-        }),
-      previous: async () =>
-        enqueuePlaybackCommand(async () => {
-          const currentDevice = deviceIdRef.current;
-          const token = accessTokenRef.current;
-          if (!currentDevice || !token) return;
-          await spotifyApiFetch(
-            withDeviceId(
-              "https://api.spotify.com/v1/me/player/previous",
-              currentDevice
-            ),
-            { method: "POST" }
-          );
-          setTimeout(() => {
-            syncPlaybackState().catch(() => undefined);
-          }, 220);
-        }),
+        handleTogglePlay(),
+      next: async () => handleNext(),
+      previous: async () => handlePrevious(),
     };
 
     onReady(api);
@@ -1619,13 +1648,23 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }, [accessToken, deviceId, refreshDevices]);
 
   useEffect(() => {
-    function handleFocus() {
+    function handleFocusOrResume() {
       refreshDevices();
       syncPlaybackState().catch(() => undefined);
     }
+    function handleVisibility() {
+      if (document.visibilityState !== "visible") return;
+      handleFocusOrResume();
+    }
     if (typeof window === "undefined") return;
-    window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
+    window.addEventListener("focus", handleFocusOrResume);
+    window.addEventListener("pageshow", handleFocusOrResume);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("focus", handleFocusOrResume);
+      window.removeEventListener("pageshow", handleFocusOrResume);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [refreshDevices, syncPlaybackState]);
 
   useEffect(() => {
@@ -1838,6 +1877,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   async function handleDeviceChange(targetId: string) {
     const token = accessTokenRef.current;
     if (!token || !targetId) return;
+    const targetDevice = devices.find((device) => device.id === targetId);
+    if (!targetDevice?.selectable) {
+      setError(
+        targetDevice?.unavailableReason ||
+          "Dit apparaat is nog niet beschikbaar. Open Spotify op het apparaat en probeer opnieuw."
+      );
+      return;
+    }
     if (Date.now() < rateLimitRef.current.until) return;
     preferSdkDeviceRef.current = targetId === sdkDeviceIdRef.current;
     if (targetId === sdkDeviceIdRef.current) {
@@ -1848,7 +1895,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
     }
     setActiveDevice(targetId);
-    const deviceName = devices.find((d) => d.id === targetId)?.name;
+    const deviceName = targetDevice?.name ?? devices.find((d) => d.id === targetId)?.name;
     if (deviceName) setActiveDeviceName(deviceName);
     pendingDeviceIdRef.current = targetId;
     lastDeviceSelectRef.current = Date.now();
@@ -2497,7 +2544,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               ? "Spotify Connect"
               : "Verbinden..."}
           </span>
-          {!sdkReadyState ? (
+          {sdkSupported && !sdkReadyState ? (
             <button
               type="button"
               className="detail-btn"
@@ -2558,13 +2605,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                       className={`combo-item${
                         device.id === (activeDeviceId || deviceId) ? " active" : ""
                       }`}
+                      disabled={!device.selectable}
                       onClick={() => {
                         handleDeviceChange(device.id);
                         setDeviceMenuOpen(false);
                       }}
                     >
                       {device.name}{" "}
-                      <span className="text-subtle">({device.type})</span>
+                      <span className="text-subtle">
+                        ({device.type}
+                        {!device.selectable ? " • niet beschikbaar" : ""})
+                      </span>
                     </button>
                   ))
                 )}
@@ -2572,10 +2623,20 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             ) : null}
           </div>
         </div>
-        {!sdkReadyState ? (
+        {!sdkReadyState && sdkSupported ? (
           <div className="text-subtle" style={{ marginTop: 6 }}>
             Lokale webplayer nog niet verbonden. Klik op ▶ en kies daarna dit apparaat.
             {sdkLastError ? ` (${sdkLastError})` : ""}
+          </div>
+        ) : null}
+        {!sdkSupported ? (
+          <div className="text-subtle" style={{ marginTop: 6 }}>
+            {sdkSupport.reason}
+          </div>
+        ) : null}
+        {selectableDevicesCount === 0 ? (
+          <div className="text-subtle" style={{ marginTop: 6 }}>
+            Geen selecteerbare apparaten gevonden. Open Spotify op je iPhone/iPad en start een track, daarna klik je op ↻.
           </div>
         ) : null}
         <div className="player-volume">

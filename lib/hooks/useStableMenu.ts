@@ -7,6 +7,8 @@ type UseStableMenuOptions = {
   onClose: () => void;
 };
 
+const INTERACTION_GRACE_MS = 260;
+
 export function useStableMenu<T extends HTMLElement = HTMLDivElement>({
   onClose,
 }: UseStableMenuOptions) {
@@ -20,7 +22,7 @@ export function useStableMenu<T extends HTMLElement = HTMLDivElement>({
     resetTimerRef.current = window.setTimeout(() => {
       interactionRef.current = false;
       resetTimerRef.current = null;
-    }, 0);
+    }, INTERACTION_GRACE_MS);
   }, []);
 
   const handleBlur = useCallback(
@@ -28,7 +30,15 @@ export function useStableMenu<T extends HTMLElement = HTMLDivElement>({
       const nextTarget =
         (event.relatedTarget as Node | null) ?? document.activeElement;
       if (nextTarget && rootRef.current?.contains(nextTarget)) return;
-      if (interactionRef.current) return;
+      if (interactionRef.current) {
+        window.setTimeout(() => {
+          const active = document.activeElement;
+          if (active && rootRef.current?.contains(active)) return;
+          if (interactionRef.current) return;
+          onClose();
+        }, INTERACTION_GRACE_MS);
+        return;
+      }
       onClose();
     },
     [onClose]

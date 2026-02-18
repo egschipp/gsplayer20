@@ -12,12 +12,113 @@ import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { encodeCursor, tryDecodeCursor } from "@/lib/spotify/cursor";
 import {
   jsonError,
+  jsonNoStore,
   requireAppUser,
   jsonPrivateCache,
   rateLimitResponse,
 } from "@/lib/api/guards";
+import { spotifyFetch } from "@/lib/spotify/client";
+import { SpotifyFetchError } from "@/lib/spotify/errors";
 
 export const runtime = "nodejs";
+
+async function fetchLiveTracksForArtist(artistId: string, limit: number) {
+  const rows: Array<{
+    trackId: string;
+    name: string | null;
+    durationMs: number | null;
+    explicit: number | null;
+    popularity: number | null;
+    albumId: string | null;
+    albumName: string | null;
+    albumReleaseDate: string | null;
+    releaseYear: number | null;
+    albumImageUrl: string | null;
+    coverUrl: string | null;
+    artists: string | null;
+    playlists: Array<{ id: string; name: string; spotifyUrl: string }>;
+  }> = [];
+  let offset = 0;
+  let pages = 0;
+  const pageLimit = 50;
+  const maxPages = 10;
+
+  while (rows.length < limit && pages < maxPages) {
+    const data = await spotifyFetch<{
+      items?: Array<{
+        track?: {
+          id?: string;
+          name?: string;
+          duration_ms?: number;
+          explicit?: boolean;
+          popularity?: number;
+          artists?: Array<{ id?: string; name?: string }>;
+          album?: {
+            id?: string;
+            name?: string;
+            release_date?: string;
+            images?: Array<{ url?: string }>;
+          };
+        };
+      }>;
+      next?: string | null;
+    }>({
+      url: `https://api.spotify.com/v1/me/tracks?limit=${pageLimit}&offset=${offset}`,
+      userLevel: true,
+    });
+
+    const items = Array.isArray(data?.items) ? data.items : [];
+    for (const item of items) {
+      const track = item?.track;
+      const trackId = typeof track?.id === "string" ? track.id : null;
+      if (!trackId) continue;
+      const artists = Array.isArray(track?.artists) ? track.artists : [];
+      const matchesArtist = artists.some((artist) => artist?.id === artistId);
+      if (!matchesArtist) continue;
+      const releaseDate = track?.album?.release_date ?? null;
+      const albumImageUrl =
+        track?.album?.images?.find((image) => typeof image?.url === "string")?.url ??
+        null;
+      rows.push({
+        trackId,
+        name: track?.name ?? null,
+        durationMs:
+          typeof track?.duration_ms === "number" ? track.duration_ms : null,
+        explicit:
+          typeof track?.explicit === "boolean" ? (track.explicit ? 1 : 0) : null,
+        popularity:
+          typeof track?.popularity === "number" ? track.popularity : null,
+        albumId: track?.album?.id ?? null,
+        albumName: track?.album?.name ?? null,
+        albumReleaseDate: releaseDate,
+        releaseYear:
+          releaseDate && /^\d{4}/.test(releaseDate)
+            ? Number(releaseDate.slice(0, 4))
+            : null,
+        albumImageUrl,
+        coverUrl: albumImageUrl,
+        artists: artists
+          .map((artist) => artist?.name)
+          .filter(Boolean)
+          .join(", "),
+        playlists: [
+          {
+            id: "liked",
+            name: "Liked Songs",
+            spotifyUrl: "https://open.spotify.com/collection/tracks",
+          },
+        ],
+      });
+      if (rows.length >= limit) break;
+    }
+
+    if (!data?.next || items.length === 0) break;
+    offset += items.length;
+    pages += 1;
+  }
+
+  return rows;
+}
 
 export async function GET(
   req: Request,
@@ -112,6 +213,32 @@ export async function GET(
     .groupBy(tracks.trackId)
     .orderBy(desc(tracks.trackId))
     .limit(limit);
+
+  if (!rows.length && !cursor) {
+    try {
+      const liveRows = await fetchLiveTracksForArtist(artistId, limit);
+      return jsonNoStore({
+        items: liveRows,
+        nextCursor: null,
+        asOf: Date.now(),
+        sync: {
+          status: "live",
+          lastSuccessfulAt: Date.now(),
+          lagSec: 0,
+        },
+      });
+    } catch (error) {
+      if (error instanceof SpotifyFetchError) {
+        if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
+        if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
+        if (error.status === 429) return jsonNoStore({ error: "RATE_LIMIT" }, 429);
+      }
+      if (String(error).includes("UserNotAuthenticated")) {
+        return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
+      }
+      return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
+    }
+  }
 
   const trackIds = rows.map((row) => row.trackId).filter(Boolean);
   const playlistRows = trackIds.length

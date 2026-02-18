@@ -11,8 +11,8 @@ const contentSecurityPolicy = [
   "media-src 'self' https:",
   "connect-src 'self' https://api.spotify.com https://accounts.spotify.com https://api-partner.spotify.com https://*.spotify.com https://*.scdn.co wss://*.spotify.com wss://*.scdn.co",
   "worker-src 'self' blob:",
-  "child-src 'self' blob:",
-  "frame-src 'self' https://open.spotify.com https://*.spotify.com",
+  "child-src 'self' blob: https://sdk.scdn.co https://*.scdn.co",
+  "frame-src 'self' https://open.spotify.com https://*.spotify.com https://sdk.scdn.co https://*.scdn.co",
 ].join("; ");
 
 const nextConfig = {

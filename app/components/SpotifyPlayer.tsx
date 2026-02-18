@@ -119,6 +119,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [sdkLifecycle, setSdkLifecycle] = useState<
     "idle" | "loading" | "connecting" | "ready" | "error"
   >("idle");
+  const [accountProduct, setAccountProduct] = useState<string | null>(null);
+  const [accountProductChecked, setAccountProductChecked] = useState(false);
   const [deviceMissing, setDeviceMissing] = useState(false);
   const [devicesLoaded, setDevicesLoaded] = useState(false);
   const [lastDevicesSyncedAt, setLastDevicesSyncedAt] = useState<number | null>(null);
@@ -218,7 +220,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }, [scope]);
   const sdkSupport = useMemo(() => getWebPlaybackSdkSupport(), []);
   const sdkSupported = sdkSupport.supported;
-  const canUseSdk = playbackSessionReady && sdkSupported;
+  const premiumRequired =
+    accountProductChecked && Boolean(accountProduct) && accountProduct !== "premium";
+  const canUseSdk = playbackSessionReady && sdkSupported && !premiumRequired;
   const withDeviceId = (baseUrl: string, targetDeviceId: string) => {
     const separator = baseUrl.includes("?") ? "&" : "?";
     return `${baseUrl}${separator}device_id=${encodeURIComponent(targetDeviceId)}`;
@@ -972,6 +976,40 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }, [accessToken]);
 
   useEffect(() => {
+    if (!accessToken) {
+      setAccountProduct(null);
+      setAccountProductChecked(false);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/spotify/user-status", { cache: "no-store" })
+      .then(async (res) => {
+        const payload = await res.json().catch(() => null);
+        return { ok: res.ok, status: res.status, payload };
+      })
+      .then((result) => {
+        if (cancelled) return;
+        const productRaw = result?.payload?.profile?.product;
+        const product =
+          typeof productRaw === "string" ? productRaw.trim().toLowerCase() : null;
+        setAccountProduct(product);
+        setAccountProductChecked(true);
+        if (product && product !== "premium") {
+          setSdkLastError("Spotify Premium is vereist voor Web Playback.");
+          setSdkLifecycle("error");
+          setError("Spotify Premium is vereist voor Web Playback.");
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAccountProductChecked(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  useEffect(() => {
     return () => {
       if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
       if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current);
@@ -1137,6 +1175,29 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }, [accessToken, canUseSdk, startLocalWebPlayerFromConnect]);
 
   useEffect(() => {
+    if (!canUseSdk) return;
+    if (sdkReadyState) return;
+    if (sdkLifecycle !== "connecting") return;
+    if (sdkLastError) return;
+    const timer = window.setTimeout(() => {
+      if (sdkReadyRef.current) return;
+      const ua = navigator.userAgent.toLowerCase();
+      const isIOS = /iphone|ipad|ipod/.test(ua);
+      if (isIOS) {
+        setSdkLastError(
+          "Webplayer wacht op iOS user gesture. Tik op Play en probeer opnieuw."
+        );
+      } else {
+        setSdkLastError(
+          "Webplayer kon niet ready worden. Controleer Premium, scopes en actieve Spotify-sessie."
+        );
+      }
+      setSdkLifecycle("error");
+    }, 12000);
+    return () => window.clearTimeout(timer);
+  }, [canUseSdk, sdkLifecycle, sdkLastError, sdkReadyState]);
+
+  useEffect(() => {
     if (!accessToken) return;
     const interval = setInterval(() => {
       refreshDevices();
@@ -1164,7 +1225,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       const player = playerRef.current;
       if (player && !sdkReadyRef.current) {
-        setSdkLifecycle("connecting");
+        setSdkLifecycle((prev) => (prev === "error" ? prev : "connecting"));
         try {
           const connected = await player.connect?.();
           if (connected) {
@@ -2440,6 +2501,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           ) : null}
           {playbackAllowed && !sdkSupported && sdkSupport.reason ? (
             <div className="text-subtle">{sdkSupport.reason}</div>
+          ) : null}
+          {premiumRequired ? (
+            <div className="text-subtle">
+              Spotify Premium is vereist voor Web Playback.
+            </div>
           ) : null}
         </div>
       </div>

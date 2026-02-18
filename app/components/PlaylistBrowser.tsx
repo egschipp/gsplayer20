@@ -117,6 +117,80 @@ function safeRemoveStorageKey(storage: Storage, key: string) {
   }
 }
 
+function mapTrackApiItems(items: TrackApiItem[]): TrackItem[] {
+  return items.map((track): TrackItem => ({
+    id: String(track.id ?? track.trackId ?? ""),
+    trackId: track.trackId ?? null,
+    name: String(track.name ?? ""),
+    artists: Array.isArray(track.artists)
+      ? track.artists
+          .filter((artist): artist is { id: string; name: string } => {
+            return Boolean(artist?.id && artist?.name);
+          })
+          .map((artist) => ({ id: artist.id, name: artist.name }))
+      : [],
+    album: {
+      id: track.album?.id ?? null,
+      name: track.album?.name ?? null,
+      images: Array.isArray(track.album?.images) ? track.album?.images : [],
+      release_date: track.album?.release_date ?? null,
+    },
+    releaseYear: typeof track.releaseYear === "number" ? track.releaseYear : null,
+    durationMs: track.durationMs ?? null,
+    explicit:
+      typeof track.explicit === "boolean"
+        ? track.explicit
+          ? 1
+          : 0
+        : track.explicit ?? null,
+    popularity: track.popularity ?? null,
+    albumImageUrl: track.albumImageUrl ?? null,
+    playlists: Array.isArray(track.playlists)
+      ? track.playlists
+          .filter((pl): pl is { id: string; name: string; spotifyUrl?: string } =>
+            Boolean(pl?.id && pl?.name)
+          )
+          .map((pl) => ({
+            id: pl.id,
+            name: pl.name,
+            spotifyUrl: pl.spotifyUrl ?? `https://open.spotify.com/playlist/${pl.id}`,
+          }))
+      : [],
+  }));
+}
+
+function mergeTrackOptions(prev: TrackOption[], items: TrackItem[]) {
+  const unique = new Map<string, TrackOption>();
+  for (const option of prev) unique.set(option.id, option);
+  for (const track of items) {
+    const name = String(track.name ?? "").trim();
+    const key = normalizeTrackName(name);
+    if (!key) continue;
+    const coverUrl = track.album?.images?.[0]?.url ?? null;
+    const option: TrackOption = {
+      id: key,
+      name,
+      spotifyUrl: track.id
+        ? `https://open.spotify.com/track/${track.id}`
+        : "https://open.spotify.com",
+      coverUrl,
+      trackId: track.id ?? null,
+    };
+    const existing = unique.get(key);
+    if (!existing) {
+      unique.set(key, option);
+    } else if (
+      (!existing.coverUrl && option.coverUrl) ||
+      existing.name.length > name.length
+    ) {
+      unique.set(key, option);
+    }
+  }
+  return Array.from(unique.values()).sort((a, b) =>
+    a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+  );
+}
+
 export default function PlaylistBrowser() {
   const [mode, setMode] = useState<Mode>("playlists");
   const [playlistOptions, setPlaylistOptions] = useState<PlaylistOption[]>([]);
@@ -136,7 +210,6 @@ export default function PlaylistBrowser() {
   const [trackCursor, setTrackCursor] = useState<string | null>(null);
   const [loadingMorePlaylists, setLoadingMorePlaylists] = useState(false);
   const [loadingMoreArtists, setLoadingMoreArtists] = useState(false);
-  const [loadingMoreTracksList, setLoadingMoreTracksList] = useState(false);
   const [loadingMoreTracks, setLoadingMoreTracks] = useState(false);
   const [loadingPlaylists, setLoadingPlaylists] = useState(true);
   const [loadingArtists, setLoadingArtists] = useState(false);
@@ -585,98 +658,43 @@ export default function PlaylistBrowser() {
   useEffect(() => {
     let cancelled = false;
     async function loadTracksList() {
-      setLoadingTracksList(!hasCachedTrackOptionsRef.current);
+      const hasCachedTrackOptions = hasCachedTrackOptionsRef.current;
+      setLoadingTracksList(!hasCachedTrackOptions);
       try {
-        const url = new URL("/api/spotify/tracks", window.location.origin);
-        url.searchParams.set("limit", "100");
-        const res = await fetch(url.toString(), { cache: "no-store" });
-        if (!res.ok) {
-          const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
-          if (!cancelled) {
-            setAuthRequired(Boolean(mapped.authRequired));
-            setError(mapped.message);
+        const MAX_PAGES = 60;
+        let cursor: string | null = null;
+        let pages = 0;
+        let allMappedItems: TrackItem[] = [];
+
+        do {
+          const url = new URL("/api/spotify/tracks", window.location.origin);
+          url.searchParams.set("limit", "100");
+          if (cursor) url.searchParams.set("cursor", cursor);
+          const res = await fetch(url.toString(), { cache: "no-store" });
+          if (!res.ok) {
+            const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
+            if (!cancelled && !hasCachedTrackOptions) {
+              setAuthRequired(Boolean(mapped.authRequired));
+              setError(mapped.message);
+            }
+            return;
           }
-          return;
-        }
-        const data = (await res.json()) as CursorResponse<TrackApiItem>;
-        const items = Array.isArray(data.items) ? data.items : [];
-        const mappedItems: TrackItem[] = items.map((track): TrackItem => ({
-          id: String(track.id ?? track.trackId ?? ""),
-          trackId: track.trackId ?? null,
-          name: String(track.name ?? ""),
-          artists: Array.isArray(track.artists)
-            ? track.artists
-                .filter((artist): artist is { id: string; name: string } => {
-                  return Boolean(artist?.id && artist?.name);
-                })
-                .map((artist) => ({ id: artist.id, name: artist.name }))
-            : [],
-          album: {
-            id: track.album?.id ?? null,
-            name: track.album?.name ?? null,
-            images: Array.isArray(track.album?.images) ? track.album?.images : [],
-            release_date: track.album?.release_date ?? null,
-          },
-          releaseYear:
-            typeof track.releaseYear === "number" ? track.releaseYear : null,
-          durationMs: track.durationMs ?? null,
-          explicit:
-            typeof track.explicit === "boolean"
-              ? track.explicit
-                ? 1
-                : 0
-              : track.explicit ?? null,
-          popularity: track.popularity ?? null,
-          albumImageUrl: track.albumImageUrl ?? null,
-          playlists: Array.isArray(track.playlists)
-            ? track.playlists
-                .filter((pl): pl is { id: string; name: string; spotifyUrl?: string } =>
-                  Boolean(pl?.id && pl?.name)
-                )
-                .map((pl) => ({
-                  id: pl.id,
-                  name: pl.name,
-                  spotifyUrl:
-                    pl.spotifyUrl ?? `https://open.spotify.com/playlist/${pl.id}`,
-                }))
-            : [],
-        }));
-        const unique = new Map<string, TrackOption>();
-        for (const track of mappedItems) {
-          const name = String(track.name ?? "").trim();
-          const key = normalizeTrackName(name);
-          if (!key) continue;
-          const coverUrl = track.album?.images?.[0]?.url ?? null;
-          const option: TrackOption = {
-            id: key,
-            name,
-            spotifyUrl: track.id
-              ? `https://open.spotify.com/track/${track.id}`
-              : "https://open.spotify.com",
-            coverUrl,
-            trackId: track.id ?? null,
-          };
-          const existing = unique.get(key);
-          if (!existing) {
-            unique.set(key, option);
-          } else if (
-            (!existing.coverUrl && option.coverUrl) ||
-            existing.name.length > name.length
-          ) {
-            unique.set(key, option);
-          }
-        }
-        const list = Array.from(unique.values()).sort((a, b) =>
-          a.name.localeCompare(b.name, "en", { sensitivity: "base" })
-        );
+          const data = (await res.json()) as CursorResponse<TrackApiItem>;
+          const items = Array.isArray(data.items) ? data.items : [];
+          allMappedItems = allMappedItems.concat(mapTrackApiItems(items));
+          cursor = data.nextCursor ?? null;
+          pages += 1;
+        } while (cursor && pages < MAX_PAGES);
+
         if (!cancelled) {
-          setTrackOptions(list);
-          setTrackItems(mappedItems);
-          setTrackCursor(data.nextCursor ?? null);
-          hasCachedTrackOptionsRef.current = list.length > 0;
+          const nextOptions = mergeTrackOptions([], allMappedItems);
+          setTrackOptions(nextOptions);
+          setTrackItems(allMappedItems);
+          setTrackCursor(cursor ?? null);
+          hasCachedTrackOptionsRef.current = nextOptions.length > 0;
         }
       } catch {
-        if (!cancelled) {
+        if (!cancelled && !hasCachedTrackOptions) {
           setError("Tracks laden lukt nu niet.");
         }
       } finally {
@@ -842,106 +860,10 @@ export default function PlaylistBrowser() {
     }
   }, [artistCursor, loadingMoreArtists]);
 
-  const loadMoreTracksList = useCallback(async () => {
-    if (!trackCursor || loadingMoreTracksList) return;
-    setLoadingMoreTracksList(true);
-    try {
-      const url = new URL("/api/spotify/tracks", window.location.origin);
-      url.searchParams.set("limit", "100");
-      url.searchParams.set("cursor", trackCursor);
-      const res = await fetch(url.toString(), { cache: "no-store" });
-      if (!res.ok) return;
-      const data = (await res.json()) as CursorResponse<TrackApiItem>;
-      const items = Array.isArray(data.items) ? data.items : [];
-      const mappedItems: TrackItem[] = items.map((track): TrackItem => ({
-        id: String(track.id ?? track.trackId ?? ""),
-        trackId: track.trackId ?? null,
-        name: String(track.name ?? ""),
-        artists: Array.isArray(track.artists)
-          ? track.artists
-              .filter((artist): artist is { id: string; name: string } => {
-                return Boolean(artist?.id && artist?.name);
-              })
-              .map((artist) => ({ id: artist.id, name: artist.name }))
-          : [],
-        album: {
-          id: track.album?.id ?? null,
-          name: track.album?.name ?? null,
-          images: Array.isArray(track.album?.images) ? track.album?.images : [],
-          release_date: track.album?.release_date ?? null,
-        },
-        releaseYear:
-          typeof track.releaseYear === "number" ? track.releaseYear : null,
-        durationMs: track.durationMs ?? null,
-        explicit:
-          typeof track.explicit === "boolean"
-            ? track.explicit
-              ? 1
-              : 0
-            : track.explicit ?? null,
-        popularity: track.popularity ?? null,
-        albumImageUrl: track.albumImageUrl ?? null,
-        playlists: Array.isArray(track.playlists)
-          ? track.playlists
-              .filter((pl): pl is { id: string; name: string; spotifyUrl?: string } =>
-                Boolean(pl?.id && pl?.name)
-              )
-              .map((pl) => ({
-                id: pl.id,
-                name: pl.name,
-                spotifyUrl:
-                  pl.spotifyUrl ?? `https://open.spotify.com/playlist/${pl.id}`,
-              }))
-          : [],
-      }));
-      setTrackItems((prev) => {
-        const next = prev.concat(mappedItems);
-        return next;
-      });
-      setTrackOptions((prev) => {
-        const unique = new Map<string, TrackOption>();
-        for (const option of prev) unique.set(option.id, option);
-        for (const track of mappedItems) {
-          const name = String(track.name ?? "").trim();
-          const key = normalizeTrackName(name);
-          if (!key) continue;
-          const coverUrl = track.album?.images?.[0]?.url ?? null;
-          const option: TrackOption = {
-            id: key,
-            name,
-            spotifyUrl: track.id
-              ? `https://open.spotify.com/track/${track.id}`
-              : "https://open.spotify.com",
-            coverUrl,
-            trackId: track.id ?? null,
-          };
-          const existing = unique.get(key);
-          if (!existing) {
-            unique.set(key, option);
-          } else if (
-            (!existing.coverUrl && option.coverUrl) ||
-            existing.name.length > name.length
-          ) {
-            unique.set(key, option);
-          }
-        }
-        return Array.from(unique.values()).sort((a, b) =>
-          a.name.localeCompare(b.name, "en", { sensitivity: "base" })
-        );
-      });
-      setTrackCursor(data.nextCursor ?? null);
-    } catch {
-      setError("Meer tracks laden lukt nu niet.");
-    } finally {
-      setLoadingMoreTracksList(false);
-    }
-  }, [trackCursor, loadingMoreTracksList]);
-
   useEffect(() => {
     const term = debouncedQuery.trim();
     const shouldPrefetchBySearch = open && term.length >= 2;
-    const shouldAutoloadTracks = mode === "tracks";
-    if (!shouldPrefetchBySearch && !shouldAutoloadTracks) return;
+    if (!shouldPrefetchBySearch) return;
     if (
       shouldPrefetchBySearch &&
       mode === "playlists" &&
@@ -958,22 +880,16 @@ export default function PlaylistBrowser() {
     ) {
       loadMoreArtists();
     }
-    if (mode === "tracks" && trackCursor && !loadingMoreTracksList) {
-      loadMoreTracksList();
-    }
   }, [
     debouncedQuery,
     open,
     mode,
     playlistCursor,
     artistCursor,
-    trackCursor,
     loadingMorePlaylists,
     loadingMoreArtists,
-    loadingMoreTracksList,
     loadMorePlaylists,
     loadMoreArtists,
-    loadMoreTracksList,
   ]);
 
 
@@ -1836,7 +1752,6 @@ export default function PlaylistBrowser() {
                 if (target.scrollHeight - target.scrollTop - target.clientHeight < 80) {
                   if (mode === "playlists") loadMorePlaylists();
                   if (mode === "artists") loadMoreArtists();
-                  if (mode === "tracks") loadMoreTracksList();
                 }
               }}
             >
@@ -1912,9 +1827,6 @@ export default function PlaylistBrowser() {
               ) : null}
               {mode === "artists" && loadingMoreArtists ? (
                 <div className="combo-loading">Meer artiesten laden...</div>
-              ) : null}
-              {mode === "tracks" && loadingMoreTracksList ? (
-                <div className="combo-loading">Meer tracks laden...</div>
               ) : null}
             </div>
           ) : null}
@@ -2081,7 +1993,7 @@ export default function PlaylistBrowser() {
 
       <div style={{ marginTop: 12 }}>
         {mode === "tracks" ? (
-          !selectedTrackId && (loadingTracksList || loadingMoreTracksList) ? (
+          !selectedTrackId && loadingTracksList ? (
             <span className="text-body">Tracks laden...</span>
           ) : null
         ) : loadingTracks || loadingMoreTracks ? (

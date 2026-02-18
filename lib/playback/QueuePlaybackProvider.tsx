@@ -148,6 +148,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
 
   const playFromQueue = useCallback(
     async (queueId: string) => {
+      api?.primePlaybackGesture?.();
       setStartingQueueId(queueId);
       setActiveQueueId(queueId);
       await runCommand(async () => {
@@ -169,7 +170,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
         setError(mapPlaybackError(err));
       });
     },
-    [playQueueAtIndex, runCommand]
+    [api, playQueueAtIndex, runCommand]
   );
 
   const playNextFromQueue = useCallback(async () => {

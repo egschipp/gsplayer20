@@ -175,6 +175,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
+  const playerCleanupRef = useRef<(() => void) | null>(null);
+  const autoBootAttemptedRef = useRef(false);
 
   const playbackSessionReady = useMemo(
     () => Boolean(accessToken) && playbackAllowed,
@@ -187,10 +189,23 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const separator = baseUrl.includes("?") ? "&" : "?";
     return `${baseUrl}${separator}device_id=${encodeURIComponent(targetDeviceId)}`;
   };
+
   const kickstartLocalPlayer = useCallback(async () => {
     setPlaybackTouched(true);
     preferSdkDeviceRef.current = true;
     setSdkLastError(null);
+    if (
+      canUseSdk &&
+      !playerRef.current &&
+      typeof window !== "undefined" &&
+      window.Spotify &&
+      !readyRef.current
+    ) {
+      const cleanup = initializePlayer();
+      if (typeof cleanup === "function") {
+        playerCleanupRef.current = cleanup;
+      }
+    }
     try {
       await playerRef.current?.activateElement?.();
     } catch {
@@ -204,7 +219,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     } catch {
       setSdkLastError("Lokale webplayer kon niet verbinden.");
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUseSdk]);
   const isCustomQueueActive =
     customQueue.mode === "queue" && customQueue.items.length > 0;
   const isCurrentTrackFromCustomQueue = useMemo(() => {
@@ -1026,7 +1042,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       ? selectableById.get(sdkDeviceIdRef.current)
       : null;
     const active = mapped.find((device) => device.isActive && device.selectable);
-    if (active?.id) {
+    if (sdkDevice?.id && canUseSdk && preferSdkDeviceRef.current) {
+      setActiveDevice(sdkDevice.id, sdkDevice.name ?? "GSPlayer20 Web");
+      setActiveDeviceRestricted(Boolean(sdkDevice.isRestricted));
+      setActiveDeviceSupportsVolume(sdkDevice.supportsVolume !== false);
+    } else if (active?.id) {
       lastConfirmedActiveDeviceRef.current = { id: active.id, at: Date.now() };
       setActiveDevice(active.id, active.name ?? null);
       setActiveDeviceRestricted(Boolean(active.isRestricted));
@@ -1035,11 +1055,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setActiveDevice(selectedDevice.id, selectedDevice.name ?? null);
       setActiveDeviceRestricted(Boolean(selectedDevice.isRestricted));
       setActiveDeviceSupportsVolume(selectedDevice.supportsVolume !== false);
-    } else if (
-      sdkDevice?.id &&
-      canUseSdk &&
-      (preferSdkDeviceRef.current || !activeDeviceIdRef.current)
-    ) {
+    } else if (sdkDevice?.id && canUseSdk && !activeDeviceIdRef.current) {
       setActiveDevice(sdkDevice.id, sdkDevice.name ?? "GSPlayer20 Web");
       setActiveDeviceRestricted(Boolean(sdkDevice.isRestricted));
       setActiveDeviceSupportsVolume(sdkDevice.supportsVolume !== false);
@@ -1055,6 +1071,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }, [kickstartLocalPlayer, refreshDevices]);
 
   useEffect(() => {
+    if (!canUseSdk || !accessToken) return;
+    if (sdkReadyRef.current || playerRef.current) return;
+    if (autoBootAttemptedRef.current) return;
+    autoBootAttemptedRef.current = true;
+    startLocalWebPlayerFromConnect();
+  }, [accessToken, canUseSdk, startLocalWebPlayerFromConnect]);
+
+  useEffect(() => {
     if (!accessToken) return;
     const interval = setInterval(() => {
       refreshDevices();
@@ -1068,6 +1092,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
     const reconnect = async () => {
       if (cancelled) return;
+      if (
+        canUseSdk &&
+        !playerRef.current &&
+        typeof window !== "undefined" &&
+        window.Spotify &&
+        !readyRef.current
+      ) {
+        const cleanup = initializePlayer();
+        if (typeof cleanup === "function") {
+          playerCleanupRef.current = cleanup;
+        }
+      }
       const player = playerRef.current;
       if (player && !sdkReadyRef.current) {
         try {
@@ -1100,6 +1136,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       cancelled = true;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUseSdk, refreshDevices]);
 
   useEffect(() => {
@@ -1118,9 +1155,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   useEffect(() => {
     if (!canUseSdk) {
+      if (playerCleanupRef.current) {
+        playerCleanupRef.current();
+        playerCleanupRef.current = null;
+      }
       onReady(null);
       readyRef.current = false;
       sdkReadyRef.current = false;
+      autoBootAttemptedRef.current = false;
       setSdkReadyState(false);
       setSdkLastError(null);
       playerRef.current = null;
@@ -1133,29 +1175,51 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       return;
     }
 
-    if (window.Spotify) {
+    const mountLocalPlayer = () => {
+      if (typeof window === "undefined" || !window.Spotify) return;
+      if (playerRef.current) return;
+      if (readyRef.current) return;
       const cleanup = initializePlayer();
+      if (typeof cleanup === "function") {
+        playerCleanupRef.current = cleanup;
+      }
+    };
+
+    if (window.Spotify) {
+      mountLocalPlayer();
       return () => {
-        if (typeof cleanup === "function") cleanup();
+        if (playerCleanupRef.current) {
+          playerCleanupRef.current();
+          playerCleanupRef.current = null;
+        }
       };
     }
 
     const script = document.createElement("script");
     script.src = "https://sdk.scdn.co/spotify-player.js";
     script.async = true;
+    const onSdkReady = () => {
+      mountLocalPlayer();
+    };
+    window.onSpotifyWebPlaybackSDKReady = onSdkReady;
+    script.onload = () => {
+      mountLocalPlayer();
+    };
     script.onerror = () => {
       setSdkReadyState(false);
       setSdkLastError("Spotify Web Playback SDK laden mislukt.");
     };
     document.body.appendChild(script);
-    let cleanup: (() => void) | undefined;
-    window.onSpotifyWebPlaybackSDKReady = () => {
-      cleanup = initializePlayer();
-    };
 
     return () => {
+      if (window.onSpotifyWebPlaybackSDKReady === onSdkReady) {
+        window.onSpotifyWebPlaybackSDKReady = undefined;
+      }
       if (script.parentNode) script.parentNode.removeChild(script);
-      if (typeof cleanup === "function") cleanup();
+      if (playerCleanupRef.current) {
+        playerCleanupRef.current();
+        playerCleanupRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUseSdk]);
@@ -2633,8 +2697,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         </div>
         {!sdkReadyState && sdkSupported ? (
           <div className="text-subtle" style={{ marginTop: 6 }}>
-            Lokale webplayer nog niet verbonden. Klik op ▶ en kies daarna dit apparaat.
-            {sdkLastError ? ` (${sdkLastError})` : ""}
+            Lokale webplayer wordt automatisch verbonden.
+            {sdkLastError ? ` Laatste melding: ${sdkLastError}` : ""}
           </div>
         ) : null}
         {!sdkSupported ? (

@@ -1,5 +1,6 @@
 export const SPOTIFY_SCOPES = [
   "streaming",
+  "user-read-email",
   "user-library-read",
   "user-library-modify",
   "playlist-read-private",
@@ -15,6 +16,8 @@ export const SPOTIFY_SCOPES = [
 
 export const SPOTIFY_PLAYBACK_SCOPES = [
   "streaming",
+  "user-read-email",
+  "user-read-private",
   "user-read-playback-state",
   "user-read-currently-playing",
   "user-modify-playback-state",

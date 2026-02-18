@@ -2,8 +2,12 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSession } from "next-auth/react";
-import { hasPlaybackScopes } from "@/lib/spotify/scopes";
+import { getSession, useSession } from "next-auth/react";
+import {
+  SPOTIFY_PLAYBACK_SCOPES,
+  hasPlaybackScopes,
+  parseScopes,
+} from "@/lib/spotify/scopes";
 import { usePlaybackCommandQueue } from "./player/usePlaybackCommandQueue";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
@@ -37,6 +41,25 @@ type PlayerProps = {
 };
 
 function getWebPlaybackSdkSupport() {
+  if (typeof window === "undefined") {
+    return { supported: false, reason: "Webplayer vereist een browsercontext." };
+  }
+  if (!window.isSecureContext) {
+    return {
+      supported: false,
+      reason: "Webplayer vereist HTTPS (secure context).",
+    };
+  }
+  const hasAudioContext =
+    typeof window.AudioContext !== "undefined" ||
+    typeof (window as any).webkitAudioContext !== "undefined";
+  const hasMediaSource = typeof (window as any).MediaSource !== "undefined";
+  if (!hasAudioContext || !hasMediaSource) {
+    return {
+      supported: false,
+      reason: "Browser ondersteunt Spotify Web Playback niet volledig.",
+    };
+  }
   return { supported: true, reason: null as string | null };
 }
 
@@ -93,8 +116,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [activeDeviceSupportsVolume, setActiveDeviceSupportsVolume] = useState(true);
   const [sdkReadyState, setSdkReadyState] = useState(false);
   const [sdkLastError, setSdkLastError] = useState<string | null>(null);
+  const [sdkLifecycle, setSdkLifecycle] = useState<
+    "idle" | "loading" | "connecting" | "ready" | "error"
+  >("idle");
   const [deviceMissing, setDeviceMissing] = useState(false);
   const [devicesLoaded, setDevicesLoaded] = useState(false);
+  const [lastDevicesSyncedAt, setLastDevicesSyncedAt] = useState<number | null>(null);
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
   const lastDeviceSelectRef = useRef(0);
   const pendingDeviceIdRef = useRef<string | null>(null);
@@ -163,6 +190,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (lower.includes("authentication") || lower.includes("token")) {
       return "Verbinding met Spotify is verlopen. Koppel opnieuw.";
     }
+    if (lower.includes("premium")) {
+      return "Spotify Premium is vereist voor Web Playback.";
+    }
     return message;
   }
 
@@ -182,9 +212,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     () => Boolean(accessToken) && playbackAllowed,
     [accessToken, playbackAllowed]
   );
+  const missingPlaybackScopes = useMemo(() => {
+    const granted = parseScopes(scope);
+    return SPOTIFY_PLAYBACK_SCOPES.filter((required) => !granted.has(required));
+  }, [scope]);
   const sdkSupport = useMemo(() => getWebPlaybackSdkSupport(), []);
-  const canUseSdk = playbackSessionReady;
   const sdkSupported = sdkSupport.supported;
+  const canUseSdk = playbackSessionReady && sdkSupported;
   const withDeviceId = (baseUrl: string, targetDeviceId: string) => {
     const separator = baseUrl.includes("?") ? "&" : "?";
     return `${baseUrl}${separator}device_id=${encodeURIComponent(targetDeviceId)}`;
@@ -279,9 +313,21 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     return true;
   }, []);
 
+  const refreshClientAccessToken = useCallback(async () => {
+    try {
+      const next = await getSession();
+      const nextToken = next?.accessToken as string | undefined;
+      if (!nextToken) return null;
+      accessTokenRef.current = nextToken;
+      return nextToken;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const spotifyApiFetch = useCallback(
     async (url: string, options?: RequestInit) => {
-      const token = accessTokenRef.current;
+      let token = accessTokenRef.current;
       if (!token) return null;
       if (Date.now() < rateLimitRef.current.until) return null;
       const method = String(options?.method ?? "GET").toUpperCase();
@@ -307,6 +353,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
 
           if (res.status === 401) {
+            const refreshed = await refreshClientAccessToken();
+            if (refreshed && refreshed !== token) {
+              token = refreshed;
+              continue;
+            }
             setError("Spotify‑sessie verlopen. Koppel opnieuw.");
             return res;
           }
@@ -358,7 +409,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
       return null;
     },
-    [applyRateLimit]
+    [applyRateLimit, refreshClientAccessToken]
   );
 
   const enqueuePlaybackCommand = useCallback(
@@ -397,7 +448,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       // ignore
     }
 
-    await transferPlayback(targetId, shouldPlay);
+    const transferred = await transferPlayback(targetId, shouldPlay);
+    if (!transferred) {
+      lastConfirmedActiveDeviceRef.current = null;
+      setDeviceReady(false);
+      return false;
+    }
     const delays = [250, 500, 900, 1400, 2000];
     for (let attempt = 0; attempt < delays.length; attempt += 1) {
       try {
@@ -1030,6 +1086,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           : "Open Spotify op dit apparaat en start een track zodat het als Connect-device beschikbaar wordt.",
     }));
     setDevices(mapped);
+    setLastDevicesSyncedAt(Date.now());
     const selectableById = new Map(
       mapped
         .filter((device) => device.selectable)
@@ -1064,6 +1121,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   const startLocalWebPlayerFromConnect = useCallback(() => {
     preferSdkDeviceRef.current = true;
+    setSdkLifecycle("connecting");
     void kickstartLocalPlayer();
     refreshDevices(true);
     window.setTimeout(() => refreshDevices(true), 900);
@@ -1106,6 +1164,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       const player = playerRef.current;
       if (player && !sdkReadyRef.current) {
+        setSdkLifecycle("connecting");
         try {
           const connected = await player.connect?.();
           if (connected) {
@@ -1119,7 +1178,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           reconnectAttemptsRef.current += 1;
         }
         if (reconnectAttemptsRef.current >= 6) {
-          setSdkLastError("Lokale webplayer blijft offline. Klik op ▶ om opnieuw te starten.");
+          setSdkLastError("Lokale webplayer blijft offline. Gebruik ↻ of open Spotify app.");
+          setSdkLifecycle("error");
         }
       } else {
         reconnectAttemptsRef.current = 0;
@@ -1165,6 +1225,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       autoBootAttemptedRef.current = false;
       setSdkReadyState(false);
       setSdkLastError(null);
+      setSdkLifecycle("idle");
       playerRef.current = null;
       setCurrentTrackIdState(null);
       setCurrentTrackLiked(null);
@@ -1179,6 +1240,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (typeof window === "undefined" || !window.Spotify) return;
       if (playerRef.current) return;
       if (readyRef.current) return;
+      setSdkLifecycle("connecting");
       const cleanup = initializePlayer();
       if (typeof cleanup === "function") {
         playerCleanupRef.current = cleanup;
@@ -1198,6 +1260,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const script = document.createElement("script");
     script.src = "https://sdk.scdn.co/spotify-player.js";
     script.async = true;
+    setSdkLifecycle("loading");
     const onSdkReady = () => {
       mountLocalPlayer();
     };
@@ -1208,6 +1271,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     script.onerror = () => {
       setSdkReadyState(false);
       setSdkLastError("Spotify Web Playback SDK laden mislukt.");
+      setSdkLifecycle("error");
     };
     document.body.appendChild(script);
 
@@ -1230,6 +1294,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     readyRef.current = true;
     setSdkLastError(null);
     setSdkReadyState(false);
+    setSdkLifecycle("connecting");
 
     const player = new window.Spotify.Player({
       name: "GSPlayer20 Web",
@@ -1251,6 +1316,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       sdkReadyRef.current = true;
       setSdkReadyState(true);
       setSdkLastError(null);
+      setSdkLifecycle("ready");
       reconnectAttemptsRef.current = 0;
       lastSdkEventAtRef.current = Date.now();
       if (shouldPreferSdk) {
@@ -1382,6 +1448,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       sdkReadyRef.current = false;
       setSdkReadyState(false);
+      setSdkLifecycle("connecting");
       lastConfirmedActiveDeviceRef.current = null;
       setDeviceReady(false);
       refreshDevices(true);
@@ -1402,17 +1469,25 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const onInitError = ({ message }: { message: string }) => {
       setSdkReadyState(false);
       setSdkLastError(message);
+      setSdkLifecycle("error");
       setError(message);
     };
     const onAuthError = ({ message }: { message: string }) => {
       setSdkReadyState(false);
       setSdkLastError(message);
+      setSdkLifecycle("error");
       setError(message);
     };
     const onAccountError = ({ message }: { message: string }) => {
       setSdkReadyState(false);
+      setSdkLastError(message || "Spotify Premium is vereist voor Web Playback.");
+      setSdkLifecycle("error");
+      setError(message || "Spotify Premium is vereist voor Web Playback.");
+    };
+    const onPlaybackError = ({ message }: { message: string }) => {
       setSdkLastError(message);
       setError(message);
+      setSdkLifecycle("error");
     };
     const onAutoplayFailed = () => {
       setError("Autoplay is geblokkeerd door de browser. Klik op Play.");
@@ -1424,6 +1499,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     player.addListener("initialization_error", onInitError);
     player.addListener("authentication_error", onAuthError);
     player.addListener("account_error", onAccountError);
+    player.addListener("playback_error", onPlaybackError);
     player.addListener("autoplay_failed", onAutoplayFailed);
 
     player
@@ -1432,11 +1508,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         if (!connected) {
           setSdkReadyState(false);
           setSdkLastError("Lokale webplayer kon niet verbinden.");
+          setSdkLifecycle("error");
         }
       })
       .catch(() => {
         setSdkReadyState(false);
         setSdkLastError("Lokale webplayer kon niet verbinden.");
+        setSdkLifecycle("error");
       });
     playerRef.current = player;
 
@@ -1671,12 +1749,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       player.removeListener("initialization_error", onInitError);
       player.removeListener("authentication_error", onAuthError);
       player.removeListener("account_error", onAccountError);
+      player.removeListener("playback_error", onPlaybackError);
       player.removeListener("autoplay_failed", onAutoplayFailed);
       player.disconnect();
       playerRef.current = null;
       readyRef.current = false;
       sdkReadyRef.current = false;
       setSdkReadyState(false);
+      setSdkLifecycle("idle");
       setDeviceReady(false);
       onReady(null);
     };
@@ -2314,12 +2394,21 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   async function transferPlayback(id: string, play = false) {
     const token = accessTokenRef.current;
-    if (!token) return;
-    if (Date.now() < rateLimitRef.current.until) return;
-    await spotifyApiFetch("https://api.spotify.com/v1/me/player", {
-      method: "PUT",
-      body: JSON.stringify({ device_ids: [id], play }),
-    });
+    if (!token) return false;
+    if (Date.now() < rateLimitRef.current.until) return false;
+    const waits = [0, 250, 600];
+    for (let i = 0; i < waits.length; i += 1) {
+      if (waits[i] > 0) {
+        await new Promise((resolve) => setTimeout(resolve, waits[i]));
+      }
+      const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player", {
+        method: "PUT",
+        body: JSON.stringify({ device_ids: [id], play }),
+      });
+      if (res?.ok) return true;
+      if (res && (res.status === 401 || res.status === 403)) return false;
+    }
+    return false;
   }
 
   if (sessionStatus === "loading") {
@@ -2344,7 +2433,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           {!playbackAllowed && accessToken ? (
             <div className="text-subtle">
               Je mist rechten voor afspelen. Koppel opnieuw om door te gaan.
+              {missingPlaybackScopes.length ? (
+                <span> Ontbrekend: {missingPlaybackScopes.join(", ")}.</span>
+              ) : null}
             </div>
+          ) : null}
+          {playbackAllowed && !sdkSupported && sdkSupport.reason ? (
+            <div className="text-subtle">{sdkSupport.reason}</div>
           ) : null}
         </div>
       </div>
@@ -2697,7 +2792,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         </div>
         {!sdkReadyState && sdkSupported ? (
           <div className="text-subtle" style={{ marginTop: 6 }}>
-            Lokale webplayer wordt automatisch verbonden.
+            Lokale webplayer wordt automatisch verbonden ({sdkLifecycle}).
             {sdkLastError ? ` Laatste melding: ${sdkLastError}` : ""}
           </div>
         ) : null}
@@ -2732,6 +2827,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             >
               Open Spotify app
             </button>
+          </div>
+        ) : null}
+        {lastDevicesSyncedAt ? (
+          <div className="text-subtle" style={{ marginTop: 6 }}>
+            Connect bijgewerkt: {new Date(lastDevicesSyncedAt).toLocaleTimeString("nl-NL")}
           </div>
         ) : null}
         <div className="player-volume">

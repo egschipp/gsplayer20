@@ -36,27 +36,7 @@ type PlayerProps = {
   onTrackChange?: (trackId: string | null) => void;
 };
 
-function isIosFamilyBrowser() {
-  if (typeof window === "undefined") return false;
-  const ua = window.navigator.userAgent || "";
-  const platform = window.navigator.platform || "";
-  const maxTouch = Number(window.navigator.maxTouchPoints || 0);
-  return (
-    /iPad|iPhone|iPod/i.test(ua) ||
-    (platform === "MacIntel" && maxTouch > 1)
-  );
-}
-
 function getWebPlaybackSdkSupport() {
-  if (typeof window === "undefined") {
-    return { supported: true, reason: null as string | null };
-  }
-  if (isIosFamilyBrowser()) {
-    return {
-      supported: false,
-      reason: "Lokale webplayer is niet beschikbaar op iOS/iPadOS. Gebruik Spotify Connect met de Spotify app.",
-    };
-  }
   return { supported: true, reason: null as string | null };
 }
 
@@ -2637,6 +2617,29 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         {selectableDevicesCount === 0 ? (
           <div className="text-subtle" style={{ marginTop: 6 }}>
             Geen selecteerbare apparaten gevonden. Open Spotify op je iPhone/iPad en start een track, daarna klik je op ↻.
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ marginLeft: 8 }}
+              onClick={() => {
+                try {
+                  window.location.href = "spotify://";
+                } catch {
+                  // ignore deep-link failures
+                }
+                window.setTimeout(() => {
+                  refreshDevices(true);
+                }, 1200);
+                window.setTimeout(() => {
+                  refreshDevices(true);
+                }, 2600);
+                window.setTimeout(() => {
+                  refreshDevices(true);
+                }, 4200);
+              }}
+            >
+              Open Spotify app
+            </button>
           </div>
         ) : null}
         <div className="player-volume">

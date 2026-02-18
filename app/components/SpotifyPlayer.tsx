@@ -189,6 +189,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   };
   const kickstartLocalPlayer = useCallback(async () => {
     setPlaybackTouched(true);
+    preferSdkDeviceRef.current = true;
     setSdkLastError(null);
     try {
       await playerRef.current?.activateElement?.();
@@ -1044,6 +1045,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setActiveDeviceSupportsVolume(sdkDevice.supportsVolume !== false);
     }
   }, [canUseSdk, setActiveDevice, spotifyApiFetch]);
+
+  const startLocalWebPlayerFromConnect = useCallback(() => {
+    preferSdkDeviceRef.current = true;
+    void kickstartLocalPlayer();
+    refreshDevices(true);
+    window.setTimeout(() => refreshDevices(true), 900);
+    window.setTimeout(() => refreshDevices(true), 2200);
+  }, [kickstartLocalPlayer, refreshDevices]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -2530,10 +2539,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               className="detail-btn"
               aria-label="Start lokale webplayer"
               title="Start lokale webplayer"
-              onClick={async () => {
-                await kickstartLocalPlayer();
-                refreshDevices(true);
-              }}
+              onClick={startLocalWebPlayerFromConnect}
             >
               ▶
             </button>
@@ -2560,8 +2566,16 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               type="button"
               className="combo-input"
               onClick={() => {
-                setDeviceMenuOpen((prev) => !prev);
-                refreshDevices(true);
+                setDeviceMenuOpen((prev) => {
+                  const next = !prev;
+                  if (next) {
+                    refreshDevices(true);
+                    if (sdkSupported && !sdkReadyState) {
+                      startLocalWebPlayerFromConnect();
+                    }
+                  }
+                  return next;
+                });
               }}
               onBlur={deviceMenu.handleBlur}
               aria-label="Kies een Spotify‑apparaat"
@@ -2573,6 +2587,20 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             </button>
             {deviceMenuOpen ? (
               <div className="combo-list" role="listbox">
+                {sdkSupported && !sdkReadyState ? (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={false}
+                    className="combo-item"
+                    onClick={() => {
+                      startLocalWebPlayerFromConnect();
+                      setDeviceMenuOpen(false);
+                    }}
+                  >
+                    GSPlayer20 Web <span className="text-subtle">(start lokaal)</span>
+                  </button>
+                ) : null}
                 {devices.length === 0 ? (
                   <div className="combo-empty">Geen apparaten gevonden.</div>
                 ) : (

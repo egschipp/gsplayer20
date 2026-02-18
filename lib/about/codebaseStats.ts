@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from "fs/promises";
 import path from "path";
+import { resolveAppVersion } from "@/lib/version/resolveAppVersion";
 
 type FileTypeStat = {
   type: string;
@@ -93,16 +94,6 @@ function resolveType(filePath: string) {
   return path.basename(filePath).toLowerCase();
 }
 
-async function readPackageMeta() {
-  const packagePath = path.join(process.cwd(), "package.json");
-  const raw = await readFile(packagePath, "utf8");
-  const pkg = JSON.parse(raw) as { name?: string; version?: string };
-  return {
-    appName: pkg.name || "app",
-    version: pkg.version || "0.0.0",
-  };
-}
-
 export async function getCodebaseStats(): Promise<CodebaseStats> {
   const now = Date.now();
   if (cached && now - cached.at < CACHE_TTL_MS) {
@@ -152,10 +143,10 @@ export async function getCodebaseStats(): Promise<CodebaseStats> {
     }
   }
 
-  const { appName, version } = await readPackageMeta();
+  const versionInfo = await resolveAppVersion();
   const value: CodebaseStats = {
-    appName,
-    version,
+    appName: versionInfo.name,
+    version: versionInfo.version,
     scannedAt: new Date().toISOString(),
     scannedRoots: SCAN_ROOTS,
     totalFiles: uniqueFiles.length,

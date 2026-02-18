@@ -24,12 +24,14 @@ declare global {
 const PLAYER_FETCH_TIMEOUT_MS = 12000;
 const PLAYER_FETCH_MAX_ATTEMPTS = 3;
 const LOCAL_WEBPLAYER_NAME = "Georgies Webplayer";
-const DEVICE_SELECTION_GRACE_MS = 10_000;
+const DEVICE_SELECTION_HOLD_MS = 45_000;
 
 function detectWebplayerPlatform() {
   if (typeof navigator === "undefined") return "";
   const ua = navigator.userAgent.toLowerCase();
+  const maxTouchPoints = Number((navigator as Navigator).maxTouchPoints ?? 0);
   if (/ipad/.test(ua)) return "iPad";
+  if (/macintosh/.test(ua) && maxTouchPoints > 1) return "iPad";
   if (/iphone/.test(ua)) return "iPhone";
   if (/android/.test(ua)) return "Android";
   if (/macintosh|mac os x/.test(ua)) return "Mac";
@@ -687,6 +689,36 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     }
   }, []);
 
+  const shouldAdoptRemoteDevice = useCallback((remoteDeviceId?: string | null) => {
+    if (!remoteDeviceId) return false;
+    const pendingId = pendingDeviceIdRef.current;
+    if (pendingId) {
+      const pendingFresh =
+        Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
+      if (!pendingFresh) {
+        pendingDeviceIdRef.current = null;
+      } else {
+        return remoteDeviceId === pendingId;
+      }
+    }
+    const selectedId = activeDeviceIdRef.current;
+    if (!selectedId) return true;
+    if (remoteDeviceId === selectedId) return true;
+    const heldSelection =
+      Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
+    if (heldSelection) return false;
+    return true;
+  }, []);
+  
+  const clearPendingDeviceIfStale = useCallback(() => {
+    const pendingId = pendingDeviceIdRef.current;
+    if (!pendingId) return;
+    const pendingFresh =
+      Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
+    if (pendingFresh) return;
+    pendingDeviceIdRef.current = null;
+  }, []);
+
   const fetchQueue = useCallback(async () => {
     if (!accessTokenRef.current) return;
     setQueueLoading(true);
@@ -720,9 +752,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (!res?.ok) return;
     const data = await readJsonSafely(res);
     const device = data?.device;
-    const recentlySelected =
-      Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_GRACE_MS;
-    if (device?.id && (!recentlySelected || device.id === pendingDeviceIdRef.current)) {
+    if (shouldAdoptRemoteDevice(device?.id ?? null)) {
       setActiveDevice(device.id, device.name ?? null);
       setActiveDeviceRestricted(Boolean(device.is_restricted));
       setActiveDeviceSupportsVolume(device.supports_volume !== false);
@@ -809,6 +839,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     onTrackChange,
     rebuildQueueOrder,
     setActiveDevice,
+    shouldAdoptRemoteDevice,
     spotifyApiFetch,
     syncQueuePositionFromTrack,
   ]);
@@ -1189,19 +1220,24 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       ? selectableById.get(sdkDeviceIdRef.current)
       : null;
     const active = mapped.find((device) => device.isActive && device.selectable);
+    const selectionHeld =
+      Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
     if (sdkDevice?.id && canUseSdk && preferSdkDeviceRef.current) {
       setActiveDevice(sdkDevice.id, sdkDevice.name ?? localWebplayerName);
       setActiveDeviceRestricted(Boolean(sdkDevice.isRestricted));
       setActiveDeviceSupportsVolume(sdkDevice.supportsVolume !== false);
+    } else if (
+      selectedDevice?.id &&
+      (selectionHeld || !active?.id || active.id === selectedDevice.id)
+    ) {
+      setActiveDevice(selectedDevice.id, selectedDevice.name ?? null);
+      setActiveDeviceRestricted(Boolean(selectedDevice.isRestricted));
+      setActiveDeviceSupportsVolume(selectedDevice.supportsVolume !== false);
     } else if (active?.id) {
       lastConfirmedActiveDeviceRef.current = { id: active.id, at: Date.now() };
       setActiveDevice(active.id, active.name ?? null);
       setActiveDeviceRestricted(Boolean(active.isRestricted));
       setActiveDeviceSupportsVolume(active.supportsVolume !== false);
-    } else if (selectedDevice?.id) {
-      setActiveDevice(selectedDevice.id, selectedDevice.name ?? null);
-      setActiveDeviceRestricted(Boolean(selectedDevice.isRestricted));
-      setActiveDeviceSupportsVolume(selectedDevice.supportsVolume !== false);
     } else if (sdkDevice?.id && canUseSdk && !activeDeviceIdRef.current) {
       setActiveDevice(sdkDevice.id, sdkDevice.name ?? localWebplayerName);
       setActiveDeviceRestricted(Boolean(sdkDevice.isRestricted));
@@ -2082,17 +2118,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           sdkReadyRef.current &&
           Boolean(sdkDevice) &&
           (!activeDevice || activeDevice === sdkDevice);
-        if (
-          sdkStatePrimary &&
-          playerStateRef.current?.name &&
-          now - lastSdkEventAtRef.current < 15000 &&
-          now - lastShuffleSyncRef.current < 8000
-        ) {
-          scheduleNext(false, 20000);
-          return;
-        }
-        if (sdkStatePrimary && now - lastSdkEventAtRef.current < 7000) {
-          scheduleNext(false, 14000);
+        if (sdkStatePrimary && now - lastSdkEventAtRef.current < 20000) {
+          const isPlaying = !playerStateRef.current?.paused;
+          scheduleNext(isPlaying, isPlaying ? 12000 : 15000);
           return;
         }
         const res = await spotifyRequest("https://api.spotify.com/v1/me/player");
@@ -2106,9 +2134,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           return;
         }
         const device = data.device;
-        const recentlySelected =
-          Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_GRACE_MS;
-        if (device?.id && (!recentlySelected || device.id === pendingDeviceIdRef.current)) {
+        if (shouldAdoptRemoteDevice(device?.id ?? null)) {
           setActiveDevice(device.id, device.name ?? null);
           setActiveDeviceRestricted(Boolean(device.is_restricted));
           setActiveDeviceSupportsVolume(device.supports_volume !== false);
@@ -2245,6 +2271,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     onTrackChange,
     rebuildQueueOrder,
     setActiveDevice,
+    shouldAdoptRemoteDevice,
     spotifyApiFetch,
     syncQueuePositionFromTrack,
   ]);
@@ -2269,9 +2296,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         // ignore activation failure; selection can still proceed
       }
     }
-    setActiveDevice(targetId);
     const deviceName = targetDevice?.name ?? devices.find((d) => d.id === targetId)?.name;
-    if (deviceName) setActiveDeviceName(deviceName);
+    setActiveDevice(targetId, deviceName ?? null);
     pendingDeviceIdRef.current = targetId;
     lastDeviceSelectRef.current = Date.now();
     lastConfirmedActiveDeviceRef.current = null;
@@ -2283,6 +2309,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       const ready = await ensureActiveDevice(targetId, token, shouldPlay);
       if (ready) {
         lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
+      } else if (pendingDeviceIdRef.current === targetId) {
+        pendingDeviceIdRef.current = null;
       }
       if (ready) {
         const shuffleReady = await setRemoteShuffleState(
@@ -2298,6 +2326,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       refreshDevices(true);
       setTimeout(() => refreshDevices(true), 800);
     });
+    clearPendingDeviceIfStale();
   }
 
   async function handleTogglePlay() {

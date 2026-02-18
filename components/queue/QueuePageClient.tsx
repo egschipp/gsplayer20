@@ -78,7 +78,7 @@ export default function QueuePageClient() {
   function handleClearQueue() {
     if (!hasItems) return;
     if (queue.items.length > 1) {
-      const approved = window.confirm("Weet je zeker dat je de custom queue wilt leegmaken?");
+      const approved = window.confirm("Weet je zeker dat je Georgies Queue wilt leegmaken?");
       if (!approved) return;
     }
     queue.clearQueue();
@@ -89,7 +89,7 @@ export default function QueuePageClient() {
       <div className={styles.header}>
         <div>
           <h1 id="queue-title" className="heading-2">
-            Custom Queue
+            Georgies Queue
           </h1>
         </div>
         <div className={styles.headerActions}>
@@ -146,7 +146,7 @@ export default function QueuePageClient() {
             <div className={styles.durationHeader}>Duur</div>
             <div className={styles.actionsHeader}>Acties</div>
           </div>
-          <ol className={styles.queueRows} aria-label="Custom queue tracks">
+          <ol className={styles.queueRows} aria-label="Georgies Queue tracks">
             {queue.items.map((item) => {
               const isStarting = playback.startingQueueId === item.queueId;
               const isCurrent =
@@ -247,7 +247,7 @@ export default function QueuePageClient() {
                         className={`detail-btn ${styles.queueActionBtn} ${styles.queueRemoveBtn}`}
                         onClick={() => queue.removeTrack(item.queueId)}
                         disabled={playback.busy}
-                        aria-label={`Verwijder ${item.name} uit custom queue`}
+                        aria-label={`Verwijder ${item.name} uit Georgies Queue`}
                         title="Verwijder"
                       >
                         −

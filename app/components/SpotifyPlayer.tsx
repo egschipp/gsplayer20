@@ -1610,6 +1610,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
     const onStateChanged = (state: any) => {
       applySdkState(state);
+      if (state) {
+        setSdkReadyState(true);
+        setDeviceReady(true);
+        setSdkLastError(null);
+        setSdkLifecycle((prev) => (prev === "error" ? "ready" : prev));
+      }
       if (state && !state.paused) {
         setError(null);
       }
@@ -1621,11 +1627,29 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setSdkLifecycle("error");
       setError(message);
     };
-    const onAuthError = ({ message }: { message: string }) => {
+    const onAuthError = async ({ message }: { message: string }) => {
       setSdkReadyState(false);
       setSdkLastError(message);
-      setSdkLifecycle("error");
-      setError(message);
+      setSdkLifecycle("connecting");
+      const refreshed = await refreshClientAccessToken();
+      if (!refreshed) {
+        setSdkLifecycle("error");
+        setError("Spotify-authenticatie verlopen. Koppel Spotify opnieuw.");
+        return;
+      }
+      try {
+        const connected = await playerRef.current?.connect?.();
+        if (connected === false) {
+          setSdkLifecycle("error");
+          setError("Lokale webplayer kon niet opnieuw verbinden.");
+          return;
+        }
+        setSdkLastError(null);
+        setError(null);
+      } catch {
+        setSdkLifecycle("error");
+        setError("Lokale webplayer kon niet opnieuw verbinden.");
+      }
     };
     const onAccountError = ({ message }: { message: string }) => {
       setSdkReadyState(false);
@@ -3094,7 +3118,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             ) : null}
           </div>
         </div>
-        {!sdkReadyState && sdkSupported ? (
+        {sdkSupported &&
+        !sdkReadyState &&
+        (!activeDeviceId || activeDeviceId === sdkDeviceIdRef.current) ? (
           <div className="text-subtle" style={{ marginTop: 6 }}>
             Lokale webplayer wordt automatisch verbonden ({sdkLifecycle}).
             {sdkLastError ? ` Laatste melding: ${sdkLastError}` : ""}

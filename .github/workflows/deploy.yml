@@ -201,12 +201,58 @@ jobs:
               echo "docker compose v2 not available" >&2
               exit 1
             fi
-            COMPOSE_FILE_PATH="docker-compose.yml"
-            if [ -f "infra/docker-compose.yml" ]; then
-              COMPOSE_FILE_PATH="infra/docker-compose.yml"
-            fi
+            COMPOSE_FILE_PATH="docker-compose.ci.yml"
+            cat > "${COMPOSE_FILE_PATH}" <<'YAML'
+            services:
+              web:
+                image: ${IMAGE_NAME}:${IMAGE_TAG}
+                container_name: gsplayer20
+                env_file:
+                  - .env
+                volumes:
+                  - ./data:/data
+                logging:
+                  driver: json-file
+                  options:
+                    max-size: "10m"
+                    max-file: "3"
+                restart: unless-stopped
+                healthcheck:
+                  test:
+                    [
+                      "CMD-SHELL",
+                      "wget -qO- --timeout=2 http://127.0.0.1:3000/api/health >/dev/null 2>&1 || exit 1"
+                    ]
+                  start_period: 30s
+                  interval: 10s
+                  timeout: 3s
+                  retries: 8
+                networks:
+                  - web
+
+              worker:
+                image: ${IMAGE_NAME}:${IMAGE_TAG}
+                container_name: gsplayer20-worker
+                command: ["node", "worker.js"]
+                env_file:
+                  - .env
+                volumes:
+                  - ./data:/data
+                logging:
+                  driver: json-file
+                  options:
+                    max-size: "10m"
+                    max-file: "3"
+                restart: unless-stopped
+                networks:
+                  - web
+
+            networks:
+              web:
+                external: true
+            YAML
+            docker network inspect web >/dev/null 2>&1 || docker network create web
             echo "Compose file: ${COMPOSE_FILE_PATH}"
-            sed -i -E "/^[[:space:]]*image:[[:space:]]*\\$\\{IMAGE_NAME/ s#:[^[:space:]]+\$#:${IMAGE_TAG}#" "${COMPOSE_FILE_PATH}" || true
             docker compose -f "${COMPOSE_FILE_PATH}" config | grep -E "image:" || true
             docker compose -f "${COMPOSE_FILE_PATH}" pull web worker
             if ! docker compose -f "${COMPOSE_FILE_PATH}" up -d --remove-orphans --wait; then

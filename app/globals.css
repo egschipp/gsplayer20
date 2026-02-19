@@ -746,16 +746,6 @@ a:focus-visible {
   gap: 8px;
 }
 
-.track-context-title {
-  padding-left: 114px;
-}
-
-@media (max-width: 900px) {
-  .track-context-title {
-    padding-left: 0;
-  }
-}
-
 .empty-state {
   padding: 16px 18px;
   border-radius: 1rem;

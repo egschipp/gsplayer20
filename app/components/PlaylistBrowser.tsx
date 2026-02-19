@@ -2025,11 +2025,6 @@ export default function PlaylistBrowser() {
           </div>
         </div>
       ) : null}
-      {mode === "tracks" && selectedTrack?.name ? (
-        <div className="text-subtle track-context-title" style={{ marginTop: 6 }}>
-          Geselecteerd: {selectedTrack.name}
-        </div>
-      ) : null}
       {error ? (
         <div style={{ color: "#fca5a5" }} role="alert">
           <p>{error}</p>
@@ -2038,11 +2033,6 @@ export default function PlaylistBrowser() {
 
       {mode !== "tracks" ? (
         <div className="track-list" style={{ marginTop: 16 }}>
-          {mode === "artists" && selectedArtist?.name ? (
-            <div className="text-body track-context-title" style={{ marginBottom: 6 }}>
-              Tracks van: <strong>{selectedArtist.name}</strong>
-            </div>
-          ) : null}
           {!isContextSwitchLoading &&
           !loadingTracks &&
           !tracks.length &&
@@ -2102,11 +2092,6 @@ export default function PlaylistBrowser() {
         </div>
       ) : (
         <div className="track-list" style={{ marginTop: 16 }}>
-          {selectedTrack?.name ? (
-            <div className="text-body track-context-title" style={{ marginBottom: 6 }}>
-              Tracks met naam: <strong>{selectedTrack?.name}</strong>
-            </div>
-          ) : null}
           {!loadingTracksList && selectedTrackId && !filteredTrackItems.length ? (
             <div className="empty-state">
               <div style={{ fontWeight: 600 }}>Geen resultaten</div>

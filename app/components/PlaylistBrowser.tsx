@@ -273,7 +273,7 @@ export default function PlaylistBrowser() {
   const CACHE_KEY = "gs_library_cache_v1";
   const LEGACY_SELECTOR_DOCK_KEY = "gs_selector_dock_open_v1";
   const SELECTOR_DOCK_PIN_KEY = "gs_selector_dock_pinned_v1";
-  const selectorDockOpen = selectorDockPinned || selectorDockHovered;
+  const selectorDockOpen = selectorDockPinned || selectorDockHovered || open;
   const allPlaylistNames = useMemo(() => {
     const emojiStart = /^\s*\p{Extended_Pictographic}/u;
     return playlistOptions

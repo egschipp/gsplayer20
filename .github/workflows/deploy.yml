@@ -79,19 +79,9 @@ jobs:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    outputs:
-      image_name: ${{ steps.meta.outputs.image_name }}
-      image_tag: ${{ steps.meta.outputs.image_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Resolve image metadata
-        id: meta
-        run: |
-          set -euo pipefail
-          echo "image_name=${{ secrets.DOCKER_REGISTRY }}/${{ secrets.DOCKER_IMAGE }}" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -115,8 +105,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            ${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.image_tag }}
-            ${{ steps.meta.outputs.image_name }}:latest
+            ${{ secrets.DOCKER_REGISTRY }}/${{ secrets.DOCKER_IMAGE }}:${{ github.sha }}
+            ${{ secrets.DOCKER_REGISTRY }}/${{ secrets.DOCKER_IMAGE }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -151,8 +141,8 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           APP_ENCRYPTION_KEY: ${{ secrets.APP_ENCRYPTION_KEY }}
-          IMAGE_NAME: ${{ needs.build.outputs.image_name }}
-          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+          IMAGE_NAME: ${{ secrets.DOCKER_REGISTRY }}/${{ secrets.DOCKER_IMAGE }}
+          IMAGE_TAG: ${{ github.sha }}
           DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
@@ -177,6 +167,10 @@ jobs:
             cd "${{ secrets.DEPLOY_DIR }}"
             if [ -n "${DOCKER_PASSWORD:-}" ]; then
               echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
+            fi
+            if [ -z "${IMAGE_NAME:-}" ] || [ -z "${IMAGE_TAG:-}" ]; then
+              echo "IMAGE_NAME/IMAGE_TAG ontbreekt" >&2
+              exit 1
             fi
             if ! command -v flock >/dev/null 2>&1; then
               echo "flock ontbreekt op target host" >&2
@@ -208,4 +202,8 @@ jobs:
               exit 1
             fi
             docker compose pull web worker
-            docker compose up -d --remove-orphans --wait
+            if ! docker compose up -d --remove-orphans --wait; then
+              docker compose ps
+              docker compose logs --no-color --tail=160 web worker || true
+              exit 1
+            fi

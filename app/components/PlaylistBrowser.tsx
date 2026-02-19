@@ -216,7 +216,8 @@ export default function PlaylistBrowser() {
   const [query, setQuery] = useState<string>("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const [selectorDockOpen, setSelectorDockOpen] = useState(true);
+  const [selectorDockPinned, setSelectorDockPinned] = useState(false);
+  const [selectorDockHovered, setSelectorDockHovered] = useState(false);
   const [selectorDockHost, setSelectorDockHost] = useState<HTMLElement | null>(null);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [trackItems, setTrackItems] = useState<TrackItem[]>([]);
@@ -270,7 +271,9 @@ export default function PlaylistBrowser() {
     onClose: () => setOpen(false),
   });
   const CACHE_KEY = "gs_library_cache_v1";
-  const SELECTOR_DOCK_KEY = "gs_selector_dock_open_v1";
+  const LEGACY_SELECTOR_DOCK_KEY = "gs_selector_dock_open_v1";
+  const SELECTOR_DOCK_PIN_KEY = "gs_selector_dock_pinned_v1";
+  const selectorDockOpen = selectorDockPinned || selectorDockHovered;
   const allPlaylistNames = useMemo(() => {
     const emojiStart = /^\s*\p{Extended_Pictographic}/u;
     return playlistOptions
@@ -291,11 +294,12 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const stored = safeReadStorage(window.localStorage, SELECTOR_DOCK_KEY);
+    safeRemoveStorageKey(window.localStorage, LEGACY_SELECTOR_DOCK_KEY);
+    const stored = safeReadStorage(window.localStorage, SELECTOR_DOCK_PIN_KEY);
     if (stored === "0") {
-      setSelectorDockOpen(false);
+      setSelectorDockPinned(false);
     } else if (stored === "1") {
-      setSelectorDockOpen(true);
+      setSelectorDockPinned(true);
     }
   }, []);
 
@@ -321,7 +325,14 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    safeWriteStorage(window.localStorage, SELECTOR_DOCK_KEY, selectorDockOpen ? "1" : "0");
+    safeWriteStorage(
+      window.localStorage,
+      SELECTOR_DOCK_PIN_KEY,
+      selectorDockPinned ? "1" : "0"
+    );
+  }, [selectorDockPinned]);
+
+  useEffect(() => {
     if (!selectorDockOpen) {
       setOpen(false);
     }
@@ -1714,13 +1725,22 @@ export default function PlaylistBrowser() {
 
 
   const selectorDock = (
-    <div className="player-library-dock" data-open={selectorDockOpen ? "true" : "false"}>
-      <button
-        type="button"
+    <div
+      className="player-library-dock"
+      data-open={selectorDockOpen ? "true" : "false"}
+      onMouseEnter={() => setSelectorDockHovered(true)}
+      onMouseLeave={() => setSelectorDockHovered(false)}
+      onFocusCapture={() => setSelectorDockHovered(true)}
+      onBlurCapture={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+          return;
+        }
+        setSelectorDockHovered(false);
+      }}
+    >
+      <div
         className={`player-library-dock-toggle${selectorDockOpen ? " open" : ""}`}
-        aria-expanded={selectorDockOpen}
-        aria-controls="player-library-dock-body"
-        onClick={() => setSelectorDockOpen((prev) => !prev)}
       >
         <span className="player-library-dock-label">MyMusic Selectie</span>
         <span className="player-library-dock-value">
@@ -1733,7 +1753,17 @@ export default function PlaylistBrowser() {
         >
           ⌄
         </span>
-      </button>
+        <button
+          type="button"
+          className={`player-library-dock-pin${selectorDockPinned ? " active" : ""}`}
+          aria-pressed={selectorDockPinned}
+          aria-label={selectorDockPinned ? "Bar losmaken" : "Bar vastzetten"}
+          title={selectorDockPinned ? "Bar losmaken" : "Bar vastzetten"}
+          onClick={() => setSelectorDockPinned((prev) => !prev)}
+        >
+          {selectorDockPinned ? "Vast" : "Pin"}
+        </button>
+      </div>
       <div
         id="player-library-dock-body"
         className={`player-library-dock-body${selectorDockOpen ? " open" : ""}`}
@@ -1999,8 +2029,9 @@ export default function PlaylistBrowser() {
       {mode !== "tracks" ? (
         <div className="track-list" style={{ marginTop: 16 }}>
           {mode === "playlists" && selectedPlaylist?.name ? (
-            <div className="text-body track-context-title" style={{ marginBottom: 6 }}>
-              Tracks in: <strong>{selectedPlaylist.name}</strong>
+            <div className="track-context-title track-context-banner" style={{ marginBottom: 6 }}>
+              <span className="track-context-kicker">Tracks in</span>
+              <strong className="track-context-value">{selectedPlaylist.name}</strong>
             </div>
           ) : null}
           {mode === "artists" && selectedArtist?.name ? (

@@ -201,15 +201,18 @@ jobs:
               echo "docker compose v2 not available" >&2
               exit 1
             fi
+            COMPOSE_FILE_PATH="docker-compose.yml"
             if [ -f "infra/docker-compose.yml" ]; then
-              sed -i -E "/^[[:space:]]*image:[[:space:]]*\\$\\{IMAGE_NAME/ s#:[^[:space:]]+\$#:${IMAGE_TAG}#" infra/docker-compose.yml
+              COMPOSE_FILE_PATH="infra/docker-compose.yml"
             fi
-            docker compose config | grep -E "image:" || true
-            docker compose pull web worker
-            if ! docker compose up -d --remove-orphans --wait; then
-              docker compose ps
+            echo "Compose file: ${COMPOSE_FILE_PATH}"
+            sed -i -E "/^[[:space:]]*image:[[:space:]]*\\$\\{IMAGE_NAME/ s#:[^[:space:]]+\$#:${IMAGE_TAG}#" "${COMPOSE_FILE_PATH}" || true
+            docker compose -f "${COMPOSE_FILE_PATH}" config | grep -E "image:" || true
+            docker compose -f "${COMPOSE_FILE_PATH}" pull web worker
+            if ! docker compose -f "${COMPOSE_FILE_PATH}" up -d --remove-orphans --wait; then
+              docker compose -f "${COMPOSE_FILE_PATH}" ps
               docker inspect --format '{{json .State.Health}}' gsplayer20 || true
               docker exec gsplayer20 node -e "fetch('http://127.0.0.1:3000/api/health').then(async r=>{console.log('health_status',r.status);console.log(await r.text())}).catch(e=>{console.error('health_error',e.message);process.exit(1)})" || true
-              docker compose logs --no-color --tail=160 web worker || true
+              docker compose -f "${COMPOSE_FILE_PATH}" logs --no-color --tail=160 web worker || true
               exit 1
             fi

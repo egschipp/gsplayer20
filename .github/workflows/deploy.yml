@@ -201,16 +201,8 @@ jobs:
               echo "docker compose v2 not available" >&2
               exit 1
             fi
-            if [ -f "infra/docker-compose.yml" ] && ! grep -q "IMAGE_TAG" infra/docker-compose.yml; then
-              python3 - <<'PY'
-              from pathlib import Path
-
-              path = Path("infra/docker-compose.yml")
-              text = path.read_text(encoding="utf-8")
-              patched = text.replace("}:latest", "}:${IMAGE_TAG:-latest}")
-              if patched != text:
-                  path.write_text(patched, encoding="utf-8")
-              PY
+            if [ -f "infra/docker-compose.yml" ]; then
+              sed -i -E "/^[[:space:]]*image:[[:space:]]*\\$\\{IMAGE_NAME/ s#:[^[:space:]]+\$#:${IMAGE_TAG}#" infra/docker-compose.yml
             fi
             docker compose config | grep -E "image:" || true
             docker compose pull web worker

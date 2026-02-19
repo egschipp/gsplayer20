@@ -5,15 +5,7 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
-  sh -eux -c ' \
-    npm ci --no-audit --no-fund --prefer-offline & \
-    pid="$!"; \
-    while kill -0 "$pid" 2>/dev/null; do \
-      echo "[deps] npm ci is bezig..."; \
-      sleep 20; \
-    done; \
-    wait "$pid" \
-  '
+  npm ci --no-audit --no-fund --prefer-offline
 
 FROM node:20-alpine AS builder
 WORKDIR /app
@@ -22,21 +14,9 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN --mount=type=cache,target=/app/.next/cache npm run build
 
-FROM node:20-alpine AS prod-deps
+FROM deps AS prod-deps
 WORKDIR /app
-RUN apk add --no-cache --virtual .build-deps python3 make g++
-COPY package.json package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm \
-  sh -eux -c ' \
-    npm ci --omit=dev --no-audit --no-fund --prefer-offline & \
-    pid="$!"; \
-    while kill -0 "$pid" 2>/dev/null; do \
-      echo "[prod-deps] npm ci --omit=dev is bezig..."; \
-      sleep 20; \
-    done; \
-    wait "$pid" \
-  '
-RUN apk del .build-deps
+RUN npm prune --omit=dev
 
 FROM node:20-alpine AS runner
 # runtime image

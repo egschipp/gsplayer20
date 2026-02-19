@@ -24,6 +24,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const path = pathname ?? "/";
   const showPlayer = path === "/" || path.startsWith("/gsplayer") || path.startsWith("/queue");
+  const showLibraryDock = path === "/" || path.startsWith("/gsplayer");
 
   return (
     <PlayerContext.Provider value={value}>
@@ -44,6 +45,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 priority
               />
               <SpotifyPlayer onReady={setApi} onTrackChange={setCurrentTrackId} />
+              {showLibraryDock ? (
+                <div
+                  id="player-library-dock-slot"
+                  className="player-library-dock-slot"
+                  aria-label="MyMusic selectie"
+                />
+              ) : null}
             </div>
           </div>
           {children}

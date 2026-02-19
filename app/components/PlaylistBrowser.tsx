@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { FixedSizeList as List, type ListChildComponentProps } from "react-window";
 import { usePlayer } from "./player/PlayerProvider";
 import ChatGptButton from "./playlist/ChatGptButton";
@@ -216,6 +217,7 @@ export default function PlaylistBrowser() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [selectorDockOpen, setSelectorDockOpen] = useState(true);
+  const [selectorDockHost, setSelectorDockHost] = useState<HTMLElement | null>(null);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [trackItems, setTrackItems] = useState<TrackItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -295,6 +297,26 @@ export default function PlaylistBrowser() {
     } else if (stored === "1") {
       setSelectorDockOpen(true);
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const resolveDockHost = () => {
+      const host = document.getElementById("player-library-dock-slot");
+      if (host) {
+        setSelectorDockHost(host);
+        return true;
+      }
+      return false;
+    };
+    if (resolveDockHost()) return;
+    const observer = new MutationObserver(() => {
+      if (resolveDockHost()) {
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -1691,6 +1713,225 @@ export default function PlaylistBrowser() {
   }
 
 
+  const selectorDock = (
+    <div className="player-library-dock" data-open={selectorDockOpen ? "true" : "false"}>
+      <button
+        type="button"
+        className={`player-library-dock-toggle${selectorDockOpen ? " open" : ""}`}
+        aria-expanded={selectorDockOpen}
+        aria-controls="player-library-dock-body"
+        onClick={() => setSelectorDockOpen((prev) => !prev)}
+      >
+        <span className="player-library-dock-label">MyMusic Selectie</span>
+        <span className="player-library-dock-value">
+          <span className="text-subtle">{selectorModeLabel}</span>
+          <strong>{selectorCurrentLabel}</strong>
+        </span>
+        <span
+          className={`player-library-dock-chevron${selectorDockOpen ? " open" : ""}`}
+          aria-hidden="true"
+        >
+          ⌄
+        </span>
+      </button>
+      <div
+        id="player-library-dock-body"
+        className={`player-library-dock-body${selectorDockOpen ? " open" : ""}`}
+        hidden={!selectorDockOpen}
+      >
+        <div className="player-library-controls-row">
+          <div className="segmented segmented-integrated" role="tablist" aria-label="Library modes">
+            {(["playlists", "artists", "tracks"] as Mode[]).map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={`segmented-btn${mode === value ? " active" : ""}`}
+                role="tab"
+                aria-selected={mode === value}
+                onClick={() => setMode(value)}
+              >
+                {value === "playlists"
+                  ? "Playlists"
+                  : value === "artists"
+                  ? "Artiesten"
+                  : "Tracks"}
+              </button>
+            ))}
+          </div>
+          <div
+            className="combo player-library-combo"
+            ref={comboMenu.rootRef}
+            onPointerDownCapture={comboMenu.markInteraction}
+            onTouchStartCapture={comboMenu.markInteraction}
+          >
+            <label className="sr-only" htmlFor="playlist-search">
+              Kies selectie
+            </label>
+            <input
+              id="playlist-search"
+              value={query}
+              onClick={() => setOpen(true)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setOpen(true);
+              }}
+              onFocus={() => setOpen(true)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setOpen(false);
+                }
+                if (event.key === "ArrowDown") {
+                  setOpen(true);
+                }
+              }}
+              onBlur={comboMenu.handleBlur}
+              className="combo-input player-library-combo-input"
+              aria-label="Selectie zoeken"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={open}
+              aria-haspopup="listbox"
+              aria-controls="playlist-options"
+              placeholder={
+                mode === "playlists"
+                  ? "Zoek playlists..."
+                  : mode === "artists"
+                  ? "Zoek artiesten..."
+                  : "Zoek tracks..."
+              }
+              disabled={
+                mode === "playlists"
+                  ? loadingPlaylists
+                  : mode === "artists"
+                  ? loadingArtists
+                  : loadingTracksList
+              }
+            />
+            <button
+              type="button"
+              className={`player-library-combo-toggle${open ? " open" : ""}`}
+              aria-label={open ? "Sluit selectie" : "Open selectie"}
+              aria-expanded={open}
+              aria-controls="playlist-options"
+              onClick={() => setOpen((prev) => !prev)}
+            >
+              ▾
+            </button>
+            {selectedOption || query ? (
+              <button
+                type="button"
+                className="combo-clear player-library-combo-clear"
+                aria-label="Clear selection"
+                onClick={() => {
+                  setQuery("");
+                  setDebouncedQuery("");
+                  setOpen(true);
+                  if (mode === "playlists") setSelectedPlaylistId("");
+                  if (mode === "artists") setSelectedArtistId("");
+                  if (mode === "tracks") {
+                    setSelectedTrackId("");
+                  }
+                }}
+              >
+                ×
+              </button>
+            ) : null}
+            {open ? (
+              <div
+                className="combo-list player-library-combo-list"
+                role="listbox"
+                id="playlist-options"
+                ref={comboListRef}
+                onScroll={(event) => {
+                  const target = event.currentTarget;
+                  if (target.scrollHeight - target.scrollTop - target.clientHeight < 80) {
+                    if (mode === "playlists") loadMorePlaylists();
+                    if (mode === "artists") loadMoreArtists();
+                  }
+                }}
+              >
+                {filteredOptions.length === 0 ? (
+                  <div className="combo-empty">Geen resultaten.</div>
+                ) : mode === "tracks" ? (
+                  (filteredOptions as TrackOption[]).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      role="option"
+                      aria-selected={opt.id === selectedTrackId}
+                      className={`combo-item${
+                        opt.id === selectedTrackId ? " active" : ""
+                      }`}
+                      onClick={() => {
+                        setSelectedTrackId(opt.id);
+                        setQuery("");
+                        setDebouncedQuery("");
+                        setOpen(false);
+                      }}
+                    >
+                      <span className="combo-track">
+                        {opt.coverUrl ? (
+                          <Image
+                            src={opt.coverUrl}
+                            alt=""
+                            width={28}
+                            height={28}
+                            className="combo-track-cover"
+                            unoptimized
+                          />
+                        ) : (
+                          <span className="combo-track-cover placeholder" />
+                        )}
+                        <span>
+                          <span className="combo-track-name">{opt.name}</span>
+                        </span>
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  filteredOptions.map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      role="option"
+                      aria-selected={
+                        mode === "playlists"
+                          ? opt.id === selectedPlaylistId
+                          : opt.id === selectedArtistId
+                      }
+                      className={`combo-item${
+                        (mode === "playlists" && opt.id === selectedPlaylistId) ||
+                        (mode === "artists" && opt.id === selectedArtistId)
+                          ? " active"
+                          : ""
+                      }`}
+                      onClick={() => {
+                        if (mode === "playlists") setSelectedPlaylistId(opt.id);
+                        if (mode === "artists") setSelectedArtistId(opt.id);
+                        setQuery("");
+                        setDebouncedQuery("");
+                        setOpen(false);
+                      }}
+                    >
+                      {opt.name}
+                    </button>
+                  ))
+                )}
+                {mode === "playlists" && loadingMorePlaylists ? (
+                  <div className="combo-loading">Meer playlists laden...</div>
+                ) : null}
+                {mode === "artists" && loadingMoreArtists ? (
+                  <div className="combo-loading">Meer artiesten laden...</div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <section className="library-browser">
       {authRequired ? (
@@ -1714,222 +1955,7 @@ export default function PlaylistBrowser() {
           </div>
         </div>
       ) : null}
-      <div className="player-library-dock" data-open={selectorDockOpen ? "true" : "false"}>
-        <button
-          type="button"
-          className={`player-library-dock-toggle${selectorDockOpen ? " open" : ""}`}
-          aria-expanded={selectorDockOpen}
-          aria-controls="player-library-dock-body"
-          onClick={() => setSelectorDockOpen((prev) => !prev)}
-        >
-          <span className="player-library-dock-label">MyMusic Selectie</span>
-          <span className="player-library-dock-value">
-            <span className="text-subtle">{selectorModeLabel}</span>
-            <strong>{selectorCurrentLabel}</strong>
-          </span>
-          <span
-            className={`player-library-dock-chevron${selectorDockOpen ? " open" : ""}`}
-            aria-hidden="true"
-          >
-            ⌄
-          </span>
-        </button>
-        <div
-          id="player-library-dock-body"
-          className={`player-library-dock-body${selectorDockOpen ? " open" : ""}`}
-          hidden={!selectorDockOpen}
-        >
-          <div className="player-library-controls-row">
-            <div className="segmented segmented-integrated" role="tablist" aria-label="Library modes">
-              {(["playlists", "artists", "tracks"] as Mode[]).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`segmented-btn${mode === value ? " active" : ""}`}
-                  role="tab"
-                  aria-selected={mode === value}
-                  onClick={() => setMode(value)}
-                >
-                  {value === "playlists"
-                    ? "Playlists"
-                    : value === "artists"
-                    ? "Artiesten"
-                    : "Tracks"}
-                </button>
-              ))}
-            </div>
-            <div
-              className="combo player-library-combo"
-              ref={comboMenu.rootRef}
-              onPointerDownCapture={comboMenu.markInteraction}
-              onTouchStartCapture={comboMenu.markInteraction}
-            >
-              <label className="sr-only" htmlFor="playlist-search">
-                Kies selectie
-              </label>
-              <input
-                id="playlist-search"
-                value={query}
-                onClick={() => setOpen(true)}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setOpen(true);
-                }}
-                onFocus={() => setOpen(true)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    setOpen(false);
-                  }
-                  if (event.key === "ArrowDown") {
-                    setOpen(true);
-                  }
-                }}
-                onBlur={comboMenu.handleBlur}
-                className="combo-input player-library-combo-input"
-                aria-label="Selectie zoeken"
-                role="combobox"
-                aria-autocomplete="list"
-                aria-expanded={open}
-                aria-haspopup="listbox"
-                aria-controls="playlist-options"
-                placeholder={
-                  mode === "playlists"
-                    ? "Zoek playlists..."
-                    : mode === "artists"
-                    ? "Zoek artiesten..."
-                    : "Zoek tracks..."
-                }
-                disabled={
-                  mode === "playlists"
-                    ? loadingPlaylists
-                    : mode === "artists"
-                    ? loadingArtists
-                    : loadingTracksList
-                }
-              />
-              <button
-                type="button"
-                className={`player-library-combo-toggle${open ? " open" : ""}`}
-                aria-label={open ? "Sluit selectie" : "Open selectie"}
-                aria-expanded={open}
-                aria-controls="playlist-options"
-                onClick={() => setOpen((prev) => !prev)}
-              >
-                ▾
-              </button>
-              {selectedOption || query ? (
-                <button
-                  type="button"
-                  className="combo-clear player-library-combo-clear"
-                  aria-label="Clear selection"
-                  onClick={() => {
-                    setQuery("");
-                    setDebouncedQuery("");
-                    setOpen(true);
-                    if (mode === "playlists") setSelectedPlaylistId("");
-                    if (mode === "artists") setSelectedArtistId("");
-                    if (mode === "tracks") {
-                      setSelectedTrackId("");
-                    }
-                  }}
-                >
-                  ×
-                </button>
-              ) : null}
-              {open ? (
-                <div
-                  className="combo-list player-library-combo-list"
-                  role="listbox"
-                  id="playlist-options"
-                  ref={comboListRef}
-                  onScroll={(event) => {
-                    const target = event.currentTarget;
-                    if (target.scrollHeight - target.scrollTop - target.clientHeight < 80) {
-                      if (mode === "playlists") loadMorePlaylists();
-                      if (mode === "artists") loadMoreArtists();
-                    }
-                  }}
-                >
-                  {filteredOptions.length === 0 ? (
-                    <div className="combo-empty">Geen resultaten.</div>
-                  ) : mode === "tracks" ? (
-                    (filteredOptions as TrackOption[]).map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        role="option"
-                        aria-selected={opt.id === selectedTrackId}
-                        className={`combo-item${
-                          opt.id === selectedTrackId ? " active" : ""
-                        }`}
-                        onClick={() => {
-                          setSelectedTrackId(opt.id);
-                          setQuery("");
-                          setDebouncedQuery("");
-                          setOpen(false);
-                        }}
-                      >
-                        <span className="combo-track">
-                          {opt.coverUrl ? (
-                            <Image
-                              src={opt.coverUrl}
-                              alt=""
-                              width={28}
-                              height={28}
-                              className="combo-track-cover"
-                              unoptimized
-                            />
-                          ) : (
-                            <span className="combo-track-cover placeholder" />
-                          )}
-                          <span>
-                            <span className="combo-track-name">{opt.name}</span>
-                          </span>
-                        </span>
-                      </button>
-                    ))
-                  ) : (
-                    filteredOptions.map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        role="option"
-                        aria-selected={
-                          mode === "playlists"
-                            ? opt.id === selectedPlaylistId
-                            : opt.id === selectedArtistId
-                        }
-                        className={`combo-item${
-                          (mode === "playlists" && opt.id === selectedPlaylistId) ||
-                          (mode === "artists" && opt.id === selectedArtistId)
-                            ? " active"
-                            : ""
-                        }`}
-                        onClick={() => {
-                          if (mode === "playlists") setSelectedPlaylistId(opt.id);
-                          if (mode === "artists") setSelectedArtistId(opt.id);
-                          setQuery("");
-                          setDebouncedQuery("");
-                          setOpen(false);
-                        }}
-                      >
-                        {opt.name}
-                      </button>
-                    ))
-                  )}
-                  {mode === "playlists" && loadingMorePlaylists ? (
-                    <div className="combo-loading">Meer playlists laden...</div>
-                  ) : null}
-                  {mode === "artists" && loadingMoreArtists ? (
-                    <div className="combo-loading">Meer artiesten laden...</div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      </div>
+      {selectorDockHost ? createPortal(selectorDock, selectorDockHost) : selectorDock}
 
       {loadingPlaylists && mode === "playlists" ? (
         <p className="text-body" role="status">

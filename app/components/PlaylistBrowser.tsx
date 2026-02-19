@@ -1761,7 +1761,17 @@ export default function PlaylistBrowser() {
           title={selectorDockPinned ? "Bar losmaken" : "Bar vastzetten"}
           onClick={() => setSelectorDockPinned((prev) => !prev)}
         >
-          {selectorDockPinned ? "Vast" : "Pin"}
+          <svg
+            className="player-library-dock-pin-icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M14 3l7 7-2 2-2-2-3 3v4l-2 2-2-6-3-3-2 2-2-2 7-7 2 2 3-3z" />
+          </svg>
+          <span className="sr-only">
+            {selectorDockPinned ? "Bar losmaken" : "Bar vastzetten"}
+          </span>
         </button>
       </div>
       <div
@@ -2028,12 +2038,6 @@ export default function PlaylistBrowser() {
 
       {mode !== "tracks" ? (
         <div className="track-list" style={{ marginTop: 16 }}>
-          {mode === "playlists" && selectedPlaylist?.name ? (
-            <div className="track-context-title track-context-banner" style={{ marginBottom: 6 }}>
-              <span className="track-context-kicker">Tracks in</span>
-              <strong className="track-context-value">{selectedPlaylist.name}</strong>
-            </div>
-          ) : null}
           {mode === "artists" && selectedArtist?.name ? (
             <div className="text-body track-context-title" style={{ marginBottom: 6 }}>
               Tracks van: <strong>{selectedArtist.name}</strong>

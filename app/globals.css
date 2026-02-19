@@ -750,42 +750,6 @@ a:focus-visible {
   padding-left: 114px;
 }
 
-.track-context-banner {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  max-width: min(100%, 760px);
-  padding: 8px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(2, 154, 228, 0.3);
-  background: linear-gradient(
-      135deg,
-      rgba(2, 154, 228, 0.16),
-      rgba(19, 194, 161, 0.12),
-      rgba(69, 221, 97, 0.08)
-    ),
-    rgba(0, 0, 0, 0.34);
-}
-
-.track-context-kicker {
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--text-subtle);
-  white-space: nowrap;
-}
-
-.track-context-value {
-  min-width: 0;
-  font-size: 1rem;
-  font-weight: 700;
-  line-height: 1.1;
-  color: #ffffff;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 @media (max-width: 900px) {
   .track-context-title {
     padding-left: 0;
@@ -919,20 +883,29 @@ a:focus-visible {
 
 .player-library-dock-pin {
   border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.36);
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  letter-spacing: 0.02em;
-  line-height: 1;
-  min-height: 28px;
-  padding: 0 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.42);
+  color: rgba(255, 255, 255, 0.85);
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
 }
 
 .player-library-dock-pin:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.34);
+  transform: translateY(-1px);
 }
 
 .player-library-dock-pin:focus-visible {
@@ -942,8 +915,21 @@ a:focus-visible {
 
 .player-library-dock-pin.active {
   border-color: rgba(69, 221, 97, 0.52);
-  background: rgba(69, 221, 97, 0.18);
+  background: rgba(69, 221, 97, 0.24);
   color: #b9ffd0;
+}
+
+.player-library-dock-pin-icon {
+  width: 15px;
+  height: 15px;
+  display: block;
+  fill: currentColor;
+  transform-origin: 50% 50%;
+  transition: transform 160ms ease;
+}
+
+.player-library-dock-pin.active .player-library-dock-pin-icon {
+  transform: rotate(-18deg);
 }
 
 .player-library-dock-body {

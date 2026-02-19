@@ -217,16 +217,6 @@ jobs:
                     max-size: "10m"
                     max-file: "3"
                 restart: unless-stopped
-                healthcheck:
-                  test:
-                    [
-                      "CMD-SHELL",
-                      "wget -qO- --timeout=3 http://127.0.0.1:3000/api/version >/dev/null 2>&1 || exit 1"
-                    ]
-                  start_period: 120s
-                  interval: 10s
-                  timeout: 3s
-                  retries: 12
                 networks:
                   - web
 
@@ -255,10 +245,8 @@ jobs:
             echo "Compose file: ${COMPOSE_FILE_PATH}"
             docker compose -f "${COMPOSE_FILE_PATH}" config | grep -E "image:" || true
             docker compose -f "${COMPOSE_FILE_PATH}" pull web worker
-            if ! docker compose -f "${COMPOSE_FILE_PATH}" up -d --remove-orphans --wait; then
+            if ! docker compose -f "${COMPOSE_FILE_PATH}" up -d --remove-orphans; then
               docker compose -f "${COMPOSE_FILE_PATH}" ps
-              docker inspect --format '{{json .State.Health}}' gsplayer20 || true
-              docker exec gsplayer20 node -e "fetch('http://127.0.0.1:3000/api/version').then(async r=>{console.log('health_status',r.status);console.log(await r.text())}).catch(e=>{console.error('health_error',e.message);process.exit(1)})" || true
               docker compose -f "${COMPOSE_FILE_PATH}" logs --no-color --tail=160 web worker || true
               exit 1
             fi

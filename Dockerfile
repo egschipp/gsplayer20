@@ -4,7 +4,16 @@ FROM node:20-alpine AS deps
 WORKDIR /app
 RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci
+RUN --mount=type=cache,target=/root/.npm \
+  sh -eux -c ' \
+    npm ci --no-audit --no-fund --prefer-offline & \
+    pid="$!"; \
+    while kill -0 "$pid" 2>/dev/null; do \
+      echo "[deps] npm ci is bezig..."; \
+      sleep 20; \
+    done; \
+    wait "$pid" \
+  '
 
 FROM node:20-alpine AS builder
 WORKDIR /app
@@ -17,7 +26,16 @@ FROM node:20-alpine AS prod-deps
 WORKDIR /app
 RUN apk add --no-cache --virtual .build-deps python3 make g++
 COPY package.json package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
+RUN --mount=type=cache,target=/root/.npm \
+  sh -eux -c ' \
+    npm ci --omit=dev --no-audit --no-fund --prefer-offline & \
+    pid="$!"; \
+    while kill -0 "$pid" 2>/dev/null; do \
+      echo "[prod-deps] npm ci --omit=dev is bezig..."; \
+      sleep 20; \
+    done; \
+    wait "$pid" \
+  '
 RUN apk del .build-deps
 
 FROM node:20-alpine AS runner

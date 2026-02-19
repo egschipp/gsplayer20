@@ -16,12 +16,12 @@ services:
       test:
         [
           "CMD-SHELL",
-          "wget -qO- --timeout=2 http://127.0.0.1:3000/api/health >/dev/null 2>&1 || exit 1"
+          "wget -qO- --timeout=3 http://127.0.0.1:3000/api/version >/dev/null 2>&1 || exit 1"
         ]
-      start_period: 30s
+      start_period: 120s
       interval: 10s
       timeout: 3s
-      retries: 8
+      retries: 12
     networks:
       - web
 

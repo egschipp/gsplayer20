@@ -617,11 +617,9 @@ export default function PlaylistBrowser() {
       try {
         const all: PlaylistOption[] = [];
         let cursor: string | null = null;
-        let pages = 0;
-        const MAX_PAGES = 20;
         do {
           const res = await fetch(
-            buildApiUrl("/api/spotify/me/playlists", { limit: "50", cursor }),
+            buildApiUrl("/api/spotify/me/playlists", { limit: "50", cursor, live: "1" }),
             { cache: "no-store" }
           );
           if (!res.ok) {
@@ -647,8 +645,7 @@ export default function PlaylistBrowser() {
           );
           all.push(...mappedItems);
           cursor = data.nextCursor ?? null;
-          pages += 1;
-        } while (cursor && pages < MAX_PAGES);
+        } while (cursor);
 
         const unique = new Map<string, PlaylistOption>();
         for (const option of [LIKED_OPTION, ...all]) {
@@ -657,7 +654,11 @@ export default function PlaylistBrowser() {
         const sorted: PlaylistOption[] = Array.from(unique.values())
           .filter((item) => item.id !== LIKED_OPTION.id)
           .sort((a, b) =>
-            a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+            a.name.localeCompare(b.name, "nl", {
+              sensitivity: "base",
+              ignorePunctuation: true,
+              numeric: true,
+            })
           );
         const list: PlaylistOption[] = [LIKED_OPTION, ...sorted];
         if (!cancelled) {
@@ -864,7 +865,11 @@ export default function PlaylistBrowser() {
     return Array.from(unique.values()).sort((a, b) => {
       if (a.id === LIKED_OPTION.id) return -1;
       if (b.id === LIKED_OPTION.id) return 1;
-      return a.name.localeCompare(b.name, "nl", { sensitivity: "base" });
+      return a.name.localeCompare(b.name, "nl", {
+        sensitivity: "base",
+        ignorePunctuation: true,
+        numeric: true,
+      });
     });
   }, [playlistOptions]);
 
@@ -877,6 +882,8 @@ export default function PlaylistBrowser() {
       .sort((a, b) =>
         String(a.name ?? "").localeCompare(String(b.name ?? ""), "nl", {
           sensitivity: "base",
+          ignorePunctuation: true,
+          numeric: true,
         })
       );
     return [LIKED_OPTION, ...list];
@@ -929,6 +936,7 @@ export default function PlaylistBrowser() {
         buildApiUrl("/api/spotify/me/playlists", {
           limit: "50",
           cursor: playlistCursor,
+          live: "1",
         }),
         { cache: "no-store" }
       );
@@ -950,7 +958,11 @@ export default function PlaylistBrowser() {
         const sorted: PlaylistOption[] = Array.from(unique.values())
           .filter((item) => item.id !== LIKED_OPTION.id)
           .sort((a, b) =>
-            a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+            a.name.localeCompare(b.name, "nl", {
+              sensitivity: "base",
+              ignorePunctuation: true,
+              numeric: true,
+            })
           );
         return [LIKED_OPTION, ...sorted];
       });

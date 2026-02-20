@@ -31,6 +31,85 @@ export async function GET(req: Request) {
       ? Math.min(Math.floor(limitValue), 50)
       : 50;
   const cursor = searchParams.get("cursor");
+  const live = searchParams.get("live") === "1";
+
+  if (live) {
+    const parsedOffset = Number(cursor ?? "0");
+    const offset =
+      Number.isFinite(parsedOffset) && parsedOffset >= 0 ? Math.floor(parsedOffset) : 0;
+    try {
+      const liveData = await spotifyFetch<{
+        items?: Array<{
+          id?: string;
+          name?: string;
+          owner?: { id?: string };
+          public?: boolean;
+          collaborative?: boolean;
+          snapshot_id?: string;
+          tracks?: { total?: number };
+        }>;
+        next?: string | null;
+      }>({
+        url: `https://api.spotify.com/v1/me/playlists?limit=${limit}&offset=${offset}`,
+        userLevel: true,
+      });
+      const now = Date.now();
+      const liveItems = Array.isArray(liveData?.items)
+        ? liveData.items
+            .map((item) => {
+              const playlistId = String(item?.id ?? "").trim();
+              if (!playlistId) return null;
+              return {
+                playlistId,
+                name: item?.name ?? "Untitled playlist",
+                ownerSpotifyUserId: item?.owner?.id ?? null,
+                isPublic: typeof item?.public === "boolean" ? item.public : null,
+                collaborative:
+                  typeof item?.collaborative === "boolean" ? item.collaborative : null,
+                snapshotId: item?.snapshot_id ?? null,
+                tracksTotal:
+                  typeof item?.tracks?.total === "number" ? item.tracks.total : null,
+                lastSeenAt: now,
+              };
+            })
+            .filter(
+              (
+                item
+              ): item is {
+                playlistId: string;
+                name: string;
+                ownerSpotifyUserId: string | null;
+                isPublic: boolean | null;
+                collaborative: boolean | null;
+                snapshotId: string | null;
+                tracksTotal: number | null;
+                lastSeenAt: number;
+              } => Boolean(item)
+            )
+        : [];
+
+      return jsonNoStore({
+        items: liveItems,
+        nextCursor: liveData?.next ? String(offset + liveItems.length) : null,
+        asOf: now,
+        sync: {
+          status: "live",
+          lastSuccessfulAt: now,
+          lagSec: 0,
+        },
+      });
+    } catch (error) {
+      if (error instanceof SpotifyFetchError) {
+        if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
+        if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
+        if (error.status === 429) return jsonNoStore({ error: "SPOTIFY_RATE_LIMIT" }, 429);
+      }
+      if (String(error).includes("UserNotAuthenticated")) {
+        return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
+      }
+      return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
+    }
+  }
 
   const db = getDb();
   const baseWhere = eq(userPlaylists.userId, session.appUserId as string);

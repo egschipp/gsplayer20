@@ -89,6 +89,13 @@ function normalizeTrackName(value: string | null | undefined) {
     .toLocaleLowerCase("nl");
 }
 
+const LEADING_EMOJI_PATTERN =
+  /^\s*(?:\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)/u;
+
+function startsWithEmoji(value: string | null | undefined) {
+  return LEADING_EMOJI_PATTERN.test(String(value ?? ""));
+}
+
 function toPlaylistLink(option: PlaylistOption): PlaylistLink {
   return option.type === "liked"
     ? {
@@ -287,10 +294,9 @@ export default function PlaylistBrowser() {
   const SELECTOR_DOCK_PIN_KEY = "gs_selector_dock_pinned_v1";
   const selectorDockOpen = selectorDockPinned || selectorDockHovered || open;
   const allPlaylistNames = useMemo(() => {
-    const emojiStart = /^\s*\p{Extended_Pictographic}/u;
     return playlistOptions
       .map((pl) => pl.name || "Untitled playlist")
-      .filter((name) => emojiStart.test(name));
+      .filter((name) => startsWithEmoji(name));
   }, [playlistOptions]);
 
   const closeTrackDetail = useCallback(() => {
@@ -848,12 +854,11 @@ export default function PlaylistBrowser() {
   );
 
   const addTargetOptions = useMemo(() => {
-    const emojiStart = /^\s*\p{Extended_Pictographic}/u;
     const unique = new Map<string, PlaylistOption>();
     unique.set(LIKED_OPTION.id, LIKED_OPTION);
     for (const option of playlistOptions) {
       if (option.id === LIKED_OPTION.id) continue;
-      if (!emojiStart.test(option.name || "")) continue;
+      if (!startsWithEmoji(option.name || "")) continue;
       unique.set(option.id, option);
     }
     return Array.from(unique.values()).sort((a, b) => {

@@ -43,7 +43,6 @@ export default function QueuePageClient() {
     if (!activeQueueId) return -1;
     return queue.items.findIndex((item) => item.queueId === activeQueueId);
   }, [activeQueueId, queue.items]);
-  const canStartPlayback = playback.ready && !playback.busy;
 
   const nextQueueId =
     currentIndex >= 0 && currentIndex + 1 < queue.items.length
@@ -221,6 +220,16 @@ export default function QueuePageClient() {
                       <span className={styles.dragHandle} aria-hidden="true">
                         ⋮⋮
                       </span>
+                      <button
+                        type="button"
+                        className={`play-btn ${styles.queueInlinePlayBtn}`}
+                        onClick={() => void playback.playFromQueue(item.queueId)}
+                        disabled={playback.busy || !playback.ready}
+                        aria-label={`Start ${item.name} in queue`}
+                        title="Start hier"
+                      >
+                        ▶
+                      </button>
                       {item.artworkUrl ? (
                         <Image
                           src={item.artworkUrl}
@@ -283,16 +292,6 @@ export default function QueuePageClient() {
                     </div>
 
                     <div className={`track-col-actions track-actions-group ${styles.actionsCell}`}>
-                      <button
-                        type="button"
-                        className={`detail-btn ${styles.queueActionBtn} ${styles.queueStartBtn}`}
-                        onClick={() => void playback.playFromQueue(item.queueId)}
-                        disabled={!canStartPlayback}
-                        aria-label={`Start ${item.name} in queue`}
-                        title="Start hier"
-                      >
-                        ▶
-                      </button>
                       <button
                         type="button"
                         className={`detail-btn ${styles.queueActionBtn} ${styles.queueRemoveBtn}`}

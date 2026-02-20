@@ -131,6 +131,10 @@
   min-width: 0;
 }
 
+.queueInlinePlayBtn {
+  flex-shrink: 0;
+}
+
 .dragHandle {
   color: var(--text-subtle);
   font-size: 14px;
@@ -163,11 +167,14 @@
   width: 100%;
   align-content: center;
   justify-self: start;
+  justify-items: start;
 }
 
 .statusPill {
   display: inline-flex;
   align-items: center;
+  justify-self: start;
+  width: max-content;
   max-width: 100%;
   padding: 0.1rem 0.62rem;
   border-radius: 999px;
@@ -246,18 +253,6 @@
   border-radius: 12px;
   font-size: 17px;
   line-height: 1;
-}
-
-.queueStartBtn {
-  color: var(--tide);
-  border-color: rgba(29, 185, 84, 0.38);
-  background: rgba(29, 185, 84, 0.14);
-}
-
-.queueStartBtn:hover:not(:disabled) {
-  border-color: rgba(29, 185, 84, 0.64);
-  background: rgba(29, 185, 84, 0.22);
-  color: #ffffff;
 }
 
 .queueRemoveBtn:hover:not(:disabled) {

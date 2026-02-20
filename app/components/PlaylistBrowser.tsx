@@ -115,6 +115,28 @@ function sortPlaylistLinks(playlists: PlaylistLink[] | null | undefined): Playli
   );
 }
 
+function normalizeArtistOptions(options: ArtistOption[]) {
+  const unique = new Map<string, ArtistOption>();
+  for (const option of options) {
+    if (!option?.id) continue;
+    const name = String(option.name ?? "").trim();
+    if (!name) continue;
+    unique.set(option.id, {
+      id: option.id,
+      name,
+      spotifyUrl:
+        option.spotifyUrl || `https://open.spotify.com/artist/${option.id}`,
+    });
+  }
+  return Array.from(unique.values()).sort((a, b) =>
+    a.name.localeCompare(b.name, "nl", {
+      sensitivity: "base",
+      ignorePunctuation: true,
+      numeric: true,
+    })
+  );
+}
+
 function normalizePlaylistOptions(options: PlaylistOption[]) {
   const likedFromOptions =
     options.find((option) => option.id === LIKED_OPTION.id) ?? null;
@@ -581,8 +603,9 @@ export default function PlaylistBrowser() {
         setLoadingPlaylists(false);
       }
       if (Array.isArray(parsed.artistOptions)) {
-        hasCachedArtistsRef.current = parsed.artistOptions.length > 0;
-        setArtistOptions(parsed.artistOptions);
+        const cachedArtists = normalizeArtistOptions(parsed.artistOptions);
+        hasCachedArtistsRef.current = cachedArtists.length > 0;
+        setArtistOptions(cachedArtists);
         setLoadingArtists(false);
       }
       if (Array.isArray(parsed.trackOptions)) {
@@ -801,43 +824,60 @@ export default function PlaylistBrowser() {
   useEffect(() => {
     let cancelled = false;
     async function loadArtists() {
-      if (hasCachedArtistsRef.current) {
+      const hasCachedArtists = hasCachedArtistsRef.current;
+      if (!hasCachedArtists) {
+        setLoadingArtists(true);
+      } else {
         setLoadingArtists(false);
-        return;
       }
-      setLoadingArtists(true);
       try {
-        const res = await fetch(buildApiUrl("/api/spotify/artists", { limit: "100" }), {
-          cache: "no-store",
-        });
-        if (!res.ok) {
-          const mapped = mapSpotifyApiError(res.status, "Artiesten laden lukt nu niet.");
-          if (!cancelled) {
-            setAuthRequired(Boolean(mapped.authRequired));
-            setError(mapped.message);
+        const all: ArtistOption[] = [];
+        const seenCursors = new Set<string>();
+        let cursor: string | null = null;
+        do {
+          const res = await fetch(
+            buildApiUrl("/api/spotify/artists", {
+              limit: "50",
+              cursor,
+            }),
+            { cache: "no-store" }
+          );
+          if (!res.ok) {
+            const mapped = mapSpotifyApiError(res.status, "Artiesten laden lukt nu niet.");
+            if (!cancelled && !hasCachedArtists) {
+              setAuthRequired(Boolean(mapped.authRequired));
+              setError(mapped.message);
+            }
+            return;
           }
-          return;
-        }
-        const data = (await res.json()) as CursorResponse<ArtistApiItem>;
-        const items = Array.isArray(data.items) ? data.items : [];
-        const mappedItems = items.map(
-          (artist): ArtistOption => ({
-            id: artist.artistId,
-            name: artist.name,
-            spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
-          })
-        );
-        const unique = new Map<string, ArtistOption>();
-        for (const option of mappedItems) unique.set(option.id, option);
-        const list = Array.from(unique.values()).sort((a, b) =>
-          a.name.localeCompare(b.name, "en", { sensitivity: "base" })
-        );
+          const data = (await res.json()) as CursorResponse<ArtistApiItem>;
+          const items = Array.isArray(data.items) ? data.items : [];
+          const mappedItems = items.map(
+            (artist): ArtistOption => ({
+              id: artist.artistId,
+              name: artist.name,
+              spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
+            })
+          );
+          all.push(...mappedItems);
+          const nextCursor = data.nextCursor ?? null;
+          if (nextCursor && seenCursors.has(nextCursor)) {
+            cursor = null;
+          } else {
+            if (nextCursor) {
+              seenCursors.add(nextCursor);
+            }
+            cursor = nextCursor;
+          }
+        } while (cursor);
+        const list = normalizeArtistOptions(all);
         if (!cancelled) {
           setArtistOptions(list);
-          setArtistCursor(data.nextCursor ?? null);
+          setArtistCursor(null);
+          hasCachedArtistsRef.current = list.length > 0;
         }
       } catch {
-        if (!cancelled) {
+        if (!cancelled && !hasCachedArtists) {
           setError("Artiesten laden lukt nu niet.");
         }
       } finally {
@@ -1098,7 +1138,7 @@ export default function PlaylistBrowser() {
     try {
       const res = await fetch(
         buildApiUrl("/api/spotify/artists", {
-          limit: "100",
+          limit: "50",
           cursor: artistCursor,
         }),
         { cache: "no-store" }
@@ -1107,20 +1147,13 @@ export default function PlaylistBrowser() {
       const data = (await res.json()) as CursorResponse<ArtistApiItem>;
       const items = Array.isArray(data.items) ? data.items : [];
       const mappedItems = items.map(
-        (artist): ArtistOption => ({
-          id: artist.artistId,
-          name: artist.name,
-          spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
-        })
-      );
-      setArtistOptions((prev) => {
-        const unique = new Map<string, ArtistOption>();
-        for (const option of prev) unique.set(option.id, option);
-        for (const option of mappedItems) unique.set(option.id, option);
-        return Array.from(unique.values()).sort((a, b) =>
-          a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+          (artist): ArtistOption => ({
+            id: artist.artistId,
+            name: artist.name,
+            spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
+          })
         );
-      });
+      setArtistOptions((prev) => normalizeArtistOptions(prev.concat(mappedItems)));
       setArtistCursor(data.nextCursor ?? null);
     } finally {
       setLoadingMoreArtists(false);

@@ -117,8 +117,8 @@ export function fillChatGptPrompt(
 ) {
   const url = trackUrl || "Onbekend";
   const emojiStart =
-    /^\s*(?:\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)/u;
-  const calendarStart = /^\s*📆/u;
+    /^[\s\u200B-\u200D\u200E\u200F\u2060\uFEFF]*(?:\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)/u;
+  const calendarStart = /^[\s\u200B-\u200D\u200E\u200F\u2060\uFEFF]*📆/u;
   const filteredPlaylists = playlists.filter(
     (name) => emojiStart.test(name) && !calendarStart.test(name)
   );

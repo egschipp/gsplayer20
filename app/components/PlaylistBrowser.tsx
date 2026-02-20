@@ -90,7 +90,7 @@ function normalizeTrackName(value: string | null | undefined) {
 }
 
 const LEADING_EMOJI_PATTERN =
-  /^\s*(?:\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)/u;
+  /^[\s\u200B-\u200D\u200E\u200F\u2060\uFEFF]*(?:\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)/u;
 
 function startsWithEmoji(value: string | null | undefined) {
   return LEADING_EMOJI_PATTERN.test(String(value ?? ""));

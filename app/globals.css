@@ -1744,6 +1744,14 @@ details[open] > .details-summary::after {
   border-radius: 999px;
   background: rgba(2, 154, 228, 0.2);
   outline: none;
+  cursor: pointer;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.player-slider:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(29, 185, 84, 0.5);
 }
 
 .player-slider::-webkit-slider-thumb {
@@ -1755,6 +1763,7 @@ details[open] > .details-summary::after {
   background: #13c2a1;
   cursor: pointer;
   border: 2px solid rgba(0, 0, 0, 0.4);
+  transition: transform 120ms ease, background 120ms ease;
 }
 
 .player-slider::-moz-range-thumb {
@@ -1764,6 +1773,19 @@ details[open] > .details-summary::after {
   background: #13c2a1;
   cursor: pointer;
   border: 2px solid rgba(0, 0, 0, 0.4);
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.player-slider-seek.is-scrubbing::-webkit-slider-thumb,
+.player-slider-seek:active::-webkit-slider-thumb {
+  transform: scale(1.12);
+  background: #1ed760;
+}
+
+.player-slider-seek.is-scrubbing::-moz-range-thumb,
+.player-slider-seek:active::-moz-range-thumb {
+  transform: scale(1.12);
+  background: #1ed760;
 }
 
 

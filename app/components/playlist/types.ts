@@ -3,7 +3,7 @@ export type Mode = "playlists" | "artists" | "tracks";
 export type PlaylistOption = {
   id: string;
   name: string;
-  type: "liked" | "playlist";
+  type: "liked" | "playlist" | "all_music";
   spotifyUrl: string;
 };
 
@@ -106,4 +106,11 @@ export const LIKED_OPTION: PlaylistOption = {
   name: "Liked Songs",
   type: "liked",
   spotifyUrl: "https://open.spotify.com/collection/tracks",
+};
+
+export const ALL_MY_MUSIC_OPTION: PlaylistOption = {
+  id: "all_my_music",
+  name: "All My Music",
+  type: "all_music",
+  spotifyUrl: "https://open.spotify.com",
 };

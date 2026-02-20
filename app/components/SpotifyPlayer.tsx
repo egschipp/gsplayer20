@@ -146,6 +146,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [shufflePending, setShufflePending] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
+  const [scrubPositionMs, setScrubPositionMs] = useState<number | null>(null);
+  const [scrubActive, setScrubActive] = useState(false);
   const [volume, setVolume] = useState(0.5);
   const [muted, setMuted] = useState(false);
   const [repeatMode, setRepeatMode] = useState<"off" | "context" | "track">("off");
@@ -208,6 +210,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const volumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isScrubbingRef = useRef(false);
+  const scrubbingByPointerRef = useRef(false);
+  const scrubPositionRef = useRef<number | null>(null);
+  const seekRequestSeqRef = useRef(0);
   const lastUserSeekAtRef = useRef(0);
   const lastUserVolumeAtRef = useRef(0);
   const lastNonZeroVolumeRef = useRef(0.5);
@@ -260,12 +265,60 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const trackChangeLockUntilRef = useRef(0);
   const lastProgressSyncRef = useRef(0);
   const lastKnownPositionRef = useRef(0);
+  const progressAnchorRef = useRef<{ positionMs: number; at: number }>({
+    positionMs: 0,
+    at: Date.now(),
+  });
+  const durationMsRef = useRef(0);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const playerCleanupRef = useRef<(() => void) | null>(null);
   const autoBootAttemptedRef = useRef(false);
   const backgroundHandoffInFlightRef = useRef(false);
+
+  const clampProgressMs = useCallback((nextMs: number) => {
+    const raw = Number.isFinite(nextMs) ? Math.floor(nextMs) : 0;
+    const maxDuration = durationMsRef.current;
+    if (maxDuration > 0) {
+      return Math.max(0, Math.min(raw, maxDuration));
+    }
+    return Math.max(0, raw);
+  }, []);
+
+  const applyProgressPosition = useCallback(
+    (nextMs: number, at = Date.now()) => {
+      const clamped = clampProgressMs(nextMs);
+      setPositionMs(clamped);
+      lastKnownPositionRef.current = clamped;
+      progressAnchorRef.current = { positionMs: clamped, at };
+      return clamped;
+    },
+    [clampProgressMs]
+  );
+
+  const setScrubPreview = useCallback((nextMs: number | null) => {
+    scrubPositionRef.current = nextMs;
+    setScrubPositionMs(nextMs);
+  }, []);
+
+  const beginScrub = useCallback(
+    (pointerDriven = false) => {
+      isScrubbingRef.current = true;
+      scrubbingByPointerRef.current = pointerDriven;
+      setScrubActive(true);
+      const seed = scrubPositionRef.current ?? lastKnownPositionRef.current;
+      setScrubPreview(clampProgressMs(seed));
+    },
+    [clampProgressMs, setScrubPreview]
+  );
+
+  const updateScrub = useCallback(
+    (nextMs: number) => {
+      setScrubPreview(clampProgressMs(nextMs));
+    },
+    [clampProgressMs, setScrubPreview]
+  );
 
   const playbackSessionReady = useMemo(
     () => Boolean(accessToken) && playbackAllowed,
@@ -693,7 +746,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const id = offsetUri.split(":").pop() || null;
     pendingTrackIdRef.current = id;
     trackChangeLockUntilRef.current = Date.now() + 2000;
-    setPositionMs(0);
+    applyProgressPosition(0);
     if (deviceId === sdkDeviceIdRef.current) {
       await playerRef.current?.activateElement?.();
     }
@@ -712,8 +765,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       { method: "PUT", body: JSON.stringify(payload) }
     );
     if (res && res.ok) {
-      setPositionMs(0);
-      lastKnownPositionRef.current = 0;
+      applyProgressPosition(0);
       setTimeout(() => {
         spotifyApiFetch(
           withDeviceId(
@@ -849,8 +901,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
       const syncedPosition = isNewTrack || !allowProgressUpdate ? 0 : nextPosition;
       if (!isScrubbingRef.current) {
-        setPositionMs(syncedPosition);
-        lastKnownPositionRef.current = syncedPosition;
+        applyProgressPosition(syncedPosition);
       }
       setDurationMs(item.duration_ms ?? 0);
       setCurrentTrackIdState(trackId);
@@ -884,6 +935,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (nextVol > 0) lastNonZeroVolumeRef.current = nextVol;
     }
   }, [
+    applyProgressPosition,
     onTrackChange,
     rebuildQueueOrder,
     setActiveDevice,
@@ -1068,8 +1120,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
       const safePosition = isNewTrack || !allowProgressUpdate ? 0 : nextPosition;
       if (!isScrubbingRef.current) {
-        setPositionMs(safePosition);
-        lastKnownPositionRef.current = safePosition;
+        applyProgressPosition(safePosition);
       }
       setDurationMs(nextDuration);
       setCurrentTrackIdState(trackId);
@@ -1092,7 +1143,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         }
       }
     },
-    [onTrackChange, setActiveDevice, syncQueuePositionFromTrack]
+    [applyProgressPosition, onTrackChange, setActiveDevice, syncQueuePositionFromTrack]
   );
 
   useEffect(() => {
@@ -1141,6 +1192,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    durationMsRef.current = durationMs;
+    if (scrubPositionRef.current === null) return;
+    const clamped = clampProgressMs(scrubPositionRef.current);
+    if (clamped !== scrubPositionRef.current) {
+      setScrubPreview(clamped);
+    }
+  }, [clampProgressMs, durationMs, setScrubPreview]);
 
   const refreshDevices = useCallback(async (force = false) => {
     if (force || !accessTokenRef.current) {
@@ -1577,7 +1637,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 positionMs: data.progress_ms ?? 0,
                 durationMs: item.duration_ms ?? 0,
               });
-              setPositionMs(data.progress_ms ?? 0);
+              if (!isScrubbingRef.current) {
+                applyProgressPosition(data.progress_ms ?? 0);
+              }
               setDurationMs(item.duration_ms ?? 0);
               setCurrentTrackIdState(item.id ?? null);
               if (onTrackChange) onTrackChange(item.id ?? null);
@@ -1826,7 +1888,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             const id = resolvedUri.split(":").pop() || null;
             pendingTrackIdRef.current = id;
             trackChangeLockUntilRef.current = Date.now() + 2000;
-            setPositionMs(0);
+            applyProgressPosition(0);
           }
           if (currentDevice === sdkDeviceIdRef.current) {
             await playerRef.current?.activateElement?.();
@@ -1928,8 +1990,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               queueOrderRef.current = null;
               queuePosRef.current = startIndex;
             }
-            setPositionMs(0);
-            lastKnownPositionRef.current = 0;
+            applyProgressPosition(0);
             if (resolvedUri) {
               setTimeout(() => {
                 spotifyApiFetch(
@@ -1984,7 +2045,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             const id = offsetUri.split(":").pop() || null;
             pendingTrackIdRef.current = id;
             trackChangeLockUntilRef.current = Date.now() + 2000;
-            setPositionMs(0);
+            applyProgressPosition(0);
           }
           if (currentDevice === sdkDeviceIdRef.current) {
             await playerRef.current?.activateElement?.();
@@ -2063,8 +2124,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             queueUrisRef.current = null;
             queueOrderRef.current = null;
             queuePosRef.current = 0;
-            setPositionMs(0);
-            lastKnownPositionRef.current = 0;
+            applyProgressPosition(0);
             setTimeout(() => {
               spotifyApiFetch(
                 withDeviceId(
@@ -2121,18 +2181,29 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     };
   }
 
+  const isPlaybackPaused = playerState?.paused ?? true;
+
   useEffect(() => {
-    if (!playerState || playerState.paused) return;
-    const interval = setInterval(() => {
-      if (isScrubbingRef.current) return;
-      setPositionMs((prev) => {
-        const next = Math.min(prev + 500, durationMs || prev + 500);
-        lastKnownPositionRef.current = next;
-        return next;
-      });
-    }, 500);
-    return () => clearInterval(interval);
-  }, [playerState, durationMs]);
+    if (typeof window === "undefined") return;
+    if (isPlaybackPaused) return;
+    let rafId = 0;
+    const step = () => {
+      if (!isScrubbingRef.current) {
+        const anchor = progressAnchorRef.current;
+        const elapsed = Math.max(0, Date.now() - anchor.at);
+        const next = clampProgressMs(anchor.positionMs + elapsed);
+        if (Math.abs(next - lastKnownPositionRef.current) >= 160) {
+          setPositionMs(next);
+          lastKnownPositionRef.current = next;
+        }
+      }
+      rafId = window.requestAnimationFrame(step);
+    };
+    rafId = window.requestAnimationFrame(step);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [clampProgressMs, isPlaybackPaused]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -2379,8 +2450,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             ) {
               // Avoid small backward jumps while playing unless the user just sought.
             } else {
-              setPositionMs(synced);
-              lastKnownPositionRef.current = synced;
+              applyProgressPosition(synced);
             }
           }
           setDurationMs(item.duration_ms ?? 0);
@@ -2446,6 +2516,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     };
   }, [
     accessToken,
+    applyProgressPosition,
     onTrackChange,
     rebuildQueueOrder,
     setActiveDevice,
@@ -2735,26 +2806,26 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     return `${min}:${sec.toString().padStart(2, "0")}`;
   }
 
+  const readSliderValue = useCallback((raw: string) => {
+    const parsed = Number(raw);
+    return clampProgressMs(Number.isFinite(parsed) ? parsed : 0);
+  }, [clampProgressMs]);
+
   async function handleSeek(nextMs: number) {
     setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const fallbackDevice =
       activeDeviceIdRef.current || deviceIdRef.current || sdkDeviceIdRef.current;
-    if (!token || !fallbackDevice) {
-      isScrubbingRef.current = false;
-      return;
-    }
-    if (Date.now() < rateLimitRef.current.until) {
-      isScrubbingRef.current = false;
-      return;
-    }
-    const targetMs = Math.max(0, Math.floor(nextMs));
-    setPositionMs(targetMs);
+    const targetMs = applyProgressPosition(nextMs);
+    if (!token || !fallbackDevice) return;
+    if (Date.now() < rateLimitRef.current.until) return;
     lastUserSeekAtRef.current = Date.now();
+    const seekSeq = ++seekRequestSeqRef.current;
     if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
     seekTimerRef.current = setTimeout(async () => {
-      isScrubbingRef.current = false;
+      if (seekSeq !== seekRequestSeqRef.current) return;
       await enqueuePlaybackCommand(async () => {
+        if (seekSeq !== seekRequestSeqRef.current) return;
         const currentDevice =
           activeDeviceIdRef.current || deviceIdRef.current || fallbackDevice;
         if (!currentDevice) return;
@@ -2784,6 +2855,19 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         }, 180);
       });
     }, 120);
+  }
+
+  function commitScrubSeek(fallbackMs?: number) {
+    const hasPendingScrub =
+      isScrubbingRef.current || scrubPositionRef.current !== null;
+    const candidate = scrubPositionRef.current ?? fallbackMs;
+    setScrubPreview(null);
+    setScrubActive(false);
+    isScrubbingRef.current = false;
+    scrubbingByPointerRef.current = false;
+    if (!hasPendingScrub) return;
+    if (typeof candidate !== "number" || Number.isNaN(candidate)) return;
+    void handleSeek(candidate);
   }
 
   async function handleVolume(nextVolume: number) {
@@ -2927,6 +3011,16 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       </div>
     );
   }
+
+  const sliderMax = Math.max(1, durationMs || 0);
+  const sliderPositionMs = Math.min(
+    sliderMax,
+    Math.max(0, scrubPositionMs ?? positionMs)
+  );
+  const sliderProgressPct = Math.min(
+    100,
+    Math.max(0, (sliderPositionMs / sliderMax) * 100)
+  );
 
   return (
     <div className="player-card">
@@ -3127,35 +3221,76 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           </div>
         </div>
         <div className="player-progress player-progress-main">
-          <span className="text-subtle">{formatTime(positionMs)}</span>
+          <span className="text-subtle">{formatTime(sliderPositionMs)}</span>
           <input
             type="range"
             min={0}
-            max={durationMs || 1}
-            value={Math.min(positionMs, durationMs || 1)}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              isScrubbingRef.current = true;
-              setPositionMs(next);
-              void handleSeek(next);
+            max={sliderMax}
+            step={250}
+            value={sliderPositionMs}
+            onPointerDown={(event) => {
+              beginScrub(true);
+              try {
+                event.currentTarget.setPointerCapture(event.pointerId);
+              } catch {
+                // Some browsers reject pointer capture on range controls.
+              }
             }}
-            className="player-slider"
+            onPointerUp={() => {
+              commitScrubSeek();
+            }}
+            onPointerCancel={() => {
+              commitScrubSeek();
+            }}
+            onMouseDown={() => {
+              beginScrub(true);
+            }}
+            onMouseUp={() => {
+              commitScrubSeek();
+            }}
+            onTouchStart={() => {
+              beginScrub(true);
+            }}
+            onTouchEnd={() => {
+              commitScrubSeek();
+            }}
+            onTouchCancel={() => {
+              commitScrubSeek();
+            }}
+            onInput={(event) => {
+              const next = readSliderValue(event.currentTarget.value);
+              if (!isScrubbingRef.current) {
+                beginScrub(false);
+              }
+              updateScrub(next);
+            }}
+            onChange={(event) => {
+              const next = readSliderValue(event.currentTarget.value);
+              if (!isScrubbingRef.current) {
+                beginScrub(false);
+              }
+              if (scrubbingByPointerRef.current) return;
+              commitScrubSeek(next);
+            }}
+            onBlur={(event) => {
+              if (!isScrubbingRef.current && scrubPositionRef.current === null) return;
+              const next = readSliderValue(event.currentTarget.value);
+              commitScrubSeek(next);
+            }}
+            className={`player-slider player-slider-seek${
+              scrubActive ? " is-scrubbing" : ""
+            }`}
             style={{
               background: `linear-gradient(90deg, #1db954 ${Math.min(
                 100,
-                Math.max(
-                  0,
-                  durationMs ? (positionMs / durationMs) * 100 : 0
-                )
+                Math.max(0, sliderProgressPct)
               )}%, rgba(2, 154, 228, 0.2) ${Math.min(
                 100,
-                Math.max(
-                  0,
-                  durationMs ? (positionMs / durationMs) * 100 : 0
-                )
+                Math.max(0, sliderProgressPct)
               )}%)`,
             }}
             aria-label="Seek"
+            aria-valuetext={`${formatTime(sliderPositionMs)} van ${formatTime(durationMs)}`}
           />
           <span className="text-subtle">{formatTime(durationMs)}</span>
         </div>
@@ -3342,7 +3477,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       </div>
       {queueOpen ? (
         <div className="player-queue">
-          <div className="player-queue-title">Up Next</div>
+          <div className="player-queue-title">Up Next ({queueItems.length})</div>
           {queueLoading ? (
             <div className="text-subtle">Queue laden...</div>
           ) : queueError ? (

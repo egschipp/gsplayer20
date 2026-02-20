@@ -51,6 +51,9 @@ export default function QueuePageClient() {
       : null;
 
   const hasItems = queue.items.length > 0;
+  const queueCountLabel = `${queue.items.length} ${
+    queue.items.length === 1 ? "track" : "tracks"
+  }`;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -122,6 +125,7 @@ export default function QueuePageClient() {
           <h1 id="queue-title" className="heading-2">
             Georgies Queue
           </h1>
+          <div className={styles.count}>{queueCountLabel}</div>
         </div>
         <div className={styles.headerActions}>
           <button

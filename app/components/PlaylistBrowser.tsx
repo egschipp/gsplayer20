@@ -8,6 +8,7 @@ import { usePlayer } from "./player/PlayerProvider";
 import ChatGptButton from "./playlist/ChatGptButton";
 import PlaylistChips from "./playlist/PlaylistChips";
 import {
+  ALL_MY_MUSIC_OPTION,
   type ArtistDetail,
   type ArtistOption,
   type Mode,
@@ -96,12 +97,43 @@ function startsWithEmoji(value: string | null | undefined) {
   return LEADING_EMOJI_PATTERN.test(String(value ?? ""));
 }
 
+function normalizePlaylistOptions(options: PlaylistOption[]) {
+  const unique = new Map<string, PlaylistOption>();
+  unique.set(LIKED_OPTION.id, LIKED_OPTION);
+  unique.set(ALL_MY_MUSIC_OPTION.id, ALL_MY_MUSIC_OPTION);
+  for (const option of options) {
+    if (!option?.id) continue;
+    if (option.id === LIKED_OPTION.id) continue;
+    if (option.id === ALL_MY_MUSIC_OPTION.id) continue;
+    unique.set(option.id, option);
+  }
+  const sorted = Array.from(unique.values())
+    .filter(
+      (option) =>
+        option.id !== LIKED_OPTION.id && option.id !== ALL_MY_MUSIC_OPTION.id
+    )
+    .sort((a, b) =>
+      String(a.name ?? "").localeCompare(String(b.name ?? ""), "nl", {
+        sensitivity: "base",
+        ignorePunctuation: true,
+        numeric: true,
+      })
+    );
+  return [LIKED_OPTION, ALL_MY_MUSIC_OPTION, ...sorted];
+}
+
 function toPlaylistLink(option: PlaylistOption): PlaylistLink {
   return option.type === "liked"
     ? {
         id: "liked",
         name: "Liked Songs",
         spotifyUrl: "https://open.spotify.com/collection/tracks",
+      }
+    : option.type === "all_music"
+    ? {
+        id: option.id,
+        name: option.name,
+        spotifyUrl: option.spotifyUrl || "https://open.spotify.com",
       }
     : {
         id: option.id,
@@ -188,6 +220,53 @@ function mapTrackApiItems(items: TrackApiItem[]): TrackItem[] {
           }))
       : [],
   }));
+}
+
+function mapTrackItemToRow(track: TrackItem): TrackRow {
+  const trackId =
+    typeof track.trackId === "string" && track.trackId
+      ? track.trackId
+      : track.id;
+  const artistsText =
+    dedupeArtistText(
+      (Array.isArray(track.artists) ? track.artists : [])
+        .map((artist) => artist?.name)
+        .filter(Boolean)
+        .join(", ")
+    ) || null;
+  const coverUrl = track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null;
+  const albumReleaseDate = track.album?.release_date ?? null;
+  const releaseYear =
+    typeof track.releaseYear === "number"
+      ? track.releaseYear
+      : albumReleaseDate && /^\d{4}/.test(albumReleaseDate)
+      ? Number(albumReleaseDate.slice(0, 4))
+      : null;
+  return {
+    trackId: trackId || null,
+    name: track.name || null,
+    albumId: track.album?.id ?? null,
+    albumName: track.album?.name ?? null,
+    albumReleaseDate,
+    releaseYear,
+    albumImageUrl: track.albumImageUrl ?? null,
+    coverUrl,
+    artists: artistsText,
+    durationMs: track.durationMs ?? null,
+    explicit: track.explicit ?? null,
+    popularity: track.popularity ?? null,
+    playlists: Array.isArray(track.playlists)
+      ? track.playlists.map((playlist) => ({
+          id: playlist.id,
+          name: playlist.name,
+          spotifyUrl:
+            playlist.spotifyUrl ??
+            (playlist.id === "liked"
+              ? "https://open.spotify.com/collection/tracks"
+              : `https://open.spotify.com/playlist/${playlist.id}`),
+        }))
+      : [],
+  };
 }
 
 function mergeTrackOptions(prev: TrackOption[], items: TrackItem[]) {
@@ -453,7 +532,7 @@ export default function PlaylistBrowser() {
       };
       if (Array.isArray(parsed.playlistOptions)) {
         hasCachedPlaylistsRef.current = parsed.playlistOptions.length > 0;
-        setPlaylistOptions(parsed.playlistOptions);
+        setPlaylistOptions(normalizePlaylistOptions(parsed.playlistOptions));
         setLoadingPlaylists(false);
       }
       if (Array.isArray(parsed.artistOptions)) {
@@ -647,20 +726,7 @@ export default function PlaylistBrowser() {
           cursor = data.nextCursor ?? null;
         } while (cursor);
 
-        const unique = new Map<string, PlaylistOption>();
-        for (const option of [LIKED_OPTION, ...all]) {
-          unique.set(option.id, option);
-        }
-        const sorted: PlaylistOption[] = Array.from(unique.values())
-          .filter((item) => item.id !== LIKED_OPTION.id)
-          .sort((a, b) =>
-            a.name.localeCompare(b.name, "nl", {
-              sensitivity: "base",
-              ignorePunctuation: true,
-              numeric: true,
-            })
-          );
-        const list: PlaylistOption[] = [LIKED_OPTION, ...sorted];
+        const list = normalizePlaylistOptions(all);
         if (!cancelled) {
           setPlaylistOptions(list);
           setPlaylistCursor(cursor ?? null);
@@ -874,19 +940,8 @@ export default function PlaylistBrowser() {
   }, [playlistOptions]);
 
   const sortedPlaylists = useMemo(() => {
-    if (!playlistOptions.length) return playlistOptions;
-    const map = new Map<string, PlaylistOption>();
-    for (const option of playlistOptions) map.set(option.id, option);
-    const list = Array.from(map.values())
-      .filter((item) => item.id !== LIKED_OPTION.id)
-      .sort((a, b) =>
-        String(a.name ?? "").localeCompare(String(b.name ?? ""), "nl", {
-          sensitivity: "base",
-          ignorePunctuation: true,
-          numeric: true,
-        })
-      );
-    return [LIKED_OPTION, ...list];
+    if (!playlistOptions.length) return normalizePlaylistOptions([]);
+    return normalizePlaylistOptions(playlistOptions);
   }, [playlistOptions]);
 
   const filteredOptions = useMemo(() => {
@@ -952,19 +1007,7 @@ export default function PlaylistBrowser() {
         })
       );
       setPlaylistOptions((prev) => {
-        const unique = new Map<string, PlaylistOption>();
-        for (const option of prev) unique.set(option.id, option);
-        for (const option of mappedItems) unique.set(option.id, option);
-        const sorted: PlaylistOption[] = Array.from(unique.values())
-          .filter((item) => item.id !== LIKED_OPTION.id)
-          .sort((a, b) =>
-            a.name.localeCompare(b.name, "nl", {
-              sensitivity: "base",
-              ignorePunctuation: true,
-              numeric: true,
-            })
-          );
-        return [LIKED_OPTION, ...sorted];
+        return normalizePlaylistOptions(prev.concat(mappedItems));
       });
       setPlaylistCursor(data.nextCursor ?? null);
     } finally {
@@ -1222,6 +1265,62 @@ export default function PlaylistBrowser() {
       setLoadingTracks(true);
       setError(null);
       try {
+        if (mode === "playlists" && selectedPlaylist?.type === "all_music") {
+          const MAX_PAGES = 120;
+          let cursor: string | null = null;
+          let page = 0;
+          const seenTrackIds = new Set<string>();
+          const collected: TrackItem[] = [];
+          do {
+            const cursorQuery = cursor
+              ? `&cursor=${encodeURIComponent(cursor)}`
+              : "";
+            const res = await fetch(`/api/spotify/tracks?limit=100${cursorQuery}`, {
+              cache: "no-store",
+            });
+            if (!res.ok) {
+              const mapped = mapSpotifyApiError(
+                res.status,
+                "Tracks laden lukt nu niet."
+              );
+              if (!cancelled) {
+                setAuthRequired(Boolean(mapped.authRequired));
+                setError(mapped.message);
+              }
+              return;
+            }
+            const data = (await res.json()) as CursorResponse<TrackApiItem>;
+            const pageItems = mapTrackApiItems(Array.isArray(data.items) ? data.items : []);
+            for (const track of pageItems) {
+              const trackId = track.trackId || track.id;
+              if (!trackId || seenTrackIds.has(trackId)) continue;
+              const hasEmojiPlaylist = Array.isArray(track.playlists)
+                ? track.playlists.some((playlist) => startsWithEmoji(playlist?.name))
+                : false;
+              if (!hasEmojiPlaylist) continue;
+              seenTrackIds.add(trackId);
+              collected.push(track);
+            }
+            cursor = data.nextCursor ?? null;
+            page += 1;
+          } while (cursor && page < MAX_PAGES);
+          const rows = collected.map((track) => mapTrackItemToRow(track));
+          rows.sort((a, b) =>
+            String(a.name ?? "").localeCompare(String(b.name ?? ""), "nl", {
+              sensitivity: "base",
+              ignorePunctuation: true,
+              numeric: true,
+            })
+          );
+          if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
+            setTracks(rows);
+            setNextCursor(null);
+            if (nextContextKey) setTracksContextKey(nextContextKey);
+            setPendingTracksContextKey(null);
+          }
+          return;
+        }
+
         const baseUrl =
           mode === "playlists"
             ? selectedPlaylist?.type === "liked"
@@ -1348,6 +1447,7 @@ export default function PlaylistBrowser() {
   async function loadMore() {
     if (!nextCursor || loadingMoreTracksRef.current) return;
     if (mode === "playlists" && !selectedPlaylist?.id) return;
+    if (mode === "playlists" && selectedPlaylist?.type === "all_music") return;
     if (mode === "artists" && !selectedArtist?.id) return;
     const requestVersion = tracksLoadVersionRef.current;
     const cursor = nextCursor;
@@ -1747,7 +1847,10 @@ export default function PlaylistBrowser() {
       if (!trackId) return;
 
       if (mode === "playlists" && selectedPlaylist?.id) {
-        if (selectedPlaylist.type === "liked") {
+        if (
+          selectedPlaylist.type === "liked" ||
+          selectedPlaylist.type === "all_music"
+        ) {
           const playbackQueue = buildQueue();
           const targetUri = `spotify:track:${trackId}`;
           if (playbackQueue.uris.length && playbackQueue.byId.has(trackId)) {
@@ -1805,6 +1908,21 @@ export default function PlaylistBrowser() {
     }
   }
 
+  const hasTrackContext =
+    mode === "tracks"
+      ? Boolean(selectedTrackId)
+      : mode === "playlists"
+      ? Boolean(selectedPlaylist?.id)
+      : Boolean(selectedArtist?.id);
+  const visibleTrackCount = hasTrackContext
+    ? mode === "tracks"
+      ? filteredTrackItems.length
+      : tracks.length
+    : 0;
+  const visibleTrackCountLabel = `${visibleTrackCount} ${
+    visibleTrackCount === 1 ? "track" : "tracks"
+  }`;
+
 
   const selectorDock = (
     <div
@@ -1828,6 +1946,7 @@ export default function PlaylistBrowser() {
         <span className="player-library-dock-value">
           <span className="text-subtle">{selectorModeLabel}</span>
           <strong>{selectorCurrentLabel}</strong>
+          <span className="player-badge player-badge-compact">{visibleTrackCountLabel}</span>
         </span>
         <span
           className={`player-library-dock-chevron${selectorDockOpen ? " open" : ""}`}
@@ -2086,7 +2205,7 @@ export default function PlaylistBrowser() {
       ) : null}
       {!loadingPlaylists &&
       mode === "playlists" &&
-      playlistOptions.length <= 1 ? (
+      playlistOptions.length <= 2 ? (
         <div className="empty-state">
           <div style={{ fontWeight: 600 }}>Nog geen playlists gevonden</div>
           <div className="text-body">
@@ -2111,6 +2230,9 @@ export default function PlaylistBrowser() {
         <div style={{ color: "#fca5a5" }} role="alert">
           <p>{error}</p>
         </div>
+      ) : null}
+      {hasTrackContext ? (
+        <div className="text-subtle">Tracks in lijst: {visibleTrackCount}</div>
       ) : null}
 
       {mode !== "tracks" ? (

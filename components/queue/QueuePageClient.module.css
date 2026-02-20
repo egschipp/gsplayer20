@@ -18,6 +18,12 @@
   flex-wrap: wrap;
 }
 
+.count {
+  margin-top: 2px;
+  color: var(--text-subtle);
+  font-size: 0.8rem;
+}
+
 .error {
   display: flex;
   align-items: center;

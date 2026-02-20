@@ -118,9 +118,9 @@ export function fillChatGptPrompt(
   const url = trackUrl || "Onbekend";
   const emojiStart =
     /^\s*(?:\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)/u;
-  const excludedStart = /^\s*(📆|🧑🏻‍🎤)/u;
+  const calendarStart = /^\s*📆/u;
   const filteredPlaylists = playlists.filter(
-    (name) => emojiStart.test(name) && !excludedStart.test(name)
+    (name) => emojiStart.test(name) && !calendarStart.test(name)
   );
   const list = filteredPlaylists.length ? filteredPlaylists.join("\n") : "—";
   const meta = trackMeta?.trim() ? trackMeta.trim() : "—";

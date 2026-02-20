@@ -757,6 +757,14 @@ a:focus-visible {
   margin-top: 4px;
 }
 
+.playlist-chip-group {
+  position: relative;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  max-width: 100%;
+}
+
 .playlist-chip {
   display: inline-flex;
   align-items: center;
@@ -810,10 +818,44 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
-.playlist-more-less {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-subtle);
+.playlist-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 90;
+  min-width: 220px;
+  max-width: min(420px, 70vw);
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(8, 10, 14, 0.96);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.42);
+}
+
+.playlist-popover-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.playlist-popover-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.playlist-popover-item:focus-visible {
+  outline: 2px solid rgba(29, 185, 84, 0.45);
+  outline-offset: 1px;
 }
 
 .library-browser {

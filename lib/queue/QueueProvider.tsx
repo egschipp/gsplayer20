@@ -12,6 +12,7 @@ import {
   type QueueActionApi,
   type QueueFallbackContext,
   type QueueItem,
+  type QueuePlaylistRef,
   type QueuePlaybackMode,
   type QueueSnapshot,
   type QueueStore,
@@ -39,6 +40,18 @@ function createQueueId() {
 function isQueueItem(value: unknown): value is QueueItem {
   if (!value || typeof value !== "object") return false;
   const item = value as Partial<QueueItem>;
+  const playlistsValid =
+    item.playlists === undefined ||
+    (Array.isArray(item.playlists) &&
+      item.playlists.every(
+        (playlist) =>
+          Boolean(
+            playlist &&
+              typeof playlist === "object" &&
+              typeof (playlist as { id?: unknown }).id === "string" &&
+              typeof (playlist as { name?: unknown }).name === "string"
+          )
+      ));
   return Boolean(
     typeof item.queueId === "string" &&
       typeof item.uri === "string" &&
@@ -47,8 +60,22 @@ function isQueueItem(value: unknown): value is QueueItem {
       typeof item.artists === "string" &&
       (typeof item.durationMs === "number" || item.durationMs === null) &&
       (typeof item.artworkUrl === "string" || item.artworkUrl === null) &&
-      typeof item.addedAt === "number"
+      typeof item.addedAt === "number" &&
+      playlistsValid
   );
+}
+
+function normalizePlaylistRefs(playlists: QueuePlaylistRef[] | undefined) {
+  if (!Array.isArray(playlists)) return [] as QueuePlaylistRef[];
+  const deduped = new Map<string, QueuePlaylistRef>();
+  for (const playlist of playlists) {
+    if (!playlist?.id) continue;
+    deduped.set(playlist.id, {
+      id: playlist.id,
+      name: playlist.name || "Onbekende playlist",
+    });
+  }
+  return Array.from(deduped.values());
 }
 
 function isFallbackContext(value: unknown): value is QueueFallbackContext {
@@ -155,6 +182,7 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
         artists: track.artists,
         durationMs: track.durationMs,
         artworkUrl: track.artworkUrl,
+        playlists: normalizePlaylistRefs(track.playlists),
         addedAt: Date.now(),
       }));
     if (!sanitized.length) return;
@@ -231,6 +259,39 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  const upsertTrackPlaylist = useCallback((trackId: string, playlist: QueuePlaylistRef) => {
+    if (!trackId || !playlist?.id) return;
+    setSnapshot((prev) => ({
+      ...prev,
+      items: prev.items.map((item) => {
+        if (item.trackId !== trackId) return item;
+        const current = normalizePlaylistRefs(item.playlists);
+        if (current.some((entry) => entry.id === playlist.id)) return item;
+        return {
+          ...item,
+          playlists: [playlist, ...current],
+        };
+      }),
+    }));
+  }, []);
+
+  const removeTrackPlaylist = useCallback((trackId: string, playlistId: string) => {
+    if (!trackId || !playlistId) return;
+    setSnapshot((prev) => ({
+      ...prev,
+      items: prev.items.map((item) => {
+        if (item.trackId !== trackId) return item;
+        const current = normalizePlaylistRefs(item.playlists);
+        const next = current.filter((entry) => entry.id !== playlistId);
+        if (next.length === current.length) return item;
+        return {
+          ...item,
+          playlists: next,
+        };
+      }),
+    }));
+  }, []);
+
   const setCurrentQueueId = useCallback((queueId: string | null) => {
     setSnapshot((prev) => {
       if (!queueId) {
@@ -290,11 +351,23 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
       removeTrack,
       reorderTracks,
       clearQueue,
+      upsertTrackPlaylist,
+      removeTrackPlaylist,
       setCurrentQueueId,
       setMode,
       setFallbackContext,
     }),
-    [addTracks, clearQueue, removeTrack, reorderTracks, setCurrentQueueId, setFallbackContext, setMode]
+    [
+      addTracks,
+      clearQueue,
+      removeTrack,
+      removeTrackPlaylist,
+      reorderTracks,
+      setCurrentQueueId,
+      setFallbackContext,
+      setMode,
+      upsertTrackPlaylist,
+    ]
   );
 
   const value = useMemo<QueueStore>(

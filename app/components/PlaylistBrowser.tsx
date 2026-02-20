@@ -62,6 +62,15 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
     "album" in track
       ? track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null
       : track.coverUrl ?? track.albumImageUrl ?? null;
+  const playlists =
+    "playlists" in track && Array.isArray(track.playlists)
+      ? track.playlists
+          .filter((playlist) => Boolean(playlist?.id))
+          .map((playlist) => ({
+            id: playlist.id,
+            name: playlist.name || "Onbekende playlist",
+          }))
+      : [];
   return {
     uri: `spotify:track:${trackId}`,
     trackId,
@@ -69,6 +78,7 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
     artists,
     durationMs: track.durationMs ?? null,
     artworkUrl,
+    playlists,
   };
 }
 
@@ -263,6 +273,8 @@ export default function PlaylistBrowser() {
   const hasCachedTrackOptionsRef = useRef(false);
   const lastHandledRefreshTokenRef = useRef(0);
   const tracksLoadVersionRef = useRef(0);
+  const forceLivePlaylistRefreshRef = useRef(false);
+  const playlistTracksSourceLiveRef = useRef(false);
   const playlistAutoSyncAttemptRef = useRef<Record<string, number>>({});
   const cacheWriteBlockedRef = useRef(false);
   const cacheWriteTimerRef = useRef<number | null>(null);
@@ -819,6 +831,22 @@ export default function PlaylistBrowser() {
     setOpen(false);
   }, []);
 
+  const triggerSelectedPlaylistLiveRefresh = useCallback(
+    (playlistId: string) => {
+      if (
+        mode !== "playlists" ||
+        selectedPlaylist?.type !== "playlist" ||
+        !selectedPlaylist.id
+      ) {
+        return;
+      }
+      if (selectedPlaylist.id !== playlistId) return;
+      forceLivePlaylistRefreshRef.current = true;
+      setTracksRefreshToken((prev) => prev + 1);
+    },
+    [mode, selectedPlaylist?.id, selectedPlaylist?.type]
+  );
+
   const addTargetOptions = useMemo(() => {
     const emojiStart = /^\s*\p{Extended_Pictographic}/u;
     const unique = new Map<string, PlaylistOption>();
@@ -1165,6 +1193,15 @@ export default function PlaylistBrowser() {
         : null;
     async function loadTracks() {
       const requestVersion = ++tracksLoadVersionRef.current;
+      const forceLivePlaylistSource =
+        mode === "playlists" &&
+        selectedPlaylist?.type === "playlist" &&
+        forceLivePlaylistRefreshRef.current;
+      if (mode === "playlists" && selectedPlaylist?.type === "playlist") {
+        playlistTracksSourceLiveRef.current = forceLivePlaylistSource;
+      } else {
+        playlistTracksSourceLiveRef.current = false;
+      }
       setLoadingTracks(true);
       setError(null);
       try {
@@ -1172,6 +1209,8 @@ export default function PlaylistBrowser() {
           mode === "playlists"
             ? selectedPlaylist?.type === "liked"
               ? "/api/spotify/me/tracks?live=1"
+              : forceLivePlaylistSource
+              ? `/api/spotify/playlists/${selectedPlaylist?.id}/items?live=1`
               : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
             : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
         const connector = baseUrl.includes("?") ? "&" : "?";
@@ -1229,6 +1268,9 @@ export default function PlaylistBrowser() {
           setPendingTracksContextKey(null);
         }
       } finally {
+        if (forceLivePlaylistSource && requestVersion === tracksLoadVersionRef.current) {
+          forceLivePlaylistRefreshRef.current = false;
+        }
         if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
           setLoadingTracks(false);
         }
@@ -1296,6 +1338,8 @@ export default function PlaylistBrowser() {
       mode === "playlists"
         ? selectedPlaylist?.type === "liked"
           ? "/api/spotify/me/tracks?live=1"
+          : playlistTracksSourceLiveRef.current
+          ? `/api/spotify/playlists/${selectedPlaylist?.id}/items?live=1`
           : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
         : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
     const connector = baseUrl.includes("?") ? "&" : "?";
@@ -1363,8 +1407,9 @@ export default function PlaylistBrowser() {
         if (current.some((pl) => pl.id === link.id)) return prev;
         return { ...prev, playlists: [link, ...current] };
       });
+      queue.upsertTrackPlaylist(trackId, { id: link.id, name: link.name });
     },
-    []
+    [queue]
   );
 
   const removePlaylistOnTrack = useCallback(
@@ -1408,8 +1453,9 @@ export default function PlaylistBrowser() {
         if (next.length === current.length) return prev;
         return { ...prev, playlists: next };
       });
+      queue.removeTrackPlaylist(trackId, targetPlaylistId);
     },
-    [mode, selectedPlaylist?.id, selectedPlaylist?.type]
+    [mode, queue, selectedPlaylist?.id, selectedPlaylist?.type]
   );
 
   const appendTrackToSelectedPlaylist = useCallback(
@@ -1509,7 +1555,9 @@ export default function PlaylistBrowser() {
         const playlistLink = toPlaylistLink(target);
         upsertPlaylistOnTrack(trackId, playlistLink);
         appendTrackToSelectedPlaylist(track, target);
-        setTracksRefreshToken((prev) => prev + 1);
+        if (target.type === "playlist") {
+          triggerSelectedPlaylistLiveRefresh(target.id);
+        }
 
         if (
           mode === "playlists" &&
@@ -1549,6 +1597,7 @@ export default function PlaylistBrowser() {
       requestPlaylistItemsSync,
       selectedPlaylist?.id,
       selectedPlaylist?.type,
+      triggerSelectedPlaylistLiveRefresh,
       upsertPlaylistOnTrack,
     ]
   );
@@ -1589,6 +1638,9 @@ export default function PlaylistBrowser() {
         }
 
         removePlaylistOnTrack(trackId, playlist.id);
+        if (playlist.id !== "liked") {
+          triggerSelectedPlaylistLiveRefresh(playlist.id);
+        }
 
         if (
           mode === "playlists" &&
@@ -1629,6 +1681,7 @@ export default function PlaylistBrowser() {
       selectedPlaylist?.id,
       selectedPlaylist?.type,
       selectedTrackDetail?.trackId,
+      triggerSelectedPlaylistLiveRefresh,
     ]
   );
 

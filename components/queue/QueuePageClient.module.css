@@ -151,8 +151,11 @@
 }
 
 .statusCell {
+  display: grid;
+  gap: 4px;
   min-width: 0;
   width: 100%;
+  align-content: center;
   justify-self: start;
 }
 
@@ -188,6 +191,37 @@
 .statusQueued {
   border-color: rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.04);
+}
+
+.statusPlaylist {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  max-width: 100%;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.68rem;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.statusPlaylistIn {
+  border-color: rgba(29, 185, 84, 0.44);
+  background: rgba(29, 185, 84, 0.12);
+  color: #8cf5a9;
+}
+
+.statusPlaylistOut {
+  border-color: rgba(245, 158, 11, 0.42);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fcd38d;
+}
+
+.statusPlaylistUnknown {
+  border-color: rgba(148, 163, 184, 0.36);
+  background: rgba(148, 163, 184, 0.1);
+  color: #cbd5e1;
 }
 
 .durationCell {

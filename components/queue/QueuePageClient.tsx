@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { type DragEvent, useMemo, useState } from "react";
+import { type DragEvent, useEffect, useMemo, useState } from "react";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
 import { QUEUE_GRID_COLUMNS } from "@/lib/ui/trackLayout";
@@ -15,11 +15,28 @@ function formatDuration(ms: number | null) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+function readSelectedPlaylistId() {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem("gs_playlist_selection");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { mode?: string; playlistId?: string };
+    if (parsed.mode !== "playlists") return null;
+    if (typeof parsed.playlistId === "string" && parsed.playlistId) {
+      return parsed.playlistId;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default function QueuePageClient() {
   const queue = useQueueStore();
   const playback = useQueuePlayback();
   const [draggingQueueId, setDraggingQueueId] = useState<string | null>(null);
   const [dragOverQueueId, setDragOverQueueId] = useState<string | null>(null);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const activeQueueId = playback.startingQueueId ?? playback.activeQueueId ?? queue.currentQueueId;
 
   const currentIndex = useMemo(() => {
@@ -34,6 +51,20 @@ export default function QueuePageClient() {
       : null;
 
   const hasItems = queue.items.length > 0;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncSelection = () => {
+      setSelectedPlaylistId(readSelectedPlaylistId());
+    };
+    syncSelection();
+    window.addEventListener("storage", syncSelection);
+    window.addEventListener("focus", syncSelection);
+    return () => {
+      window.removeEventListener("storage", syncSelection);
+      window.removeEventListener("focus", syncSelection);
+    };
+  }, []);
 
   function handleDragStart(queueId: string, event: DragEvent<HTMLLIElement>) {
     setDraggingQueueId(queueId);
@@ -155,6 +186,11 @@ export default function QueuePageClient() {
               const isNext = queue.mode === "queue" && !isCurrent && item.queueId === nextQueueId;
               const isDragged = draggingQueueId === item.queueId;
               const isDragOver = dragOverQueueId === item.queueId;
+              const selectedPlaylistMembership = selectedPlaylistId
+                ? Array.isArray(item.playlists)
+                  ? item.playlists.some((playlist) => playlist.id === selectedPlaylistId)
+                  : null
+                : null;
 
               return (
                 <li
@@ -207,25 +243,36 @@ export default function QueuePageClient() {
                       </div>
                     </div>
 
-                    <div className={`track-col-playlists ${styles.statusCell}`}>
-                      {isCurrent ? (
-                        <span
-                          className={`${styles.statusPill} ${styles.statusNow} ${
-                            isStarting ? styles.statusStarting : ""
-                          }`}
-                        >
-                          {isStarting ? "Starten..." : "Nu spelend"}
-                        </span>
-                      ) : isNext ? (
-                        <span className={`${styles.statusPill} ${styles.statusNext}`}>
-                          Volgende
-                        </span>
-                      ) : (
-                        <span className={`${styles.statusPill} ${styles.statusQueued}`}>
-                          Queue
-                        </span>
-                      )}
-                    </div>
+	                    <div className={`track-col-playlists ${styles.statusCell}`}>
+	                      <span
+	                        className={`${styles.statusPill} ${
+	                          isCurrent
+	                            ? styles.statusNow
+	                            : isNext
+	                            ? styles.statusNext
+	                            : styles.statusQueued
+	                        } ${isStarting ? styles.statusStarting : ""}`}
+	                      >
+	                        {isCurrent ? (isStarting ? "Starten..." : "Nu spelend") : isNext ? "Volgende" : "Queue"}
+	                      </span>
+	                      {selectedPlaylistId ? (
+	                        <span
+	                          className={`${styles.statusPlaylist} ${
+	                            selectedPlaylistMembership === true
+	                              ? styles.statusPlaylistIn
+	                              : selectedPlaylistMembership === false
+	                              ? styles.statusPlaylistOut
+	                              : styles.statusPlaylistUnknown
+	                          }`}
+	                        >
+	                          {selectedPlaylistMembership === true
+	                            ? "In selectie"
+	                            : selectedPlaylistMembership === false
+	                            ? "Niet in selectie"
+	                            : "Status onbekend"}
+	                        </span>
+	                      ) : null}
+	                    </div>
 
                     <div className={`text-subtle track-col-duration ${styles.durationCell}`}>
                       {formatDuration(item.durationMs)}

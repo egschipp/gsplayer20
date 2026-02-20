@@ -71,6 +71,7 @@ export async function GET(
       ? Math.min(Math.floor(limitValue), 50)
       : 50;
   const cursor = searchParams.get("cursor");
+  const live = searchParams.get("live") === "1";
 
   const db = getDb();
   const baseWhere = and(
@@ -82,7 +83,7 @@ export async function GET(
   }
   let whereClause = baseWhere;
 
-  if (cursor) {
+  if (cursor && !live) {
     const decoded = tryDecodeCursor(cursor);
     if (!decoded) {
       return jsonError("INVALID_CURSOR", 400);
@@ -152,9 +153,12 @@ export async function GET(
     .orderBy(asc(playlistItems.position), asc(playlistItems.itemId))
     .limit(limit);
 
-  if (!rows.length && !cursor) {
+  if (live || (!rows.length && !cursor)) {
+    const parsedOffset = Number(cursor ?? "0");
+    const offset =
+      Number.isFinite(parsedOffset) && parsedOffset >= 0 ? Math.floor(parsedOffset) : 0;
     try {
-      const live = await spotifyFetch<{
+      const liveResponse = await spotifyFetch<{
         items?: Array<{
           added_at?: string;
           added_by?: { id?: string };
@@ -173,15 +177,16 @@ export async function GET(
             artists?: Array<{ name?: string }>;
           };
         }>;
+        next?: string | null;
       }>({
         url: `https://api.spotify.com/v1/playlists/${encodeURIComponent(
           playlistId
-        )}/tracks?limit=${limit}&offset=0`,
+        )}/tracks?limit=${limit}&offset=${offset}`,
         userLevel: true,
       });
 
       const now = Date.now();
-      const mapped = (Array.isArray(live?.items) ? live.items : [])
+      const mapped = (Array.isArray(liveResponse?.items) ? liveResponse.items : [])
         .map((item, index) => {
           const track = item?.track;
           const trackId = typeof track?.id === "string" ? track.id : null;
@@ -196,7 +201,7 @@ export async function GET(
             null;
           const trackName = track?.name ?? "Onbekend nummer";
           return {
-            itemId: `${playlistId}:${index}:${trackId ?? "unknown"}`,
+            itemId: `${playlistId}:${offset + index}:${trackId ?? "unknown"}`,
             playlistId,
             trackId,
             name: trackName,
@@ -240,7 +245,7 @@ export async function GET(
 
       return jsonNoStore({
         items: mapped,
-        nextCursor: null,
+        nextCursor: liveResponse?.next ? String(offset + mapped.length) : null,
         asOf: now,
         sync: {
           status: "live",

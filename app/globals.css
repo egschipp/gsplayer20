@@ -790,10 +790,30 @@ a:focus-visible {
   padding: 0.1rem 0.5rem;
   border-radius: 999px;
   border: 1px solid rgba(29, 185, 84, 0.3);
+  background: rgba(29, 185, 84, 0.1);
+  appearance: none;
+  font: inherit;
   font-size: 0.78rem;
   line-height: 1.2;
   color: var(--tide);
   margin: 0 8px 8px 0;
+  cursor: pointer;
+}
+
+.playlist-more:hover {
+  border-color: rgba(29, 185, 84, 0.56);
+  color: rgba(105, 246, 157, 0.95);
+}
+
+.playlist-more:focus-visible {
+  outline: 2px solid rgba(29, 185, 84, 0.45);
+  outline-offset: 2px;
+}
+
+.playlist-more-less {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-subtle);
 }
 
 .library-browser {

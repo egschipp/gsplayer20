@@ -75,7 +75,13 @@ function normalizePlaylistRefs(playlists: QueuePlaylistRef[] | undefined) {
       name: playlist.name || "Onbekende playlist",
     });
   }
-  return Array.from(deduped.values());
+  return Array.from(deduped.values()).sort((a, b) =>
+    String(a?.name ?? "").localeCompare(String(b?.name ?? ""), "nl", {
+      sensitivity: "base",
+      ignorePunctuation: true,
+      numeric: true,
+    })
+  );
 }
 
 function isFallbackContext(value: unknown): value is QueueFallbackContext {

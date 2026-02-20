@@ -65,12 +65,19 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
       : track.coverUrl ?? track.albumImageUrl ?? null;
   const playlists =
     "playlists" in track && Array.isArray(track.playlists)
-      ? track.playlists
-          .filter((playlist) => Boolean(playlist?.id))
-          .map((playlist) => ({
-            id: playlist.id,
-            name: playlist.name || "Onbekende playlist",
-          }))
+      ? sortPlaylistLinks(
+          track.playlists
+            .filter((playlist) => Boolean(playlist?.id))
+            .map((playlist) => ({
+              id: playlist.id,
+              name: playlist.name || "Onbekende playlist",
+              spotifyUrl:
+                playlist.spotifyUrl ??
+                (playlist.id === "liked"
+                  ? "https://open.spotify.com/collection/tracks"
+                  : `https://open.spotify.com/playlist/${playlist.id}`),
+            }))
+        )
       : [];
   return {
     uri: `spotify:track:${trackId}`,
@@ -97,10 +104,31 @@ function startsWithEmoji(value: string | null | undefined) {
   return LEADING_EMOJI_PATTERN.test(String(value ?? ""));
 }
 
+function sortPlaylistLinks(playlists: PlaylistLink[] | null | undefined): PlaylistLink[] {
+  if (!Array.isArray(playlists) || playlists.length === 0) return [];
+  return [...playlists].sort((a, b) =>
+    String(a?.name ?? "").localeCompare(String(b?.name ?? ""), "nl", {
+      sensitivity: "base",
+      ignorePunctuation: true,
+      numeric: true,
+    })
+  );
+}
+
 function normalizePlaylistOptions(options: PlaylistOption[]) {
+  const likedFromOptions =
+    options.find((option) => option.id === LIKED_OPTION.id) ?? null;
+  const allMyMusicFromOptions =
+    options.find((option) => option.id === ALL_MY_MUSIC_OPTION.id) ?? null;
   const unique = new Map<string, PlaylistOption>();
-  unique.set(LIKED_OPTION.id, LIKED_OPTION);
-  unique.set(ALL_MY_MUSIC_OPTION.id, ALL_MY_MUSIC_OPTION);
+  unique.set(LIKED_OPTION.id, {
+    ...LIKED_OPTION,
+    ...(likedFromOptions ?? {}),
+  });
+  unique.set(ALL_MY_MUSIC_OPTION.id, {
+    ...ALL_MY_MUSIC_OPTION,
+    ...(allMyMusicFromOptions ?? {}),
+  });
   for (const option of options) {
     if (!option?.id) continue;
     if (option.id === LIKED_OPTION.id) continue;
@@ -209,15 +237,17 @@ function mapTrackApiItems(items: TrackApiItem[]): TrackItem[] {
     popularity: track.popularity ?? null,
     albumImageUrl: track.albumImageUrl ?? null,
     playlists: Array.isArray(track.playlists)
-      ? track.playlists
-          .filter((pl): pl is { id: string; name: string; spotifyUrl?: string } =>
-            Boolean(pl?.id && pl?.name)
-          )
-          .map((pl) => ({
-            id: pl.id,
-            name: pl.name,
-            spotifyUrl: pl.spotifyUrl ?? `https://open.spotify.com/playlist/${pl.id}`,
-          }))
+      ? sortPlaylistLinks(
+          track.playlists
+            .filter((pl): pl is { id: string; name: string; spotifyUrl?: string } =>
+              Boolean(pl?.id && pl?.name)
+            )
+            .map((pl) => ({
+              id: pl.id,
+              name: pl.name,
+              spotifyUrl: pl.spotifyUrl ?? `https://open.spotify.com/playlist/${pl.id}`,
+            }))
+        )
       : [],
   }));
 }
@@ -256,15 +286,17 @@ function mapTrackItemToRow(track: TrackItem): TrackRow {
     explicit: track.explicit ?? null,
     popularity: track.popularity ?? null,
     playlists: Array.isArray(track.playlists)
-      ? track.playlists.map((playlist) => ({
-          id: playlist.id,
-          name: playlist.name,
-          spotifyUrl:
-            playlist.spotifyUrl ??
-            (playlist.id === "liked"
-              ? "https://open.spotify.com/collection/tracks"
-              : `https://open.spotify.com/playlist/${playlist.id}`),
-        }))
+      ? sortPlaylistLinks(
+          track.playlists.map((playlist) => ({
+            id: playlist.id,
+            name: playlist.name,
+            spotifyUrl:
+              playlist.spotifyUrl ??
+              (playlist.id === "liked"
+                ? "https://open.spotify.com/collection/tracks"
+                : `https://open.spotify.com/playlist/${playlist.id}`),
+          }))
+        )
       : [],
   };
 }
@@ -338,6 +370,7 @@ export default function PlaylistBrowser() {
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const [likedTracksTotal, setLikedTracksTotal] = useState<number | null>(null);
+  const [allMyMusicTotal, setAllMyMusicTotal] = useState<number | null>(null);
   const [tracksRefreshToken, setTracksRefreshToken] = useState(0);
   const [addingTargetKey, setAddingTargetKey] = useState<string | null>(null);
   const [removingTargetKey, setRemovingTargetKey] = useState<string | null>(null);
@@ -378,6 +411,17 @@ export default function PlaylistBrowser() {
       .map((pl) => pl.name || "Untitled playlist")
       .filter((name) => startsWithEmoji(name));
   }, [playlistOptions]);
+
+  const applyAllMyMusicTotal = useCallback((nextTotal: number | null) => {
+    setAllMyMusicTotal(nextTotal);
+    setPlaylistOptions((prev) =>
+      prev.map((option) =>
+        option.id === ALL_MY_MUSIC_OPTION.id
+          ? { ...option, tracksTotal: nextTotal }
+          : option
+      )
+    );
+  }, []);
 
   const closeTrackDetail = useCallback(() => {
     setSelectedTrackDetail(null);
@@ -874,6 +918,29 @@ export default function PlaylistBrowser() {
     setLikedTracksTotal(null);
   }, [mode, selectedPlaylist?.id, selectedPlaylist?.type]);
 
+  useEffect(() => {
+    if (!playlistOptions.length) return;
+    if (allMyMusicTotal !== null) return;
+    let cancelled = false;
+    fetch("/api/spotify/me/all-music/count", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const data = await res.json().catch(() => null);
+        return data;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        if (typeof data?.totalCount !== "number" || !Number.isFinite(data.totalCount)) {
+          return;
+        }
+        applyAllMyMusicTotal(Math.max(0, Math.floor(data.totalCount)));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [allMyMusicTotal, applyAllMyMusicTotal, playlistOptions.length]);
+
   const selectedArtist = useMemo(
     () => artistOptions.find((opt) => opt.id === selectedArtistId) || null,
     [artistOptions, selectedArtistId]
@@ -1120,7 +1187,7 @@ export default function PlaylistBrowser() {
       position: track.position ?? null,
       snapshotIdAtSync: track.snapshotIdAtSync ?? null,
       syncRunId: track.syncRunId ?? null,
-      playlists: track.playlists ?? [],
+      playlists: sortPlaylistLinks(track.playlists ?? []),
       spotifyUrl,
     });
   }
@@ -1143,7 +1210,7 @@ export default function PlaylistBrowser() {
       durationMs: track.durationMs ?? null,
       explicit: track.explicit ?? null,
       popularity: track.popularity ?? null,
-      playlists: track.playlists ?? [],
+      playlists: sortPlaylistLinks(track.playlists ?? []),
       spotifyUrl,
     });
   }
@@ -1325,6 +1392,7 @@ export default function PlaylistBrowser() {
           if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
             setTracks(rows);
             setNextCursor(null);
+            applyAllMyMusicTotal(rows.length);
             if (nextContextKey) setTracksContextKey(nextContextKey);
             setPendingTracksContextKey(null);
           }
@@ -1453,6 +1521,7 @@ export default function PlaylistBrowser() {
       cancelled = true;
     };
   }, [
+    applyAllMyMusicTotal,
     mode,
     selectedPlaylist?.id,
     selectedPlaylist?.type,
@@ -1525,7 +1594,7 @@ export default function PlaylistBrowser() {
           if (!row.trackId || row.trackId !== trackId) return row;
           const current = Array.isArray(row.playlists) ? row.playlists : [];
           if (current.some((item) => item.id === link.id)) return row;
-          return { ...row, playlists: [link, ...current] };
+          return { ...row, playlists: sortPlaylistLinks([link, ...current]) };
         })
       );
       setTrackItems((prev) =>
@@ -1534,14 +1603,14 @@ export default function PlaylistBrowser() {
           if (!itemTrackId || itemTrackId !== trackId) return item;
           const current = Array.isArray(item.playlists) ? item.playlists : [];
           if (current.some((pl) => pl.id === link.id)) return item;
-          return { ...item, playlists: [link, ...current] };
+          return { ...item, playlists: sortPlaylistLinks([link, ...current]) };
         })
       );
       setSelectedTrackDetail((prev) => {
         if (!prev?.trackId || prev.trackId !== trackId) return prev;
         const current = Array.isArray(prev.playlists) ? prev.playlists : [];
         if (current.some((pl) => pl.id === link.id)) return prev;
-        return { ...prev, playlists: [link, ...current] };
+        return { ...prev, playlists: sortPlaylistLinks([link, ...current]) };
       });
       queue.upsertTrackPlaylist(trackId, { id: link.id, name: link.name });
     },
@@ -1937,6 +2006,8 @@ export default function PlaylistBrowser() {
     mode === "playlists"
       ? selectedPlaylist?.type === "liked"
         ? likedTracksTotal
+        : selectedPlaylist?.type === "all_music"
+        ? allMyMusicTotal
         : typeof selectedPlaylist?.tracksTotal === "number"
         ? Math.max(0, selectedPlaylist.tracksTotal)
         : null
@@ -1945,7 +2016,8 @@ export default function PlaylistBrowser() {
     ? mode === "tracks"
       ? filteredTrackItems.length
       : mode === "playlists"
-      ? playlistContextTotalCount ?? tracks.length
+      ? playlistContextTotalCount ??
+        (selectedPlaylist?.type === "all_music" ? 0 : tracks.length)
       : tracks.length
     : 0;
   const visibleTrackCountLabel = `${visibleTrackCount} ${

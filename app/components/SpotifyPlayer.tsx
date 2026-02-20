@@ -151,10 +151,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [volume, setVolume] = useState(0.5);
   const [muted, setMuted] = useState(false);
   const [repeatMode, setRepeatMode] = useState<"off" | "context" | "track">("off");
-  const [currentPlayingType, setCurrentPlayingType] = useState<
-    "track" | "episode" | "ad" | "unknown" | null
-  >(null);
-  const [playbackTimestamp, setPlaybackTimestamp] = useState<number | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const [queueItems, setQueueItems] = useState<
     {
@@ -965,20 +961,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           )
         : {};
     setPlaybackDisallows(disallows);
-    setPlaybackTimestamp(
-      typeof data?.timestamp === "number" && Number.isFinite(data.timestamp)
-        ? Math.max(0, Math.floor(data.timestamp))
-        : null
-    );
-    setCurrentPlayingType(
-      data?.currently_playing_type === "track" ||
-        data?.currently_playing_type === "episode" ||
-        data?.currently_playing_type === "ad"
-        ? data.currently_playing_type
-        : data?.currently_playing_type
-        ? "unknown"
-        : null
-    );
     const item = data?.item;
     if (item) {
       const trackId = item.id ?? null;
@@ -1748,20 +1730,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                     ])
                   )
                 : {}
-            );
-            setPlaybackTimestamp(
-              typeof data?.timestamp === "number" && Number.isFinite(data.timestamp)
-                ? Math.max(0, Math.floor(data.timestamp))
-                : null
-            );
-            setCurrentPlayingType(
-              data?.currently_playing_type === "track" ||
-                data?.currently_playing_type === "episode" ||
-                data?.currently_playing_type === "ad"
-                ? data.currently_playing_type
-                : data?.currently_playing_type
-                ? "unknown"
-                : null
             );
             const device = data?.device;
             if (device?.id) {
@@ -2543,8 +2511,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         if (!data || cancelled) {
           if (!cancelled) {
             setPlaybackDisallows({});
-            setPlaybackTimestamp(null);
-            setCurrentPlayingType(null);
           }
           scheduleNext();
           return;
@@ -2559,20 +2525,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 ])
               )
             : {}
-        );
-        setPlaybackTimestamp(
-          typeof data?.timestamp === "number" && Number.isFinite(data.timestamp)
-            ? Math.max(0, Math.floor(data.timestamp))
-            : null
-        );
-        setCurrentPlayingType(
-          data?.currently_playing_type === "track" ||
-            data?.currently_playing_type === "episode" ||
-            data?.currently_playing_type === "ad"
-            ? data.currently_playing_type
-            : data?.currently_playing_type
-            ? "unknown"
-            : null
         );
         const device = data.device;
         if (shouldAdoptRemoteDevice(device?.id ?? null)) {
@@ -3225,12 +3177,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const disallowPlayPause = playerState?.paused
     ? Boolean(playbackDisallows.resuming)
     : Boolean(playbackDisallows.pausing);
-  const hasControlDisallows =
-    disallowSeeking ||
-    disallowPrevious ||
-    disallowNext ||
-    disallowShuffle ||
-    disallowPlayPause;
 
   return (
     <div className="player-card">
@@ -3288,24 +3234,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             {optimisticTrack?.album || playerState?.album}
           </div>
         ) : null}
-        {currentPlayingType || playbackTimestamp ? (
-          <div className="text-subtle">
-            {currentPlayingType
-              ? `Type: ${
-                  currentPlayingType === "track"
-                    ? "Track"
-                    : currentPlayingType === "episode"
-                    ? "Episode"
-                    : currentPlayingType === "ad"
-                    ? "Advertentie"
-                    : "Onbekend"
-                }`
-              : "Type: Onbekend"}
-            {playbackTimestamp
-              ? ` • Sync ${new Date(playbackTimestamp).toLocaleTimeString("nl-NL")}`
-              : ""}
-          </div>
-        ) : null}
         {playerErrorMessage &&
         playbackTouched &&
         !(playerState && !playerState.paused) &&
@@ -3338,11 +3266,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         {activeDevicePrivateSession ? (
           <div className="text-subtle">
             Privésessie actief op dit apparaat; historie en queue kunnen beperkt zijn.
-          </div>
-        ) : null}
-        {hasControlDisallows ? (
-          <div className="text-subtle">
-            Sommige playback-acties zijn nu geblokkeerd door Spotify Connect.
           </div>
         ) : null}
         {deviceMissing ? (

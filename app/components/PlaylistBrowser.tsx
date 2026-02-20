@@ -2900,10 +2900,6 @@ export default function PlaylistBrowser() {
           <p>{error}</p>
         </div>
       ) : null}
-      {hasTrackContext ? (
-        <div className="text-subtle">Tracks in lijst: {visibleTrackCount}</div>
-      ) : null}
-
       {mode === "playlists" || mode === "artists" ? (
         <div className="track-list" style={{ marginTop: 16 }}>
           {!isContextSwitchLoading &&

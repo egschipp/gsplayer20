@@ -1,4 +1,4 @@
-export const TRACK_ROW_HEIGHT = 72;
+export const TRACK_ROW_HEIGHT = 76;
 
 export const TRACK_GRID_COLUMNS_FULL =
   "98px minmax(0, 1fr) 80px minmax(0, 1fr) 72px 148px";

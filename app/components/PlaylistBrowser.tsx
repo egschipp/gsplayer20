@@ -3610,6 +3610,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
       (track.trackId === data.currentTrackId || track.id === data.currentTrackId)
   );
   const rowColumnsStyle = {
+    ["--track-row-height" as const]: `${TRACK_ROW_HEIGHT}px`,
     ["--track-row-columns" as const]: isGrid
       ? TRACK_GRID_COLUMNS_FULL
       : TRACK_GRID_COLUMNS_COMPACT,
@@ -3782,6 +3783,7 @@ function TrackItemRenderer({
     .join(", ");
   const uniqueArtistNames = dedupeArtistText(artistNames);
   const rowColumnsStyle = {
+    ["--track-row-height" as const]: `${TRACK_ROW_HEIGHT}px`,
     ["--track-row-columns" as const]: TRACK_GRID_COLUMNS_FULL,
   } as CSSProperties;
   return (

@@ -1287,7 +1287,7 @@ details[open] > .details-summary::after {
   grid-template-columns: var(--track-row-columns, 98px minmax(0, 1fr) 148px);
   gap: 16px;
   align-items: center;
-  height: 72px;
+  height: calc(var(--track-row-height, 72px) - 2px);
   padding: 0 16px;
 }
 

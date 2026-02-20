@@ -467,6 +467,148 @@ function mapTrackItemToRow(track: TrackItem): TrackRow {
   };
 }
 
+function pickPreferredText(
+  current: string | null | undefined,
+  incoming: string | null | undefined
+): string | null {
+  if (typeof current === "string" && current.trim().length > 0) return current;
+  if (typeof incoming === "string" && incoming.trim().length > 0) return incoming;
+  return current ?? incoming ?? null;
+}
+
+function pickPreferredNumber(
+  current: number | null | undefined,
+  incoming: number | null | undefined
+): number | null {
+  if (typeof current === "number" && Number.isFinite(current)) return current;
+  if (typeof incoming === "number" && Number.isFinite(incoming)) return incoming;
+  return current ?? incoming ?? null;
+}
+
+function normalizePlaylistLink(link: PlaylistLink): PlaylistLink {
+  const id = String(link.id ?? "").trim();
+  const name = String(link.name ?? "").trim() || "Onbekende playlist";
+  const spotifyUrl =
+    String(link.spotifyUrl ?? "").trim() ||
+    (id === "liked"
+      ? "https://open.spotify.com/collection/tracks"
+      : `https://open.spotify.com/playlist/${id}`);
+  return { id, name, spotifyUrl };
+}
+
+function mergeTrackPlaylists(
+  primary?: PlaylistLink[] | null,
+  secondary?: PlaylistLink[] | null
+) {
+  const unique = new Map<string, PlaylistLink>();
+  for (const source of [primary, secondary]) {
+    for (const link of source ?? []) {
+      if (!link?.id) continue;
+      const normalized = normalizePlaylistLink(link);
+      const existing = unique.get(normalized.id);
+      if (!existing) {
+        unique.set(normalized.id, normalized);
+        continue;
+      }
+      unique.set(normalized.id, {
+        id: existing.id,
+        name: pickPreferredText(existing.name, normalized.name) ?? existing.name,
+        spotifyUrl:
+          pickPreferredText(existing.spotifyUrl, normalized.spotifyUrl) ??
+          existing.spotifyUrl,
+      });
+    }
+  }
+  const merged = sortPlaylistLinks(Array.from(unique.values()));
+  return merged.length ? merged : undefined;
+}
+
+function mergeTrackRows(existing: TrackRow, incoming: TrackRow): TrackRow {
+  return {
+    ...existing,
+    id: pickPreferredText(existing.id, incoming.id),
+    itemId: pickPreferredText(existing.itemId, incoming.itemId),
+    playlistId: pickPreferredText(existing.playlistId, incoming.playlistId),
+    trackId: pickPreferredText(existing.trackId, incoming.trackId),
+    name: pickPreferredText(existing.name, incoming.name),
+    albumId: pickPreferredText(existing.albumId, incoming.albumId),
+    albumName: pickPreferredText(existing.albumName, incoming.albumName),
+    albumReleaseDate: pickPreferredText(
+      existing.albumReleaseDate,
+      incoming.albumReleaseDate
+    ),
+    releaseYear: pickPreferredNumber(existing.releaseYear, incoming.releaseYear),
+    albumImageUrl: pickPreferredText(existing.albumImageUrl, incoming.albumImageUrl),
+    coverUrl: pickPreferredText(existing.coverUrl, incoming.coverUrl),
+    artists: pickPreferredText(existing.artists, incoming.artists),
+    durationMs: pickPreferredNumber(existing.durationMs, incoming.durationMs),
+    explicit: pickPreferredNumber(existing.explicit, incoming.explicit),
+    isLocal: pickPreferredNumber(existing.isLocal, incoming.isLocal),
+    restrictionsReason: pickPreferredText(
+      existing.restrictionsReason,
+      incoming.restrictionsReason
+    ),
+    linkedFromTrackId: pickPreferredText(
+      existing.linkedFromTrackId,
+      incoming.linkedFromTrackId
+    ),
+    popularity: pickPreferredNumber(existing.popularity, incoming.popularity),
+    topRank: pickPreferredNumber(existing.topRank, incoming.topRank),
+    lastPlayedAt: pickPreferredNumber(existing.lastPlayedAt, incoming.lastPlayedAt),
+    addedAt: pickPreferredNumber(existing.addedAt, incoming.addedAt),
+    addedBySpotifyUserId: pickPreferredText(
+      existing.addedBySpotifyUserId,
+      incoming.addedBySpotifyUserId
+    ),
+    position: pickPreferredNumber(existing.position, incoming.position),
+    snapshotIdAtSync: pickPreferredText(
+      existing.snapshotIdAtSync,
+      incoming.snapshotIdAtSync
+    ),
+    syncRunId: pickPreferredText(existing.syncRunId, incoming.syncRunId),
+    playlists: mergeTrackPlaylists(existing.playlists, incoming.playlists),
+  };
+}
+
+function buildTrackRowDedupeKey(row: TrackRow, index: number) {
+  const trackId = String(row.trackId ?? "").trim();
+  if (trackId) return `track:${trackId}`;
+  const itemId = String(row.itemId ?? "").trim();
+  if (itemId) return `item:${itemId}`;
+  const id = String(row.id ?? "").trim();
+  if (id) return `id:${id}`;
+  const fallback = [
+    normalizeTrackName(row.name),
+    normalizeTrackName(row.artists),
+    normalizeTrackName(row.albumName),
+    typeof row.durationMs === "number" ? String(row.durationMs) : "",
+  ]
+    .filter(Boolean)
+    .join("|");
+  return fallback ? `meta:${fallback}` : `row:${index}`;
+}
+
+function dedupeTrackRows(rows: TrackRow[]) {
+  if (!rows.length) return rows;
+  const byKey = new Map<string, number>();
+  const deduped: TrackRow[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const key = buildTrackRowDedupeKey(row, index);
+    const existingIndex = byKey.get(key);
+    if (existingIndex === undefined) {
+      deduped.push({
+        ...row,
+        playlists: mergeTrackPlaylists(row.playlists),
+      });
+      byKey.set(key, deduped.length - 1);
+      continue;
+    }
+    deduped[existingIndex] = mergeTrackRows(deduped[existingIndex], row);
+  }
+  return deduped;
+}
+
 function mergeTrackOptions(prev: TrackOption[], items: TrackItem[]) {
   const unique = new Map<string, TrackOption>();
   for (const option of prev) unique.set(option.id, option);
@@ -801,7 +943,7 @@ export default function PlaylistBrowser() {
         setLoadingTracksList(false);
       }
       if (Array.isArray(parsed.trackItems)) setTrackItems(parsed.trackItems);
-      if (Array.isArray(parsed.tracks)) setTracks(parsed.tracks);
+      if (Array.isArray(parsed.tracks)) setTracks(dedupeTrackRows(parsed.tracks));
       if (typeof parsed.nextCursor === "string" || parsed.nextCursor === null) {
         setNextCursor(parsed.nextCursor ?? null);
       }
@@ -1864,7 +2006,7 @@ export default function PlaylistBrowser() {
             })
           );
           if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
-            setTracks(rows);
+            setTracks(dedupeTrackRows(rows));
             setNextCursor(null);
             applyAllMyMusicTotal(rows.length);
             if (nextContextKey) setTracksContextKey(nextContextKey);
@@ -1925,7 +2067,7 @@ export default function PlaylistBrowser() {
           }
         }
         if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
-          setTracks(items);
+          setTracks(dedupeTrackRows(items));
           setNextCursor(data.nextCursor ?? null);
           if (mode === "playlists" && selectedPlaylist?.type === "liked") {
             const nextTotal =
@@ -2033,7 +2175,7 @@ export default function PlaylistBrowser() {
       const data = (await res.json()) as CursorResponse<TrackRow>;
       const items = Array.isArray(data.items) ? data.items : [];
       if (requestVersion !== tracksLoadVersionRef.current) return;
-      setTracks((prev) => prev.concat(items));
+      setTracks((prev) => dedupeTrackRows(prev.concat(items)));
       setNextCursor(data.nextCursor ?? null);
     } finally {
       loadingMoreTracksRef.current = false;

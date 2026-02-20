@@ -852,15 +852,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       await ensurePlaybackStarted(deviceId, id);
       applyProgressPosition(0);
       setTimeout(() => {
-        spotifyApiFetch(
-          withDeviceId(
-            "https://api.spotify.com/v1/me/player/seek?position_ms=0",
-            deviceId
-          ),
-          { method: "PUT" }
-        ).catch(() => undefined);
-      }, 200);
-      setTimeout(() => {
         syncPlaybackState().catch(() => undefined);
       }, 280);
     }
@@ -2116,17 +2107,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             }
             applyProgressPosition(0);
             if (resolvedUri) {
-              setTimeout(() => {
-                spotifyApiFetch(
-                  withDeviceId(
-                    "https://api.spotify.com/v1/me/player/seek?position_ms=0",
-                    currentDevice as string
-                  ),
-                  { method: "PUT" }
-                ).catch(() => undefined);
-              }, 200);
-            }
-            if (resolvedUri) {
               const id = resolvedUri.split(":").pop() || null;
               pendingTrackIdRef.current = id;
               trackChangeLockUntilRef.current = Date.now() + 3000;
@@ -2254,15 +2234,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             queueOrderRef.current = null;
             queuePosRef.current = 0;
             applyProgressPosition(0);
-            setTimeout(() => {
-              spotifyApiFetch(
-                withDeviceId(
-                  "https://api.spotify.com/v1/me/player/seek?position_ms=0",
-                  currentDevice as string
-                ),
-                { method: "PUT" }
-              ).catch(() => undefined);
-            }, 200);
             if (offsetUri) {
               const id = offsetUri.split(":").pop() || null;
               pendingTrackIdRef.current = id;
@@ -2798,11 +2769,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         return;
       }
       if (queueModeRef.current === "queue" && queueUrisRef.current?.length) {
-        const ready = await ensureActiveDevice(currentDevice, token, true);
-        if (!ready) {
-          setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-          return;
-        }
         const uris = queueUrisRef.current;
         if (shuffleOnRef.current && queueOrderRef.current?.length) {
           if (queuePosRef.current >= queueOrderRef.current.length - 1) return;
@@ -2855,11 +2821,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         return;
       }
       if (queueModeRef.current === "queue" && queueUrisRef.current?.length) {
-        const ready = await ensureActiveDevice(currentDevice, token, true);
-        if (!ready) {
-          setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-          return;
-        }
         const uris = queueUrisRef.current;
         if (shuffleOnRef.current && queueOrderRef.current?.length) {
           if (queuePosRef.current <= 0) return;

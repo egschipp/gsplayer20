@@ -571,10 +571,14 @@ function mergeTrackRows(existing: TrackRow, incoming: TrackRow): TrackRow {
 }
 
 function buildTrackRowDedupeKey(row: TrackRow, index: number) {
-  const trackId = String(row.trackId ?? "").trim();
-  if (trackId) return `track:${trackId}`;
   const itemId = String(row.itemId ?? "").trim();
   if (itemId) return `item:${itemId}`;
+  const playlistId = String(row.playlistId ?? "").trim();
+  if (playlistId && typeof row.position === "number" && Number.isFinite(row.position)) {
+    return `playlist:${playlistId}:position:${row.position}`;
+  }
+  const trackId = String(row.trackId ?? "").trim();
+  if (trackId) return `track:${trackId}`;
   const id = String(row.id ?? "").trim();
   if (id) return `id:${id}`;
   const fallback = [
@@ -2569,13 +2573,21 @@ export default function PlaylistBrowser() {
         const targetUri = `spotify:track:${trackId}`;
         const offsetPosition =
           "position" in track && typeof track.position === "number"
-            ? track.position
+            ? Math.max(0, Math.floor(track.position))
             : null;
+        const contextUri = `spotify:playlist:${selectedPlaylist.id}`;
+        if (offsetPosition !== null) {
+          await playerApi.playContext(
+            contextUri,
+            offsetPosition,
+            targetUri
+          );
+          return;
+        }
         if (playbackQueue.uris.length && playbackQueue.byId.has(trackId)) {
           await playerApi.playQueue(playbackQueue.uris, targetUri, offsetPosition);
           return;
         }
-        const contextUri = `spotify:playlist:${selectedPlaylist.id}`;
         await playerApi.playContext(
           contextUri,
           offsetPosition,

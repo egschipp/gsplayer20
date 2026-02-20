@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 
 type AppStatus = {
   status: string;
@@ -19,23 +20,33 @@ function Badge({ label, tone }: { label: string; tone?: "ok" | "warn" }) {
 }
 
 export default function SpotifyStatus({ showBadges = true }: { showBadges?: boolean }) {
+  const { status: sessionStatus } = useSession();
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null);
   const [userStatus, setUserStatus] = useState<UserStatus | null>(null);
-  const userName = userStatus?.profile?.display_name || userStatus?.profile?.email;
+  const effectiveUserStatus =
+    sessionStatus === "unauthenticated"
+      ? "LOGGED_OUT"
+      : userStatus?.status ?? "CHECKING";
+  const userName =
+    effectiveUserStatus === "OK"
+      ? userStatus?.profile?.display_name || userStatus?.profile?.email
+      : null;
   const appOk = appStatus?.status === "OK";
-  const userOk = userStatus?.status === "OK";
+  const userOk = effectiveUserStatus === "OK";
   const userMessage =
-    userStatus?.status === "OK"
+    effectiveUserStatus === "OK"
       ? userName
         ? `Verbonden als ${userName}.`
         : "Verbonden met Spotify."
-      : userStatus?.status === "ERROR_SCOPES"
+      : effectiveUserStatus === "ERROR_SCOPES"
       ? "Toestemmingen ontbreken. Verbind opnieuw."
-      : userStatus?.status === "ERROR_REVOKED"
+      : effectiveUserStatus === "ERROR_REVOKED"
       ? "Spotify‑toegang is ingetrokken. Verbind opnieuw."
-      : userStatus?.status === "LOGGED_OUT"
+      : effectiveUserStatus === "LOGGED_OUT"
       ? "Nog niet verbonden."
-      : userStatus?.status === "ERROR_NETWORK"
+      : effectiveUserStatus === "ERROR_RATE_LIMIT"
+      ? "Status-check te vaak opgevraagd. Even wachten."
+      : effectiveUserStatus === "ERROR_NETWORK"
       ? "Spotify is tijdelijk niet bereikbaar."
       : "Status wordt gecontroleerd.";
   const appMessage =
@@ -49,17 +60,71 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
       ? "Spotify is tijdelijk niet bereikbaar."
       : "Status wordt gecontroleerd.";
 
-  useEffect(() => {
-    fetch("/api/spotify/app-status")
-      .then((res) => res.json())
-      .then(setAppStatus)
-      .catch(() => setAppStatus({ status: "ERROR_NETWORK" }));
+  const refreshStatus = useCallback(async () => {
+    try {
+      const [appRes, userRes] = await Promise.all([
+        fetch("/api/spotify/app-status", { cache: "no-store" }),
+        fetch("/api/spotify/user-status", { cache: "no-store" }),
+      ]);
 
-    fetch("/api/spotify/user-status")
-      .then((res) => res.json())
-      .then(setUserStatus)
-      .catch(() => setUserStatus({ status: "ERROR_NETWORK" }));
+      const appPayload = (await appRes.json().catch(() => null)) as
+        | AppStatus
+        | { status?: string }
+        | null;
+      if (appPayload?.status) {
+        setAppStatus(appPayload as AppStatus);
+      } else if (!appRes.ok) {
+        setAppStatus({
+          status: appRes.status === 429 ? "ERROR_RATE_LIMIT" : "ERROR_NETWORK",
+        });
+      }
+
+      const userPayload = (await userRes.json().catch(() => null)) as
+        | UserStatus
+        | { status?: string }
+        | null;
+      if (userPayload?.status) {
+        setUserStatus(userPayload as UserStatus);
+      } else if (userRes.status === 401) {
+        setUserStatus({ status: "LOGGED_OUT" });
+      } else if (userRes.status === 403) {
+        setUserStatus({ status: "ERROR_SCOPES" });
+      } else if (userRes.status === 429) {
+        setUserStatus({ status: "ERROR_RATE_LIMIT" });
+      } else if (!userRes.ok) {
+        setUserStatus({ status: "ERROR_NETWORK" });
+      }
+    } catch {
+      setAppStatus({ status: "ERROR_NETWORK" });
+      setUserStatus({ status: "ERROR_NETWORK" });
+    }
   }, []);
+
+  useEffect(() => {
+    const initial = window.setTimeout(() => {
+      void refreshStatus();
+    }, 0);
+    const interval = window.setInterval(refreshStatus, 15000);
+    const handleResume = () => {
+      void refreshStatus();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      void refreshStatus();
+    };
+    window.addEventListener("focus", handleResume);
+    window.addEventListener("pageshow", handleResume);
+    window.addEventListener("online", handleResume);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleResume);
+      window.removeEventListener("pageshow", handleResume);
+      window.removeEventListener("online", handleResume);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [refreshStatus]);
 
   return (
     <section style={{ marginTop: 24 }}>
@@ -71,7 +136,7 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
             tone={appOk ? "ok" : "warn"}
           />
           <Badge
-            label={`Account: ${userStatus?.status ?? "CHECKING"}`}
+            label={`Account: ${effectiveUserStatus}`}
             tone={userOk ? "ok" : "warn"}
           />
         </div>

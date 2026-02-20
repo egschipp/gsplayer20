@@ -265,6 +265,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const reconnectAttemptsRef = useRef(0);
   const playerCleanupRef = useRef<(() => void) | null>(null);
   const autoBootAttemptedRef = useRef(false);
+  const backgroundHandoffInFlightRef = useRef(false);
 
   const playbackSessionReady = useMemo(
     () => Boolean(accessToken) && playbackAllowed,
@@ -283,6 +284,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     [localWebplayerPlatform]
   );
   const localWebplayerType = "Webplayer";
+  const isIosWebplayer = useMemo(
+    () => localWebplayerPlatform === "iPad" || localWebplayerPlatform === "iPhone",
+    [localWebplayerPlatform]
+  );
   const sdkSupport = useMemo(() => getWebPlaybackSdkSupport(), []);
   const sdkSupported = sdkSupport.supported;
   const premiumRequired =
@@ -440,15 +445,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
 
           if (res.status === 401) {
-            if (playerProxyUrl || playerCommandProxyPayload) {
-              await refreshClientAccessToken();
-              setError("Spotify‑sessie verlopen. Koppel opnieuw.");
-              return res;
-            }
             const refreshed = await refreshClientAccessToken();
-            if (refreshed && refreshed !== token) {
+            if (refreshed) {
               token = refreshed;
-              continue;
+              if (attempt < PLAYER_FETCH_MAX_ATTEMPTS) {
+                continue;
+              }
             }
             setError("Spotify‑sessie verlopen. Koppel opnieuw.");
             return res;
@@ -1141,6 +1143,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }, []);
 
   const refreshDevices = useCallback(async (force = false) => {
+    if (force || !accessTokenRef.current) {
+      await refreshClientAccessToken();
+    }
     const token = accessTokenRef.current;
     if (!token) return;
     const now = Date.now();
@@ -1289,7 +1294,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setActiveDeviceRestricted(Boolean(sdkDevice.isRestricted));
       setActiveDeviceSupportsVolume(sdkDevice.supportsVolume !== false);
     }
-  }, [canUseSdk, localWebplayerName, localWebplayerType, setActiveDevice, spotifyApiFetch]);
+  }, [
+    canUseSdk,
+    localWebplayerName,
+    localWebplayerType,
+    refreshClientAccessToken,
+    setActiveDevice,
+    spotifyApiFetch,
+  ]);
 
   const startLocalWebPlayerFromConnect = useCallback(() => {
     preferSdkDeviceRef.current = true;
@@ -1768,6 +1780,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       },
       playQueue: async (uris, offsetUri, offsetIndex) =>
         enqueuePlaybackCommand(async () => {
+          setPlaybackTouched(true);
+          playerRef.current?.activateElement?.().catch?.(() => undefined);
+          playerRef.current?.connect?.().catch?.(() => undefined);
           const tokenValue = accessTokenRef.current;
           if (!tokenValue) {
             raisePlaybackCommandError(401, "MISSING_TOKEN", "Spotify-sessie verlopen. Log opnieuw in.");
@@ -1938,6 +1953,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         }),
       playContext: async (contextUri, offsetPosition, offsetUri) =>
         enqueuePlaybackCommand(async () => {
+          setPlaybackTouched(true);
+          playerRef.current?.activateElement?.().catch?.(() => undefined);
+          playerRef.current?.connect?.().catch?.(() => undefined);
           const tokenValue = accessTokenRef.current;
           if (!tokenValue) {
             raisePlaybackCommandError(401, "MISSING_TOKEN", "Spotify-sessie verlopen. Log opnieuw in.");
@@ -2122,24 +2140,111 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }, [accessToken, deviceId, refreshDevices]);
 
   useEffect(() => {
-    function handleFocusOrResume() {
-      refreshDevices();
-      syncPlaybackState().catch(() => undefined);
+    async function handleFocusOrResume() {
+      await refreshClientAccessToken();
+      refreshDevices(true);
+      await syncPlaybackState().catch(() => undefined);
     }
+
+    async function attemptBackgroundHandoff() {
+      if (!isIosWebplayer) return;
+      if (backgroundHandoffInFlightRef.current) return;
+      const sdkDeviceId = sdkDeviceIdRef.current;
+      const activeDevice = activeDeviceIdRef.current || deviceIdRef.current;
+      if (!sdkDeviceId || !activeDevice || activeDevice !== sdkDeviceId) return;
+      if (playerStateRef.current?.paused) return;
+      if (!accessTokenRef.current) return;
+
+      const candidate = devices.find(
+        (device) =>
+          device.selectable &&
+          !device.isRestricted &&
+          device.id !== sdkDeviceId
+      );
+      if (!candidate) return;
+
+      backgroundHandoffInFlightRef.current = true;
+      preferSdkDeviceRef.current = false;
+      pendingDeviceIdRef.current = candidate.id;
+      lastDeviceSelectRef.current = Date.now();
+
+      try {
+        let ok = false;
+        try {
+          const proxyRes = await fetch("/api/spotify/me/player", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ device_ids: [candidate.id], play: true }),
+          });
+          ok = proxyRes.ok;
+          if (!ok && proxyRes.status !== 401 && proxyRes.status !== 403) {
+            const directRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player", {
+              method: "PUT",
+              body: JSON.stringify({ device_ids: [candidate.id], play: true }),
+            });
+            ok = Boolean(directRes?.ok);
+          }
+        } catch {
+          const directRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player", {
+            method: "PUT",
+            body: JSON.stringify({ device_ids: [candidate.id], play: true }),
+          });
+          ok = Boolean(directRes?.ok);
+        }
+
+        if (ok) {
+          setActiveDevice(candidate.id, candidate.name ?? null);
+          setActiveDeviceRestricted(Boolean(candidate.isRestricted));
+          setActiveDeviceSupportsVolume(candidate.supportsVolume !== false);
+          lastConfirmedActiveDeviceRef.current = { id: candidate.id, at: Date.now() };
+          pendingDeviceIdRef.current = null;
+          setDeviceReady(true);
+          setError(null);
+          refreshDevices(true);
+        } else if (pendingDeviceIdRef.current === candidate.id) {
+          pendingDeviceIdRef.current = null;
+        }
+      } catch {
+        if (pendingDeviceIdRef.current === candidate.id) {
+          pendingDeviceIdRef.current = null;
+        }
+      } finally {
+        backgroundHandoffInFlightRef.current = false;
+      }
+    }
+    const handleWindowResume = () => {
+      void handleFocusOrResume();
+    };
     function handleVisibility() {
-      if (document.visibilityState !== "visible") return;
-      handleFocusOrResume();
+      if (document.visibilityState === "hidden") {
+        void attemptBackgroundHandoff();
+        return;
+      }
+      if (document.visibilityState === "visible") {
+        void handleFocusOrResume();
+      }
     }
     if (typeof window === "undefined") return;
-    window.addEventListener("focus", handleFocusOrResume);
-    window.addEventListener("pageshow", handleFocusOrResume);
+    window.addEventListener("focus", handleWindowResume);
+    window.addEventListener("pageshow", handleWindowResume);
+    window.addEventListener("online", handleWindowResume);
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
-      window.removeEventListener("focus", handleFocusOrResume);
-      window.removeEventListener("pageshow", handleFocusOrResume);
+      window.removeEventListener("focus", handleWindowResume);
+      window.removeEventListener("pageshow", handleWindowResume);
+      window.removeEventListener("online", handleWindowResume);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [refreshDevices, syncPlaybackState]);
+  }, [
+    devices,
+    isIosWebplayer,
+    refreshClientAccessToken,
+    refreshDevices,
+    setActiveDevice,
+    spotifyApiFetch,
+    syncPlaybackState,
+  ]);
 
   useEffect(() => {
     if (queueOpen) {

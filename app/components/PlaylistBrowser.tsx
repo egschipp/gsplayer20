@@ -808,6 +808,17 @@ export default function PlaylistBrowser() {
     ? "Kies artiest"
     : "Kies track";
 
+  const selectPlaylistInMyMusic = useCallback((playlistId: string) => {
+    if (!playlistId) return;
+    setMode("playlists");
+    setSelectedPlaylistId(playlistId);
+    setSelectedArtistId("");
+    setSelectedTrackId("");
+    setQuery("");
+    setDebouncedQuery("");
+    setOpen(false);
+  }, []);
+
   const addTargetOptions = useMemo(() => {
     const emojiStart = /^\s*\p{Extended_Pictographic}/u;
     const unique = new Map<string, PlaylistOption>();
@@ -1652,6 +1663,7 @@ export default function PlaylistBrowser() {
       setError("Spotify player is nog niet klaar. Probeer het over een paar seconden opnieuw.");
       return;
     }
+    playerApi.primePlaybackGesture?.();
     try {
       if (queue.mode === "queue") {
         queue.setMode("idle");
@@ -2079,6 +2091,7 @@ export default function PlaylistBrowser() {
                 handlePlayTrack,
                 addTrackToQueue: handleAddTrackToQueue,
                 addTrackToPlaylist: handleAddTrackToPlaylist,
+                selectPlaylistInMyMusic,
                 addTargetOptions,
                 addingTargetKey,
                 allPlaylistNames,
@@ -2126,6 +2139,7 @@ export default function PlaylistBrowser() {
                 handlePlayTrack,
                 addTrackToQueue: handleAddTrackToQueue,
                 addTrackToPlaylist: handleAddTrackToPlaylist,
+                selectPlaylistInMyMusic,
                 addTargetOptions,
                 addingTargetKey,
                 allPlaylistNames,
@@ -2308,14 +2322,17 @@ export default function PlaylistBrowser() {
                         <div className="track-detail-playlists">
                           {selectedTrackDetail.playlists.map((pl) => (
                             <div key={pl.id} className="track-detail-playlist-row">
-                              <a
-                                href={pl.spotifyUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                onClick={(event) => event.stopPropagation()}
+                              <button
+                                type="button"
+                                className="track-detail-playlist-link"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  closeTrackDetail();
+                                  selectPlaylistInMyMusic(pl.id);
+                                }}
                               >
                                 {pl.name || "Naamloze playlist"}
-                              </a>
+                              </button>
                               <button
                                 type="button"
                                 className="playlist-remove-btn"
@@ -2618,6 +2635,7 @@ type TrackRowData = {
   handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
   addTrackToQueue: (track: TrackRow | TrackItem) => void;
   addTrackToPlaylist: (track: TrackRow | TrackItem, target: PlaylistOption) => Promise<void>;
+  selectPlaylistInMyMusic: (playlistId: string) => void;
   addTargetOptions: PlaylistOption[];
   addingTargetKey: string | null;
   allPlaylistNames: string[];
@@ -2707,6 +2725,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             <PlaylistChips
               playlists={track.playlists}
               maxVisible={data.MAX_PLAYLIST_CHIPS}
+              onSelectPlaylist={data.selectPlaylistInMyMusic}
             />
           </div>
         ) : null}
@@ -2776,6 +2795,7 @@ type TrackItemData = {
   handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
   addTrackToQueue: (track: TrackRow | TrackItem) => void;
   addTrackToPlaylist: (track: TrackRow | TrackItem, target: PlaylistOption) => Promise<void>;
+  selectPlaylistInMyMusic: (playlistId: string) => void;
   addTargetOptions: PlaylistOption[];
   addingTargetKey: string | null;
   allPlaylistNames: string[];
@@ -2868,6 +2888,7 @@ function TrackItemRenderer({
           <PlaylistChips
             playlists={track.playlists}
             maxVisible={data.MAX_PLAYLIST_CHIPS}
+            onSelectPlaylist={data.selectPlaylistInMyMusic}
           />
         </div>
         <div className="text-subtle track-col-duration">{formatDuration(track.durationMs)}</div>

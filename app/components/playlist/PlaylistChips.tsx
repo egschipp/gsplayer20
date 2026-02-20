@@ -5,11 +5,13 @@ import type { PlaylistLink } from "./types";
 type PlaylistChipsProps = {
   playlists?: PlaylistLink[];
   maxVisible?: number;
+  onSelectPlaylist: (playlistId: string) => void;
 };
 
 export default function PlaylistChips({
   playlists,
   maxVisible = 2,
+  onSelectPlaylist,
 }: PlaylistChipsProps) {
   if (!playlists || playlists.length === 0) {
     return <span className="text-subtle">—</span>;
@@ -19,16 +21,17 @@ export default function PlaylistChips({
   return (
     <>
       {visible.map((pl) => (
-        <a
+        <button
           key={pl.id}
-          href={pl.spotifyUrl}
-          target="_blank"
-          rel="noreferrer"
+          type="button"
           className="playlist-chip"
-          onClick={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelectPlaylist(pl.id);
+          }}
         >
           {pl.name || "Untitled playlist"}
-        </a>
+        </button>
       ))}
       {remaining > 0 ? (
         <span className="playlist-more">+{remaining} more</span>

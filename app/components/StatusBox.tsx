@@ -213,11 +213,41 @@ export default function StatusBox() {
         fetch("/api/version", { cache: "no-store" }),
       ]);
 
-      if (appRes.ok) setAppStatus(await appRes.json());
-      if (userRes.ok) setUserStatus(await userRes.json());
-      if (versionRes.ok) setVersionInfo(await versionRes.json());
+      const appPayload = (await appRes.json().catch(() => null)) as
+        | { status?: string }
+        | null;
+      if (appPayload?.status) {
+        setAppStatus(appPayload as AppStatus);
+      } else if (!appRes.ok) {
+        setAppStatus({
+          status: appRes.status === 429 ? "ERROR_RATE_LIMIT" : "ERROR_NETWORK",
+        });
+      }
+
+      const userPayload = (await userRes.json().catch(() => null)) as
+        | UserStatus
+        | { status?: string }
+        | null;
+      if (userPayload?.status) {
+        setUserStatus(userPayload as UserStatus);
+      } else {
+        if (userRes.status === 401) {
+          setUserStatus({ status: "LOGGED_OUT" });
+        } else if (userRes.status === 403) {
+          setUserStatus({ status: "ERROR_SCOPES" });
+        } else if (userRes.status === 429) {
+          setUserStatus({ status: "ERROR_RATE_LIMIT" });
+        } else if (!userRes.ok) {
+          setUserStatus({ status: "ERROR_NETWORK" });
+        }
+      }
+
+      if (versionRes.ok) {
+        setVersionInfo(await versionRes.json().catch(() => null));
+      }
     } catch {
-      // ignore
+      setAppStatus({ status: "ERROR_NETWORK" });
+      setUserStatus({ status: "ERROR_NETWORK" });
     }
   }, []);
 
@@ -236,6 +266,27 @@ export default function StatusBox() {
       clearInterval(slow);
     };
   }, [refresh, refreshAuthStatus]);
+
+  useEffect(() => {
+    const refreshNow = () => {
+      refreshAuthStatus();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      refreshNow();
+    };
+    if (typeof window === "undefined") return;
+    window.addEventListener("focus", refreshNow);
+    window.addEventListener("pageshow", refreshNow);
+    window.addEventListener("online", refreshNow);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("focus", refreshNow);
+      window.removeEventListener("pageshow", refreshNow);
+      window.removeEventListener("online", refreshNow);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [refreshAuthStatus]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -371,6 +422,18 @@ export default function StatusBox() {
       tone: toneFromStatus(workerStatus),
     },
   ];
+  const connectionMessage =
+    userStatus?.status === "OK"
+      ? "Verbonden met Spotify."
+      : userStatus?.status === "ERROR_SCOPES"
+      ? "Spotify-rechten ontbreken. Log opnieuw in."
+      : userStatus?.status === "ERROR_REVOKED"
+      ? "Spotify-toegang is ingetrokken. Log opnieuw in."
+      : userStatus?.status === "ERROR_RATE_LIMIT"
+      ? "Inlogstatus wordt te vaak opgevraagd. Even wachten."
+      : userStatus?.status === "ERROR_NETWORK"
+      ? "Spotify is tijdelijk niet bereikbaar."
+      : "Niet verbonden met Spotify.";
 
   return (
     <section className="card account-page" style={{ marginTop: 24 }}>
@@ -416,11 +479,7 @@ export default function StatusBox() {
                 </div>
               </div>
             ) : (
-              <div className="text-body">
-                {userStatus?.status === "OK"
-                  ? "Verbonden met Spotify."
-                  : "Niet verbonden met Spotify."}
-              </div>
+              <div className="text-body">{connectionMessage}</div>
             )}
             <div className="status-badges">
               <Badge

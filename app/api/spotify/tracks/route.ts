@@ -28,6 +28,9 @@ type LiveTrackItem = {
     name?: string;
     duration_ms?: number;
     explicit?: boolean;
+    is_local?: boolean;
+    linked_from?: { id?: string | null };
+    restrictions?: { reason?: string | null };
     popularity?: number;
     artists?: Array<{ id?: string; name?: string }>;
     album?: {
@@ -94,6 +97,14 @@ async function fetchLiveTracks(limit: number, offset: number) {
           typeof track?.explicit === "boolean"
             ? track.explicit
             : null,
+        isLocal:
+          typeof track?.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
+        linkedFromTrackId:
+          typeof track?.linked_from?.id === "string" ? track.linked_from.id : null,
+        restrictionsReason:
+          typeof track?.restrictions?.reason === "string"
+            ? track.restrictions.reason
+            : null,
         popularity:
           typeof track?.popularity === "number" ? track.popularity : null,
         albumImageUrl,
@@ -150,6 +161,9 @@ export async function GET(req: Request) {
       name: tracks.name,
       durationMs: tracks.durationMs,
       explicit: tracks.explicit,
+      isLocal: tracks.isLocal,
+      linkedFromTrackId: tracks.linkedFromTrackId,
+      restrictionsReason: tracks.restrictionsReason,
       popularity: tracks.popularity,
       albumId: tracks.albumId,
       albumName: tracks.albumName,
@@ -293,6 +307,9 @@ export async function GET(req: Request) {
         releaseYear: row.releaseYear ?? null,
         durationMs: row.durationMs ?? null,
         explicit: row.explicit ?? null,
+        isLocal: row.isLocal ?? null,
+        linkedFromTrackId: row.linkedFromTrackId ?? null,
+        restrictionsReason: row.restrictionsReason ?? null,
         popularity: row.popularity ?? null,
         albumImageUrl: row.albumImageUrl ?? null,
         coverUrl,

@@ -59,6 +59,9 @@ function isQueueItem(value: unknown): value is QueueItem {
       typeof item.name === "string" &&
       typeof item.artists === "string" &&
       (typeof item.durationMs === "number" || item.durationMs === null) &&
+      (item.explicit === undefined ||
+        typeof item.explicit === "number" ||
+        item.explicit === null) &&
       (typeof item.artworkUrl === "string" || item.artworkUrl === null) &&
       typeof item.addedAt === "number" &&
       playlistsValid
@@ -187,6 +190,12 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
         name: track.name,
         artists: track.artists,
         durationMs: track.durationMs,
+        explicit:
+          track.explicit === undefined || track.explicit === null
+            ? null
+            : track.explicit
+            ? 1
+            : 0,
         artworkUrl: track.artworkUrl,
         playlists: normalizePlaylistRefs(track.playlists),
         addedAt: Date.now(),

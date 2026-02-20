@@ -12,6 +12,9 @@ export type PlaybackStateSnapshot = {
   isPlaying: boolean;
   shuffleState: boolean;
   repeatState: "off" | "track" | "context";
+  timestamp?: number;
+  currentlyPlayingType?: "track" | "episode" | "ad" | "unknown";
+  disallows?: Record<string, boolean>;
   fetchedAt: number;
 };
 

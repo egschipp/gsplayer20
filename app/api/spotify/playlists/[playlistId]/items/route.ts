@@ -117,6 +117,9 @@ export async function GET(
       albumImageUrl: tracks.albumImageUrl,
       durationMs: tracks.durationMs,
       explicit: tracks.explicit,
+      isLocal: tracks.isLocal,
+      linkedFromTrackId: tracks.linkedFromTrackId,
+      restrictionsReason: tracks.restrictionsReason,
       popularity: tracks.popularity,
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
       artists: sql<string | null>`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,
@@ -167,6 +170,9 @@ export async function GET(
             name?: string;
             duration_ms?: number;
             explicit?: boolean;
+            is_local?: boolean;
+            linked_from?: { id?: string | null };
+            restrictions?: { reason?: string | null };
             popularity?: number;
             album?: {
               id?: string;
@@ -218,6 +224,14 @@ export async function GET(
                 ? track.explicit
                   ? 1
                   : 0
+                : null,
+            isLocal:
+              typeof track?.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
+            linkedFromTrackId:
+              typeof track?.linked_from?.id === "string" ? track.linked_from.id : null,
+            restrictionsReason:
+              typeof track?.restrictions?.reason === "string"
+                ? track.restrictions.reason
                 : null,
             popularity:
               typeof track?.popularity === "number" ? track.popularity : null,

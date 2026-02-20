@@ -242,12 +242,20 @@ export default function QueuePageClient() {
                     <div className="track-col-track">
                       <div className="track-title-line" title={item.name}>
                         <span className="track-title-text">{item.name}</span>
+                        {item.explicit === 1 ? (
+                          <span className={styles.explicitBadge} aria-label="Explicit">
+                            E
+                          </span>
+                        ) : null}
                       </div>
                       <div
                         className="text-body track-artist-line"
                         title={item.artists || "Onbekende artiest"}
                       >
                         {item.artists || "Onbekende artiest"}
+                      </div>
+                      <div className={`text-subtle ${styles.trackMetaUri}`} title={item.uri}>
+                        {item.uri || `spotify:track:${item.trackId}`}
                       </div>
                     </div>
 

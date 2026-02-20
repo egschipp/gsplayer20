@@ -5,6 +5,7 @@ import {
   users,
   userPlaylists,
   userSavedTracks,
+  userRecentlyPlayed,
   playlists,
   tracks,
   artists,
@@ -120,6 +121,9 @@ export async function upsertTrack(params: {
   name: string;
   durationMs: number;
   explicit: boolean;
+  isLocal?: boolean | null;
+  restrictionsReason?: string | null;
+  linkedFromTrackId?: string | null;
   albumId?: string | null;
   popularity?: number | null;
 }) {
@@ -131,6 +135,14 @@ export async function upsertTrack(params: {
       name: params.name,
       durationMs: params.durationMs,
       explicit: params.explicit ? 1 : 0,
+      isLocal:
+        params.isLocal === null || params.isLocal === undefined
+          ? null
+          : params.isLocal
+          ? 1
+          : 0,
+      restrictionsReason: params.restrictionsReason ?? null,
+      linkedFromTrackId: params.linkedFromTrackId ?? null,
       albumId: params.albumId ?? null,
       popularity: params.popularity ?? null,
       updatedAt: Date.now(),
@@ -141,6 +153,14 @@ export async function upsertTrack(params: {
         name: params.name,
         durationMs: params.durationMs,
         explicit: params.explicit ? 1 : 0,
+        isLocal:
+          params.isLocal === null || params.isLocal === undefined
+            ? null
+            : params.isLocal
+            ? 1
+            : 0,
+        restrictionsReason: params.restrictionsReason ?? null,
+        linkedFromTrackId: params.linkedFromTrackId ?? null,
         albumId: params.albumId ?? null,
         popularity: params.popularity ?? null,
         updatedAt: Date.now(),
@@ -154,6 +174,8 @@ export async function upsertArtist(params: {
   name: string;
   genres?: string[] | null;
   popularity?: number | null;
+  followersTotal?: number | null;
+  imageUrl?: string | null;
 }) {
   const db = getDb();
   await db
@@ -163,6 +185,8 @@ export async function upsertArtist(params: {
       name: params.name,
       genres: params.genres ? JSON.stringify(params.genres) : null,
       popularity: params.popularity ?? null,
+      followersTotal: params.followersTotal ?? null,
+      imageUrl: params.imageUrl ?? null,
       updatedAt: Date.now(),
     })
     .onConflictDoUpdate({
@@ -171,6 +195,8 @@ export async function upsertArtist(params: {
         name: params.name,
         genres: params.genres ? JSON.stringify(params.genres) : null,
         popularity: params.popularity ?? null,
+        followersTotal: params.followersTotal ?? null,
+        imageUrl: params.imageUrl ?? null,
         updatedAt: Date.now(),
       },
     })
@@ -190,6 +216,9 @@ export async function upsertPlaylist(params: {
   playlistId: string;
   name: string;
   ownerSpotifyUserId: string;
+  ownerDisplayName?: string | null;
+  description?: string | null;
+  imageUrl?: string | null;
   isPublic?: boolean | null;
   collaborative?: boolean | null;
   snapshotId?: string | null;
@@ -202,6 +231,9 @@ export async function upsertPlaylist(params: {
       playlistId: params.playlistId,
       name: params.name,
       ownerSpotifyUserId: params.ownerSpotifyUserId,
+      ownerDisplayName: params.ownerDisplayName ?? null,
+      description: params.description ?? null,
+      imageUrl: params.imageUrl ?? null,
       isPublic: params.isPublic === null ? null : params.isPublic ? 1 : 0,
       collaborative:
         params.collaborative === null
@@ -218,6 +250,9 @@ export async function upsertPlaylist(params: {
       set: {
         name: params.name,
         ownerSpotifyUserId: params.ownerSpotifyUserId,
+        ownerDisplayName: params.ownerDisplayName ?? null,
+        description: params.description ?? null,
+        imageUrl: params.imageUrl ?? null,
         isPublic: params.isPublic === null ? null : params.isPublic ? 1 : 0,
         collaborative:
           params.collaborative === null
@@ -267,4 +302,46 @@ export async function getLatestSavedAddedAt(userId: string) {
     .limit(1)
     .get();
   return row?.addedAt ?? null;
+}
+
+export async function upsertRecentlyPlayed(params: {
+  userId: string;
+  entryId: string;
+  playedAt: number;
+  trackId?: string | null;
+  contextUri?: string | null;
+  trackName?: string | null;
+  artistNames?: string | null;
+  albumImageUrl?: string | null;
+  durationMs?: number | null;
+}) {
+  const db = getDb();
+  await db
+    .insert(userRecentlyPlayed)
+    .values({
+      userId: params.userId,
+      entryId: params.entryId,
+      playedAt: params.playedAt,
+      trackId: params.trackId ?? null,
+      contextUri: params.contextUri ?? null,
+      trackName: params.trackName ?? null,
+      artistNames: params.artistNames ?? null,
+      albumImageUrl: params.albumImageUrl ?? null,
+      durationMs: params.durationMs ?? null,
+      lastSeenAt: Date.now(),
+    })
+    .onConflictDoUpdate({
+      target: [userRecentlyPlayed.userId, userRecentlyPlayed.entryId],
+      set: {
+        playedAt: params.playedAt,
+        trackId: params.trackId ?? null,
+        contextUri: params.contextUri ?? null,
+        trackName: params.trackName ?? null,
+        artistNames: params.artistNames ?? null,
+        albumImageUrl: params.albumImageUrl ?? null,
+        durationMs: params.durationMs ?? null,
+        lastSeenAt: Date.now(),
+      },
+    })
+    .run();
 }

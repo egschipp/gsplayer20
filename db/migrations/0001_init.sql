@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS tracks (
   name TEXT NOT NULL,
   duration_ms INTEGER NOT NULL,
   explicit INTEGER NOT NULL,
+  is_local INTEGER,
+  restrictions_reason TEXT,
+  linked_from_track_id TEXT,
   album_id TEXT,
   album_name TEXT,
   album_release_date TEXT,
@@ -37,6 +40,8 @@ CREATE TABLE IF NOT EXISTS artists (
   name TEXT NOT NULL,
   genres TEXT,
   popularity INTEGER,
+  followers_total INTEGER,
+  image_url TEXT,
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
 
@@ -63,10 +68,34 @@ CREATE TABLE IF NOT EXISTS user_saved_tracks (
 CREATE INDEX IF NOT EXISTS user_saved_tracks_user_added_idx
   ON user_saved_tracks(user_id, added_at, track_id);
 
+CREATE TABLE IF NOT EXISTS user_recently_played (
+  user_id TEXT NOT NULL,
+  entry_id TEXT NOT NULL,
+  played_at INTEGER NOT NULL,
+  track_id TEXT,
+  context_uri TEXT,
+  track_name TEXT,
+  artist_names TEXT,
+  album_image_url TEXT,
+  duration_ms INTEGER,
+  last_seen_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, entry_id),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (track_id) REFERENCES tracks(track_id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS user_recently_played_user_played_idx
+  ON user_recently_played(user_id, played_at);
+CREATE INDEX IF NOT EXISTS user_recently_played_track_idx
+  ON user_recently_played(track_id);
+
 CREATE TABLE IF NOT EXISTS playlists (
   playlist_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   owner_spotify_user_id TEXT NOT NULL,
+  owner_display_name TEXT,
+  description TEXT,
+  image_url TEXT,
   is_public INTEGER,
   collaborative INTEGER,
   snapshot_id TEXT,

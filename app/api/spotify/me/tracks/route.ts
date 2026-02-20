@@ -40,6 +40,9 @@ export async function GET(req: Request) {
             name?: string;
             duration_ms?: number;
             explicit?: boolean;
+            is_local?: boolean;
+            linked_from?: { id?: string | null };
+            restrictions?: { reason?: string | null };
             popularity?: number;
             album?: {
               id?: string;
@@ -73,6 +76,14 @@ export async function GET(req: Request) {
                 ? track.explicit
                   ? 1
                   : 0
+                : null,
+            isLocal:
+              typeof track.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
+            linkedFromTrackId:
+              typeof track.linked_from?.id === "string" ? track.linked_from.id : null,
+            restrictionsReason:
+              typeof track.restrictions?.reason === "string"
+                ? track.restrictions.reason
                 : null,
             albumId: track.album?.id ?? null,
             albumName: track.album?.name ?? null,
@@ -169,6 +180,9 @@ export async function GET(req: Request) {
       name: tracks.name,
       durationMs: tracks.durationMs,
       explicit: tracks.explicit,
+      isLocal: tracks.isLocal,
+      linkedFromTrackId: tracks.linkedFromTrackId,
+      restrictionsReason: tracks.restrictionsReason,
       albumId: tracks.albumId,
       albumName: tracks.albumName,
       albumReleaseDate: tracks.albumReleaseDate,

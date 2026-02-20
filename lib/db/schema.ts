@@ -44,6 +44,9 @@ export const tracks = sqliteTable("tracks", {
   name: text("name").notNull(),
   durationMs: integer("duration_ms").notNull(),
   explicit: integer("explicit").notNull(),
+  isLocal: integer("is_local"),
+  restrictionsReason: text("restrictions_reason"),
+  linkedFromTrackId: text("linked_from_track_id"),
   albumId: text("album_id"),
   albumName: text("album_name"),
   albumReleaseDate: text("album_release_date"),
@@ -60,6 +63,8 @@ export const artists = sqliteTable("artists", {
   name: text("name").notNull(),
   genres: text("genres"),
   popularity: integer("popularity"),
+  followersTotal: integer("followers_total"),
+  imageUrl: text("image_url"),
   updatedAt: integer("updated_at").notNull().default(nowMs),
 });
 
@@ -105,12 +110,43 @@ export const playlists = sqliteTable("playlists", {
   playlistId: text("playlist_id").primaryKey(),
   name: text("name").notNull(),
   ownerSpotifyUserId: text("owner_spotify_user_id").notNull(),
+  ownerDisplayName: text("owner_display_name"),
+  description: text("description"),
+  imageUrl: text("image_url"),
   isPublic: integer("is_public"),
   collaborative: integer("collaborative"),
   snapshotId: text("snapshot_id"),
   tracksTotal: integer("tracks_total"),
   updatedAt: integer("updated_at").notNull().default(nowMs),
 });
+
+export const userRecentlyPlayed = sqliteTable(
+  "user_recently_played",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    entryId: text("entry_id").notNull(),
+    playedAt: integer("played_at").notNull(),
+    trackId: text("track_id").references(() => tracks.trackId, {
+      onDelete: "set null",
+    }),
+    contextUri: text("context_uri"),
+    trackName: text("track_name"),
+    artistNames: text("artist_names"),
+    albumImageUrl: text("album_image_url"),
+    durationMs: integer("duration_ms"),
+    lastSeenAt: integer("last_seen_at").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.userId, table.entryId] }),
+    byUserPlayed: index("user_recently_played_user_played_idx").on(
+      table.userId,
+      table.playedAt
+    ),
+    byTrack: index("user_recently_played_track_idx").on(table.trackId),
+  })
+);
 
 export const userPlaylists = sqliteTable(
   "user_playlists",

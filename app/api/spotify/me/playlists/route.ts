@@ -42,7 +42,9 @@ export async function GET(req: Request) {
         items?: Array<{
           id?: string;
           name?: string;
-          owner?: { id?: string };
+          owner?: { id?: string; display_name?: string };
+          description?: string | null;
+          images?: Array<{ url?: string | null }>;
           public?: boolean;
           collaborative?: boolean;
           snapshot_id?: string;
@@ -63,6 +65,11 @@ export async function GET(req: Request) {
                 playlistId,
                 name: item?.name ?? "Untitled playlist",
                 ownerSpotifyUserId: item?.owner?.id ?? null,
+                ownerDisplayName: item?.owner?.display_name ?? null,
+                description: item?.description ?? null,
+                imageUrl:
+                  item?.images?.find((image) => typeof image?.url === "string")?.url ??
+                  null,
                 isPublic: typeof item?.public === "boolean" ? item.public : null,
                 collaborative:
                   typeof item?.collaborative === "boolean" ? item.collaborative : null,
@@ -79,6 +86,9 @@ export async function GET(req: Request) {
                 playlistId: string;
                 name: string;
                 ownerSpotifyUserId: string | null;
+                ownerDisplayName: string | null;
+                description: string | null;
+                imageUrl: string | null;
                 isPublic: boolean | null;
                 collaborative: boolean | null;
                 snapshotId: string | null;
@@ -141,6 +151,9 @@ export async function GET(req: Request) {
       playlistId: playlists.playlistId,
       name: playlists.name,
       ownerSpotifyUserId: playlists.ownerSpotifyUserId,
+      ownerDisplayName: playlists.ownerDisplayName,
+      description: playlists.description,
+      imageUrl: playlists.imageUrl,
       isPublic: playlists.isPublic,
       collaborative: playlists.collaborative,
       snapshotId: playlists.snapshotId,
@@ -159,7 +172,9 @@ export async function GET(req: Request) {
         items?: Array<{
           id?: string;
           name?: string;
-          owner?: { id?: string };
+          owner?: { id?: string; display_name?: string };
+          description?: string | null;
+          images?: Array<{ url?: string | null }>;
           public?: boolean;
           collaborative?: boolean;
           snapshot_id?: string;
@@ -179,6 +194,11 @@ export async function GET(req: Request) {
                 playlistId,
                 name: item?.name ?? "Untitled playlist",
                 ownerSpotifyUserId: item?.owner?.id ?? null,
+                ownerDisplayName: item?.owner?.display_name ?? null,
+                description: item?.description ?? null,
+                imageUrl:
+                  item?.images?.find((image) => typeof image?.url === "string")?.url ??
+                  null,
                 isPublic: typeof item?.public === "boolean" ? item.public : null,
                 collaborative:
                   typeof item?.collaborative === "boolean"
@@ -197,6 +217,9 @@ export async function GET(req: Request) {
                 playlistId: string;
                 name: string;
                 ownerSpotifyUserId: string | null;
+                ownerDisplayName: string | null;
+                description: string | null;
+                imageUrl: string | null;
                 isPublic: boolean | null;
                 collaborative: boolean | null;
                 snapshotId: string | null;

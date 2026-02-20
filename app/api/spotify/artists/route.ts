@@ -69,6 +69,8 @@ async function fetchLiveArtistsFromSavedTracks(limit: number) {
     name: artist.name,
     genres: null as string | null,
     popularity: null as number | null,
+    followersTotal: null as number | null,
+    imageUrl: null as string | null,
   }));
 }
 
@@ -114,6 +116,8 @@ export async function GET(req: Request) {
       name: artists.name,
       genres: artists.genres,
       popularity: artists.popularity,
+      followersTotal: artists.followersTotal,
+      imageUrl: artists.imageUrl,
     })
     .from(artists)
     .leftJoin(trackArtists, eq(trackArtists.artistId, artists.artistId))

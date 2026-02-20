@@ -64,6 +64,14 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
     "album" in track
       ? track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null
       : track.coverUrl ?? track.albumImageUrl ?? null;
+  const explicitValueRaw =
+    typeof track.explicit === "boolean"
+      ? track.explicit
+        ? 1
+        : 0
+      : typeof track.explicit === "number"
+      ? track.explicit
+      : null;
   const playlists =
     "playlists" in track && Array.isArray(track.playlists)
       ? sortPlaylistLinks(
@@ -86,6 +94,12 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
     name: track.name || "Onbekend",
     artists,
     durationMs: track.durationMs ?? null,
+    explicit:
+      explicitValueRaw === null || explicitValueRaw === undefined
+        ? null
+        : explicitValueRaw
+        ? 1
+        : 0,
     artworkUrl,
     playlists,
   };
@@ -367,6 +381,22 @@ function mapTrackApiItems(items: TrackApiItem[]): TrackItem[] {
           ? 1
           : 0
         : track.explicit ?? null,
+    isLocal:
+      typeof track.isLocal === "number"
+        ? track.isLocal
+        : typeof track.isLocal === "boolean"
+        ? track.isLocal
+          ? 1
+          : 0
+        : null,
+    restrictionsReason:
+      typeof track.restrictionsReason === "string"
+        ? track.restrictionsReason
+        : null,
+    linkedFromTrackId:
+      typeof track.linkedFromTrackId === "string"
+        ? track.linkedFromTrackId
+        : null,
     popularity: track.popularity ?? null,
     albumImageUrl: track.albumImageUrl ?? null,
     playlists: Array.isArray(track.playlists)
@@ -417,6 +447,9 @@ function mapTrackItemToRow(track: TrackItem): TrackRow {
     artists: artistsText,
     durationMs: track.durationMs ?? null,
     explicit: track.explicit ?? null,
+    isLocal: track.isLocal ?? null,
+    restrictionsReason: track.restrictionsReason ?? null,
+    linkedFromTrackId: track.linkedFromTrackId ?? null,
     popularity: track.popularity ?? null,
     playlists: Array.isArray(track.playlists)
       ? sortPlaylistLinks(
@@ -907,6 +940,9 @@ export default function PlaylistBrowser() {
             type: "playlist",
             spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
             tracksTotal: typeof p.tracksTotal === "number" ? p.tracksTotal : null,
+            ownerDisplayName: p.ownerDisplayName ?? null,
+            description: p.description ?? null,
+            imageUrl: p.imageUrl ?? null,
           })
         );
         if (!cancelled) {
@@ -1194,14 +1230,16 @@ export default function PlaylistBrowser() {
 
   const filteredOptions = useMemo(() => {
     const term = debouncedQuery.trim().toLowerCase();
+    if (mode === "playlists") {
+      if (!term) return sortedPlaylists;
+      return sortedPlaylists.filter((opt) =>
+        `${opt.name} ${opt.ownerDisplayName ?? ""} ${opt.description ?? ""}`
+          .toLowerCase()
+          .includes(term)
+      );
+    }
     const list =
-      mode === "playlists"
-        ? sortedPlaylists
-        : mode === "artists"
-        ? artistOptions
-        : mode === "tracks"
-        ? trackOptions
-        : albumOptions;
+      mode === "artists" ? artistOptions : mode === "tracks" ? trackOptions : albumOptions;
     if (!term) return list;
     return list.filter((opt) => opt.name.toLowerCase().includes(term));
   }, [sortedPlaylists, artistOptions, trackOptions, albumOptions, debouncedQuery, mode]);
@@ -1278,6 +1316,9 @@ export default function PlaylistBrowser() {
           spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
           tracksTotal:
             typeof p.tracksTotal === "number" ? p.tracksTotal : null,
+          ownerDisplayName: p.ownerDisplayName ?? null,
+          description: p.description ?? null,
+          imageUrl: p.imageUrl ?? null,
         })
       );
       setPlaylistOptions((prev) => {
@@ -1314,6 +1355,9 @@ export default function PlaylistBrowser() {
             type: "playlist",
             spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
             tracksTotal: typeof p.tracksTotal === "number" ? p.tracksTotal : null,
+            ownerDisplayName: p.ownerDisplayName ?? null,
+            description: p.description ?? null,
+            imageUrl: p.imageUrl ?? null,
           })
         );
         setPlaylistOptions((prev) => normalizePlaylistOptions(prev.concat(mappedItems)));
@@ -1453,7 +1497,12 @@ export default function PlaylistBrowser() {
       coverUrl: track.coverUrl ?? null,
       durationMs: track.durationMs ?? null,
       explicit: track.explicit ?? null,
+      isLocal: track.isLocal ?? null,
+      restrictionsReason: track.restrictionsReason ?? null,
+      linkedFromTrackId: track.linkedFromTrackId ?? null,
       popularity: track.popularity ?? null,
+      topRank: null,
+      lastPlayedAt: null,
       addedAt: track.addedAt ?? null,
       addedBySpotifyUserId: track.addedBySpotifyUserId ?? null,
       position: track.position ?? null,
@@ -1481,7 +1530,12 @@ export default function PlaylistBrowser() {
       coverUrl,
       durationMs: track.durationMs ?? null,
       explicit: track.explicit ?? null,
+      isLocal: track.isLocal ?? null,
+      restrictionsReason: track.restrictionsReason ?? null,
+      linkedFromTrackId: track.linkedFromTrackId ?? null,
       popularity: track.popularity ?? null,
+      topRank: null,
+      lastPlayedAt: null,
       playlists: sortPlaylistLinks(track.playlists ?? []),
       spotifyUrl,
     });
@@ -1495,17 +1549,44 @@ export default function PlaylistBrowser() {
       name: name || "Unknown artist",
       genres: [],
       popularity: null,
+      followersTotal: null,
+      imageUrl: null,
+      topRank: null,
       tracksCount: 0,
       spotifyUrl: `https://open.spotify.com/artist/${artistId}`,
     });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     try {
       const res = await fetch(`/api/spotify/artists/${artistId}`, {
         cache: "no-store",
+        signal: controller.signal,
       });
       if (!res.ok) {
         return;
       }
       const data = await res.json();
+      let topRank: number | null = null;
+      try {
+        const topRes = await fetch(
+          "/api/spotify/me/top?type=artists&time_range=medium_term&limit=50",
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          }
+        );
+        if (topRes.ok) {
+          const topData = await topRes.json();
+          const topItems = Array.isArray(topData?.items) ? topData.items : [];
+          const rankIndex = topItems.findIndex(
+            (item: any) =>
+              String(item?.id ?? "").trim() === String(data.artistId ?? artistId).trim()
+          );
+          topRank = rankIndex >= 0 ? rankIndex + 1 : null;
+        }
+      } catch {
+        // ignore top-rank lookup failures
+      }
       setSelectedArtistDetail({
         artistId: data.artistId ?? artistId,
         name: data.name ?? name ?? "Unknown artist",
@@ -1514,11 +1595,20 @@ export default function PlaylistBrowser() {
           data.popularity === null || data.popularity === undefined
             ? null
             : Number(data.popularity),
+        followersTotal:
+          data.followersTotal === null || data.followersTotal === undefined
+            ? null
+            : Number(data.followersTotal),
+        imageUrl: typeof data.imageUrl === "string" ? data.imageUrl : null,
+        topRank,
         tracksCount: Number(data.tracksCount ?? 0),
         updatedAt: data.updatedAt ?? null,
         spotifyUrl: data.spotifyUrl ?? `https://open.spotify.com/artist/${artistId}`,
       });
+    } catch {
+      // keep placeholder detail state when upstream request fails
     } finally {
+      clearTimeout(timeout);
       setArtistDetailLoading(false);
     }
   }
@@ -1596,6 +1686,80 @@ export default function PlaylistBrowser() {
       cancelled = true;
     };
   }, [selectedTrackDetail?.trackId, selectedTrackDetailHasArtists]);
+
+  useEffect(() => {
+    const trackId = selectedTrackDetail?.trackId ?? null;
+    if (!trackId) return;
+    let cancelled = false;
+    const controller = new AbortController();
+
+    async function loadTrackInsights() {
+      let lastPlayedAt: number | null = null;
+      let topRank: number | null = null;
+
+      try {
+        const [recentRes, topRes] = await Promise.all([
+          fetch(
+            `/api/spotify/me/recently-played?limit=50&trackId=${encodeURIComponent(
+              String(trackId)
+            )}`,
+            {
+              cache: "no-store",
+              signal: controller.signal,
+            }
+          ),
+          fetch("/api/spotify/me/top?type=tracks&time_range=medium_term&limit=50", {
+            cache: "no-store",
+            signal: controller.signal,
+          }),
+        ]);
+
+        if (recentRes.ok) {
+          const recentData = await recentRes.json();
+          const recentItems = Array.isArray(recentData?.items) ? recentData.items : [];
+          const recentTrack = recentItems.find(
+            (item: any) =>
+              String(item?.trackId ?? "").trim() === String(trackId).trim()
+          );
+          if (recentTrack?.playedAt) {
+            const parsed = Number(recentTrack.playedAt);
+            if (Number.isFinite(parsed)) {
+              lastPlayedAt = parsed;
+            }
+          }
+        }
+
+        if (topRes.ok) {
+          const topData = await topRes.json();
+          const topItems = Array.isArray(topData?.items) ? topData.items : [];
+          const rankIndex = topItems.findIndex(
+            (item: any) => String(item?.id ?? "").trim() === String(trackId).trim()
+          );
+          topRank = rankIndex >= 0 ? rankIndex + 1 : null;
+        }
+      } catch {
+        // ignore track insight lookup failures
+      }
+
+      if (!cancelled) {
+        setSelectedTrackDetail((prev) =>
+          prev && prev.trackId === trackId
+            ? {
+                ...prev,
+                topRank,
+                lastPlayedAt,
+              }
+            : prev
+        );
+      }
+    }
+
+    void loadTrackInsights();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [selectedTrackDetail?.trackId]);
 
   useEffect(() => {
     if (!selectedArtistDetailDialogKey) return;
@@ -2338,6 +2502,19 @@ export default function PlaylistBrowser() {
   const visibleTrackCountLabel = `${visibleTrackCount} ${
     visibleTrackCount === 1 ? "track" : "tracks"
   }`;
+  const selectedPlaylistMeta =
+    mode === "playlists" && selectedPlaylist?.type === "playlist"
+      ? [
+          selectedPlaylist.ownerDisplayName
+            ? `door ${selectedPlaylist.ownerDisplayName}`
+            : null,
+          selectedPlaylist.description
+            ? String(selectedPlaylist.description).replace(/<[^>]*>/g, "")
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" • ")
+      : "";
 
 
   const selectorDock = (
@@ -2363,6 +2540,11 @@ export default function PlaylistBrowser() {
           <span className="text-subtle">{selectorModeLabel}</span>
           <strong>{selectorCurrentLabel}</strong>
           <span className="player-badge player-badge-compact">{visibleTrackCountLabel}</span>
+          {selectedPlaylistMeta ? (
+            <span className="player-library-dock-meta" title={selectedPlaylistMeta}>
+              {selectedPlaylistMeta}
+            </span>
+          ) : null}
         </span>
         <button
           type="button"
@@ -2592,7 +2774,41 @@ export default function PlaylistBrowser() {
                         setOpen(false);
                       }}
                     >
-                      {opt.name}
+                      {mode === "playlists" ? (
+                        <span className="combo-option">
+                          {(opt as PlaylistOption).imageUrl ? (
+                            <Image
+                              src={(opt as PlaylistOption).imageUrl as string}
+                              alt=""
+                              width={28}
+                              height={28}
+                              className="combo-track-cover"
+                              unoptimized
+                            />
+                          ) : (
+                            <span className="combo-track-cover placeholder" />
+                          )}
+                          <span className="combo-option-text">
+                            <span className="combo-track-name">{opt.name}</span>
+                            <span className="combo-option-meta">
+                              {(opt as PlaylistOption).ownerDisplayName
+                                ? `door ${(opt as PlaylistOption).ownerDisplayName}`
+                                : "Spotify playlist"}
+                              {typeof (opt as PlaylistOption).tracksTotal === "number"
+                                ? ` • ${(opt as PlaylistOption).tracksTotal} tracks`
+                                : ""}
+                              {(opt as PlaylistOption).description
+                                ? ` • ${String((opt as PlaylistOption).description).replace(
+                                    /<[^>]*>/g,
+                                    ""
+                                  )}`
+                                : ""}
+                            </span>
+                          </span>
+                        </span>
+                      ) : (
+                        opt.name
+                      )}
                     </button>
                   ))
                 )}
@@ -2923,8 +3139,18 @@ export default function PlaylistBrowser() {
                       </div>
                     </div>
                     <div className="track-detail-field">
+                      <div className="text-subtle">Top track (6 mnd)</div>
+                      <div>
+                        {selectedTrackDetail.topRank ? `#${selectedTrackDetail.topRank}` : "—"}
+                      </div>
+                    </div>
+                    <div className="track-detail-field">
                       <div className="text-subtle">Toegevoegd op</div>
                       <div>{formatTimestamp(selectedTrackDetail.addedAt)}</div>
+                    </div>
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Laatst gespeeld</div>
+                      <div>{formatTimestamp(selectedTrackDetail.lastPlayedAt)}</div>
                     </div>
                   </div>
                 </div>
@@ -2935,6 +3161,31 @@ export default function PlaylistBrowser() {
                     <div className="track-detail-field">
                       <div className="text-subtle">Album</div>
                       <div>{selectedTrackDetail.albumName || "—"}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="track-detail-section">
+                  <div className="track-detail-title">Beschikbaarheid</div>
+                  <div className="track-detail-grid">
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Local track</div>
+                      <div>
+                        {selectedTrackDetail.isLocal === null ||
+                        selectedTrackDetail.isLocal === undefined
+                          ? "—"
+                          : selectedTrackDetail.isLocal
+                          ? "Ja"
+                          : "Nee"}
+                      </div>
+                    </div>
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Spotify restrictie</div>
+                      <div>{selectedTrackDetail.restrictionsReason || "Geen"}</div>
+                    </div>
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Linked-from track</div>
+                      <div>{selectedTrackDetail.linkedFromTrackId || "—"}</div>
                     </div>
                   </div>
                 </div>
@@ -3071,6 +3322,20 @@ export default function PlaylistBrowser() {
           >
             <div className="track-detail-header">
               <div className="track-detail-header-left">
+                <div className="track-detail-header-cover">
+                  {selectedArtistDetail.imageUrl ? (
+                    <Image
+                      src={selectedArtistDetail.imageUrl}
+                      alt={selectedArtistDetail.name || "Artiest"}
+                      width={72}
+                      height={72}
+                      unoptimized
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  ) : (
+                    <div className="track-detail-header-cover placeholder" />
+                  )}
+                </div>
                 <div>
                   <div className="text-subtle">Artiestdetails</div>
                   <div id="artist-detail-dialog-title" style={{ fontWeight: 700, fontSize: 20 }}>
@@ -3124,6 +3389,21 @@ export default function PlaylistBrowser() {
                       <div className="text-subtle">Tracks in bibliotheek</div>
                       <div>{selectedArtistDetail.tracksCount ?? 0}</div>
                     </div>
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Volgers</div>
+                      <div>
+                        {selectedArtistDetail.followersTotal === null ||
+                        selectedArtistDetail.followersTotal === undefined
+                          ? "—"
+                          : selectedArtistDetail.followersTotal.toLocaleString("nl-NL")}
+                      </div>
+                    </div>
+                    <div className="track-detail-field">
+                      <div className="text-subtle">Top artiest (6 mnd)</div>
+                      <div>
+                        {selectedArtistDetail.topRank ? `#${selectedArtistDetail.topRank}` : "—"}
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -3165,11 +3445,16 @@ type PlaylistApiItem = {
   playlistId: string;
   name: string;
   tracksTotal?: number | null;
+  ownerDisplayName?: string | null;
+  description?: string | null;
+  imageUrl?: string | null;
 };
 
 type ArtistApiItem = {
   artistId: string;
   name: string;
+  followersTotal?: number | null;
+  imageUrl?: string | null;
 };
 
 type TrackApiItem = {
@@ -3185,7 +3470,10 @@ type TrackApiItem = {
   };
   releaseYear?: number | null;
   durationMs?: number | null;
-  explicit?: boolean | null;
+  explicit?: boolean | number | null;
+  isLocal?: number | null;
+  restrictionsReason?: string | null;
+  linkedFromTrackId?: string | null;
   popularity?: number | null;
   albumImageUrl?: string | null;
   playlists?: { id: string; name: string; spotifyUrl?: string }[];

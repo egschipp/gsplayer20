@@ -6,6 +6,9 @@ export type PlaylistOption = {
   type: "liked" | "playlist" | "all_music";
   spotifyUrl: string;
   tracksTotal?: number | null;
+  ownerDisplayName?: string | null;
+  description?: string | null;
+  imageUrl?: string | null;
 };
 
 export type ArtistOption = {
@@ -48,6 +51,9 @@ export type TrackItem = {
   releaseYear?: number | null;
   durationMs?: number | null;
   explicit?: number | null;
+  isLocal?: number | null;
+  restrictionsReason?: string | null;
+  linkedFromTrackId?: string | null;
   popularity?: number | null;
   albumImageUrl?: string | null;
   playlists: PlaylistLink[];
@@ -68,7 +74,12 @@ export type TrackRow = {
   artists?: string | null;
   durationMs?: number | null;
   explicit?: number | null;
+  isLocal?: number | null;
+  restrictionsReason?: string | null;
+  linkedFromTrackId?: string | null;
   popularity?: number | null;
+  topRank?: number | null;
+  lastPlayedAt?: number | null;
   addedAt?: number | null;
   addedBySpotifyUserId?: string | null;
   position?: number | null;
@@ -90,7 +101,12 @@ export type TrackDetail = {
   coverUrl?: string | null;
   durationMs?: number | null;
   explicit?: number | null;
+  isLocal?: number | null;
+  restrictionsReason?: string | null;
+  linkedFromTrackId?: string | null;
   popularity?: number | null;
+  topRank?: number | null;
+  lastPlayedAt?: number | null;
   addedAt?: number | null;
   addedBySpotifyUserId?: string | null;
   position?: number | null;
@@ -106,6 +122,9 @@ export type ArtistDetail = {
   name: string;
   genres: string[];
   popularity: number | null;
+  followersTotal?: number | null;
+  imageUrl?: string | null;
+  topRank?: number | null;
   tracksCount: number;
   updatedAt?: number | null;
   spotifyUrl?: string | null;

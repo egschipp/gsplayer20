@@ -66,8 +66,64 @@ if (!hasColumn("tracks", "album_release_year")) {
   db.exec("ALTER TABLE tracks ADD COLUMN album_release_year INTEGER");
 }
 
+if (!hasColumn("tracks", "is_local")) {
+  db.exec("ALTER TABLE tracks ADD COLUMN is_local INTEGER");
+}
+
+if (!hasColumn("tracks", "restrictions_reason")) {
+  db.exec("ALTER TABLE tracks ADD COLUMN restrictions_reason TEXT");
+}
+
+if (!hasColumn("tracks", "linked_from_track_id")) {
+  db.exec("ALTER TABLE tracks ADD COLUMN linked_from_track_id TEXT");
+}
+
+if (!hasColumn("artists", "followers_total")) {
+  db.exec("ALTER TABLE artists ADD COLUMN followers_total INTEGER");
+}
+
+if (!hasColumn("artists", "image_url")) {
+  db.exec("ALTER TABLE artists ADD COLUMN image_url TEXT");
+}
+
+if (!hasColumn("playlists", "owner_display_name")) {
+  db.exec("ALTER TABLE playlists ADD COLUMN owner_display_name TEXT");
+}
+
+if (!hasColumn("playlists", "description")) {
+  db.exec("ALTER TABLE playlists ADD COLUMN description TEXT");
+}
+
+if (!hasColumn("playlists", "image_url")) {
+  db.exec("ALTER TABLE playlists ADD COLUMN image_url TEXT");
+}
+
+db.exec(
+  `CREATE TABLE IF NOT EXISTS user_recently_played (
+    user_id TEXT NOT NULL,
+    entry_id TEXT NOT NULL,
+    played_at INTEGER NOT NULL,
+    track_id TEXT,
+    context_uri TEXT,
+    track_name TEXT,
+    artist_names TEXT,
+    album_image_url TEXT,
+    duration_ms INTEGER,
+    last_seen_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, entry_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (track_id) REFERENCES tracks(track_id) ON DELETE SET NULL
+  )`
+);
+
 db.exec(
   "CREATE INDEX IF NOT EXISTS playlist_items_track_idx ON playlist_items(track_id)"
+);
+db.exec(
+  "CREATE INDEX IF NOT EXISTS user_recently_played_user_played_idx ON user_recently_played(user_id, played_at)"
+);
+db.exec(
+  "CREATE INDEX IF NOT EXISTS user_recently_played_track_idx ON user_recently_played(track_id)"
 );
 
 const SPOTIFY_ID_REGEX = /^[A-Za-z0-9]{22}$/;
@@ -333,12 +389,15 @@ const statements = {
     `UPDATE oauth_tokens SET refresh_token_enc=?, updated_at=? WHERE user_id=?`
   ),
   upsertTrack: db.prepare(
-    `INSERT INTO tracks (track_id, name, duration_ms, explicit, album_id, album_name, album_release_date, album_release_year, album_image_url, popularity, updated_at)
-     VALUES (@track_id, @name, @duration_ms, @explicit, @album_id, @album_name, @album_release_date, @album_release_year, @album_image_url, @popularity, @updated_at)
+    `INSERT INTO tracks (track_id, name, duration_ms, explicit, is_local, restrictions_reason, linked_from_track_id, album_id, album_name, album_release_date, album_release_year, album_image_url, popularity, updated_at)
+     VALUES (@track_id, @name, @duration_ms, @explicit, @is_local, @restrictions_reason, @linked_from_track_id, @album_id, @album_name, @album_release_date, @album_release_year, @album_image_url, @popularity, @updated_at)
      ON CONFLICT(track_id) DO UPDATE SET
        name=excluded.name,
        duration_ms=excluded.duration_ms,
        explicit=excluded.explicit,
+       is_local=excluded.is_local,
+       restrictions_reason=excluded.restrictions_reason,
+       linked_from_track_id=excluded.linked_from_track_id,
        album_id=excluded.album_id,
        album_name=excluded.album_name,
        album_release_date=excluded.album_release_date,
@@ -373,8 +432,8 @@ const statements = {
   getArtistsMissingMeta: db.prepare(
     `SELECT artist_id
      FROM artists
-     WHERE (genres IS NULL OR popularity IS NULL)
-       AND artist_id > ?
+     WHERE (genres IS NULL OR popularity IS NULL OR followers_total IS NULL)
+     AND artist_id > ?
      ORDER BY artist_id ASC
      LIMIT ?`
   ),
@@ -400,12 +459,14 @@ const statements = {
      WHERE user_id=? AND resource=?`
   ),
   upsertArtist: db.prepare(
-    `INSERT INTO artists (artist_id, name, genres, popularity, updated_at)
-     VALUES (@artist_id, @name, @genres, @popularity, @updated_at)
+    `INSERT INTO artists (artist_id, name, genres, popularity, followers_total, image_url, updated_at)
+     VALUES (@artist_id, @name, @genres, @popularity, @followers_total, @image_url, @updated_at)
      ON CONFLICT(artist_id) DO UPDATE SET
        name=excluded.name,
        genres=excluded.genres,
        popularity=excluded.popularity,
+       followers_total=excluded.followers_total,
+       image_url=excluded.image_url,
        updated_at=excluded.updated_at`
   ),
   upsertTrackArtist: db.prepare(
@@ -423,11 +484,14 @@ const statements = {
     `SELECT added_at FROM user_saved_tracks WHERE user_id=? ORDER BY added_at DESC LIMIT 1`
   ),
   upsertPlaylist: db.prepare(
-    `INSERT INTO playlists (playlist_id, name, owner_spotify_user_id, is_public, collaborative, snapshot_id, tracks_total, updated_at)
-     VALUES (@playlist_id, @name, @owner_spotify_user_id, @is_public, @collaborative, @snapshot_id, @tracks_total, @updated_at)
+    `INSERT INTO playlists (playlist_id, name, owner_spotify_user_id, owner_display_name, description, image_url, is_public, collaborative, snapshot_id, tracks_total, updated_at)
+     VALUES (@playlist_id, @name, @owner_spotify_user_id, @owner_display_name, @description, @image_url, @is_public, @collaborative, @snapshot_id, @tracks_total, @updated_at)
      ON CONFLICT(playlist_id) DO UPDATE SET
        name=excluded.name,
        owner_spotify_user_id=excluded.owner_spotify_user_id,
+       owner_display_name=excluded.owner_display_name,
+       description=excluded.description,
+       image_url=excluded.image_url,
        is_public=excluded.is_public,
        collaborative=excluded.collaborative,
        snapshot_id=excluded.snapshot_id,
@@ -493,13 +557,17 @@ const statements = {
 
 const writeTracksPage = db.transaction((items, userId, now) => {
   for (const item of items) {
-    if (!item.track) continue;
+    if (!item.track?.id) continue;
     const track = item.track;
     statements.upsertTrack.run({
       track_id: track.id,
       name: track.name,
       duration_ms: track.duration_ms,
       explicit: track.explicit ? 1 : 0,
+      is_local:
+        typeof track.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
+      restrictions_reason: track.restrictions?.reason || null,
+      linked_from_track_id: track.linked_from?.id || null,
       album_id: track.album?.id || null,
       album_name: track.album?.name || null,
       album_release_date: track.album?.release_date || null,
@@ -521,6 +589,8 @@ const writeTracksPage = db.transaction((items, userId, now) => {
         name: artistName,
         genres: null,
         popularity: null,
+        followers_total: null,
+        image_url: null,
         updated_at: now,
       });
       statements.upsertTrackArtist.run(track.id, artist.id);
@@ -559,13 +629,17 @@ const writePlaylistItemsPage = db.transaction(
     let idx = 0;
     for (const item of items) {
       const track = item.track;
-      const trackId = track ? track.id : null;
-      if (track) {
+      const trackId = track?.id ?? null;
+      if (track && track.id) {
         statements.upsertTrack.run({
           track_id: track.id,
           name: track.name,
           duration_ms: track.duration_ms,
           explicit: track.explicit ? 1 : 0,
+          is_local:
+            typeof track.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
+          restrictions_reason: track.restrictions?.reason || null,
+          linked_from_track_id: track.linked_from?.id || null,
           album_id: track.album?.id || null,
           album_name: track.album?.name || null,
           album_release_date: track.album?.release_date || null,
@@ -587,6 +661,8 @@ const writePlaylistItemsPage = db.transaction(
             name: artistName,
             genres: null,
             popularity: null,
+            followers_total: null,
+            image_url: null,
             updated_at: now,
           });
           statements.upsertTrackArtist.run(track.id, artist.id);
@@ -625,6 +701,9 @@ const writePlaylistsPage = db.transaction((items, userId, now) => {
       playlist_id: item.id,
       name: item.name,
       owner_spotify_user_id: item.owner?.id || "",
+      owner_display_name: item.owner?.display_name || null,
+      description: item.description || null,
+      image_url: item.images?.[0]?.url || null,
       is_public: item.public === null ? null : item.public ? 1 : 0,
       collaborative: item.collaborative ? 1 : 0,
       snapshot_id: item.snapshot_id || null,
@@ -1077,6 +1156,8 @@ async function syncArtistMetadata(job) {
         name: artist.name || "Unknown Artist",
         genres: artist.genres ? JSON.stringify(artist.genres) : null,
         popularity: artist.popularity ?? null,
+        followers_total: artist.followers?.total ?? null,
+        image_url: artist.images?.[0]?.url ?? null,
         updated_at: now,
       });
       lastId = artist.id;

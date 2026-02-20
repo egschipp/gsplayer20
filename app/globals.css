@@ -340,6 +340,27 @@ header.panel {
   gap: 10px;
 }
 
+.combo-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.combo-option-text {
+  display: grid;
+  min-width: 0;
+}
+
+.combo-option-meta {
+  color: var(--text-subtle);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .combo-track-cover {
   width: 28px;
   height: 28px;
@@ -936,6 +957,15 @@ a:focus-visible {
   min-width: 0;
   font-size: 0.9rem;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-library-dock-meta {
+  min-width: 0;
+  font-size: 0.68rem;
+  color: var(--text-subtle);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

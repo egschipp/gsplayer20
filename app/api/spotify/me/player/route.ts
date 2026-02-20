@@ -11,6 +11,11 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 type SpotifyPlayerResponse = {
+  timestamp?: number;
+  currently_playing_type?: "track" | "episode" | "ad" | "unknown";
+  actions?: {
+    disallows?: Record<string, boolean | null | undefined>;
+  };
   device?: {
     id?: string | null;
     name?: string | null;
@@ -63,6 +68,16 @@ export async function GET(req: NextRequest) {
     }
 
     if (raw) {
+      const disallowsRaw = data.actions?.disallows;
+      const disallows =
+        disallowsRaw && typeof disallowsRaw === "object"
+          ? Object.fromEntries(
+              Object.entries(disallowsRaw).map(([key, value]) => [
+                key,
+                Boolean(value),
+              ])
+            )
+          : {};
       return jsonNoStore({
         device: data.device ?? null,
         context: data.context ?? null,
@@ -75,6 +90,17 @@ export async function GET(req: NextRequest) {
           data.repeat_state === "track" || data.repeat_state === "context"
             ? data.repeat_state
             : "off",
+        timestamp:
+          typeof data.timestamp === "number" ? Math.max(0, data.timestamp) : Date.now(),
+        currently_playing_type:
+          data.currently_playing_type === "track" ||
+          data.currently_playing_type === "episode" ||
+          data.currently_playing_type === "ad"
+            ? data.currently_playing_type
+            : "unknown",
+        actions: {
+          disallows,
+        },
       });
     }
 
@@ -117,6 +143,23 @@ export async function GET(req: NextRequest) {
         data.repeat_state === "track" || data.repeat_state === "context"
           ? data.repeat_state
           : "off",
+      timestamp:
+        typeof data.timestamp === "number" ? Math.max(0, data.timestamp) : Date.now(),
+      currentlyPlayingType:
+        data.currently_playing_type === "track" ||
+        data.currently_playing_type === "episode" ||
+        data.currently_playing_type === "ad"
+          ? data.currently_playing_type
+          : "unknown",
+      disallows:
+        data.actions?.disallows && typeof data.actions.disallows === "object"
+          ? Object.fromEntries(
+              Object.entries(data.actions.disallows).map(([key, value]) => [
+                key,
+                Boolean(value),
+              ])
+            )
+          : {},
       fetchedAt: Date.now(),
     });
   } catch (error) {

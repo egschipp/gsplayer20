@@ -35,6 +35,8 @@ export async function GET(
       name: artists.name,
       genres: artists.genres,
       popularity: artists.popularity,
+      followersTotal: artists.followersTotal,
+      imageUrl: artists.imageUrl,
     })
     .from(trackArtists)
     .innerJoin(artists, eq(artists.artistId, trackArtists.artistId))
@@ -47,6 +49,8 @@ export async function GET(
     name: row.name,
     genres: row.genres,
     popularity: row.popularity,
+    followersTotal: row.followersTotal,
+    imageUrl: row.imageUrl,
   }));
 
   if (dbItems.length > 0) {
@@ -78,6 +82,8 @@ export async function GET(
           name: artist.name,
           genres: null,
           popularity: null,
+          followersTotal: null,
+          imageUrl: null,
         });
         await upsertTrackArtist(trackId, artist.artistId);
       }

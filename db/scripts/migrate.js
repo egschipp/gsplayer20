@@ -50,8 +50,64 @@ if (!hasColumn("tracks", "album_image_mime")) {
   sqlite.exec("ALTER TABLE tracks ADD COLUMN album_image_mime TEXT");
 }
 
+if (!hasColumn("tracks", "is_local")) {
+  sqlite.exec("ALTER TABLE tracks ADD COLUMN is_local INTEGER");
+}
+
+if (!hasColumn("tracks", "restrictions_reason")) {
+  sqlite.exec("ALTER TABLE tracks ADD COLUMN restrictions_reason TEXT");
+}
+
+if (!hasColumn("tracks", "linked_from_track_id")) {
+  sqlite.exec("ALTER TABLE tracks ADD COLUMN linked_from_track_id TEXT");
+}
+
+if (!hasColumn("artists", "followers_total")) {
+  sqlite.exec("ALTER TABLE artists ADD COLUMN followers_total INTEGER");
+}
+
+if (!hasColumn("artists", "image_url")) {
+  sqlite.exec("ALTER TABLE artists ADD COLUMN image_url TEXT");
+}
+
+if (!hasColumn("playlists", "owner_display_name")) {
+  sqlite.exec("ALTER TABLE playlists ADD COLUMN owner_display_name TEXT");
+}
+
+if (!hasColumn("playlists", "description")) {
+  sqlite.exec("ALTER TABLE playlists ADD COLUMN description TEXT");
+}
+
+if (!hasColumn("playlists", "image_url")) {
+  sqlite.exec("ALTER TABLE playlists ADD COLUMN image_url TEXT");
+}
+
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS user_recently_played (
+    user_id TEXT NOT NULL,
+    entry_id TEXT NOT NULL,
+    played_at INTEGER NOT NULL,
+    track_id TEXT,
+    context_uri TEXT,
+    track_name TEXT,
+    artist_names TEXT,
+    album_image_url TEXT,
+    duration_ms INTEGER,
+    last_seen_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, entry_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (track_id) REFERENCES tracks(track_id) ON DELETE SET NULL
+  )
+`);
+
 sqlite.exec(
   "CREATE INDEX IF NOT EXISTS playlist_items_track_idx ON playlist_items(track_id)"
+);
+sqlite.exec(
+  "CREATE INDEX IF NOT EXISTS user_recently_played_user_played_idx ON user_recently_played(user_id, played_at)"
+);
+sqlite.exec(
+  "CREATE INDEX IF NOT EXISTS user_recently_played_track_idx ON user_recently_played(track_id)"
 );
 
 console.log("Migrations applied");

@@ -11,6 +11,7 @@ export type QueueTrackInput = {
   name: string;
   artists: string;
   durationMs: number | null;
+  explicit?: number | null;
   artworkUrl: string | null;
   playlists?: QueuePlaylistRef[];
 };

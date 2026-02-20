@@ -1,13 +1,15 @@
 import { spotifyFetch } from "@/lib/spotify/client";
-import { getRequestIp, rateLimitResponse, jsonNoStore } from "@/lib/api/guards";
+import { rateLimitResponse, jsonNoStore, requireAppUser } from "@/lib/api/guards";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  const ip = getRequestIp(req);
+  const { session, response } = await requireAppUser();
+  if (response) return response;
+
   const rl = await rateLimitResponse({
-    key: `top:${ip}`,
+    key: `top:${session.appUserId}`,
     limit: 60,
     windowMs: 60_000,
   });

@@ -51,6 +51,7 @@ export async function GET(req: Request) {
           };
         }>;
         next?: string | null;
+        total?: number;
       }>({
         url: `https://api.spotify.com/v1/me/tracks?limit=${limit}&offset=${offset}`,
         userLevel: true,
@@ -107,6 +108,10 @@ export async function GET(req: Request) {
       return jsonNoStore({
         items: mapped,
         nextCursor,
+        totalCount:
+          typeof data?.total === "number" && Number.isFinite(data.total)
+            ? Math.max(0, Math.floor(data.total))
+            : null,
         asOf: Date.now(),
         sync: {
           status: "live",
@@ -183,6 +188,12 @@ export async function GET(req: Request) {
     .orderBy(desc(userSavedTracks.addedAt), desc(userSavedTracks.trackId))
     .limit(limit);
 
+  const totalRow = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(userSavedTracks)
+    .where(eq(userSavedTracks.userId, session.appUserId as string))
+    .get();
+
   const last = rows[rows.length - 1];
   const nextCursor = last ? encodeCursor(last.addedAt, last.trackId) : null;
 
@@ -215,6 +226,10 @@ export async function GET(req: Request) {
       ],
     })),
     nextCursor,
+    totalCount:
+      typeof totalRow?.count === "number" && Number.isFinite(totalRow.count)
+        ? Math.max(0, Math.floor(totalRow.count))
+        : null,
     asOf: Date.now(),
     sync: {
       status: sync?.status ?? "idle",

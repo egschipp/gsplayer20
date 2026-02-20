@@ -337,6 +337,7 @@ export default function PlaylistBrowser() {
   const [trackArtistsLoading, setTrackArtistsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
+  const [likedTracksTotal, setLikedTracksTotal] = useState<number | null>(null);
   const [tracksRefreshToken, setTracksRefreshToken] = useState(0);
   const [addingTargetKey, setAddingTargetKey] = useState<string | null>(null);
   const [removingTargetKey, setRemovingTargetKey] = useState<string | null>(null);
@@ -720,6 +721,8 @@ export default function PlaylistBrowser() {
               name: p.name,
               type: "playlist",
               spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
+              tracksTotal:
+                typeof p.tracksTotal === "number" ? p.tracksTotal : null,
             })
           );
           all.push(...mappedItems);
@@ -866,6 +869,11 @@ export default function PlaylistBrowser() {
     return playlistOptions.find((opt) => opt.id === selectedPlaylistId) || null;
   }, [playlistOptions, selectedPlaylistId]);
 
+  useEffect(() => {
+    if (mode === "playlists" && selectedPlaylist?.type === "liked") return;
+    setLikedTracksTotal(null);
+  }, [mode, selectedPlaylist?.id, selectedPlaylist?.type]);
+
   const selectedArtist = useMemo(
     () => artistOptions.find((opt) => opt.id === selectedArtistId) || null,
     [artistOptions, selectedArtistId]
@@ -1004,6 +1012,8 @@ export default function PlaylistBrowser() {
           name: p.name,
           type: "playlist",
           spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
+          tracksTotal:
+            typeof p.tracksTotal === "number" ? p.tracksTotal : null,
         })
       );
       setPlaylistOptions((prev) => {
@@ -1375,6 +1385,15 @@ export default function PlaylistBrowser() {
         if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
           setTracks(items);
           setNextCursor(data.nextCursor ?? null);
+          if (mode === "playlists" && selectedPlaylist?.type === "liked") {
+            const nextTotal =
+              typeof data.totalCount === "number" && Number.isFinite(data.totalCount)
+                ? Math.max(0, Math.floor(data.totalCount))
+                : null;
+            setLikedTracksTotal(nextTotal);
+          } else {
+            setLikedTracksTotal(null);
+          }
           if (nextContextKey) setTracksContextKey(nextContextKey);
           setPendingTracksContextKey(null);
         }
@@ -1914,9 +1933,19 @@ export default function PlaylistBrowser() {
       : mode === "playlists"
       ? Boolean(selectedPlaylist?.id)
       : Boolean(selectedArtist?.id);
+  const playlistContextTotalCount =
+    mode === "playlists"
+      ? selectedPlaylist?.type === "liked"
+        ? likedTracksTotal
+        : typeof selectedPlaylist?.tracksTotal === "number"
+        ? Math.max(0, selectedPlaylist.tracksTotal)
+        : null
+      : null;
   const visibleTrackCount = hasTrackContext
     ? mode === "tracks"
       ? filteredTrackItems.length
+      : mode === "playlists"
+      ? playlistContextTotalCount ?? tracks.length
       : tracks.length
     : 0;
   const visibleTrackCountLabel = `${visibleTrackCount} ${
@@ -2685,11 +2714,13 @@ export default function PlaylistBrowser() {
 type CursorResponse<T> = {
   items?: T[];
   nextCursor?: string | null;
+  totalCount?: number | null;
 };
 
 type PlaylistApiItem = {
   playlistId: string;
   name: string;
+  tracksTotal?: number | null;
 };
 
 type ArtistApiItem = {

@@ -5,6 +5,7 @@ export type PlaylistOption = {
   name: string;
   type: "liked" | "playlist" | "all_music";
   spotifyUrl: string;
+  tracksTotal?: number | null;
 };
 
 export type ArtistOption = {
@@ -106,6 +107,7 @@ export const LIKED_OPTION: PlaylistOption = {
   name: "Liked Songs",
   type: "liked",
   spotifyUrl: "https://open.spotify.com/collection/tracks",
+  tracksTotal: null,
 };
 
 export const ALL_MY_MUSIC_OPTION: PlaylistOption = {
@@ -113,4 +115,5 @@ export const ALL_MY_MUSIC_OPTION: PlaylistOption = {
   name: "All My Music",
   type: "all_music",
   spotifyUrl: "https://open.spotify.com",
+  tracksTotal: null,
 };

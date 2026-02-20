@@ -1002,18 +1002,32 @@ a:focus-visible {
   max-height: 0;
   opacity: 0;
   overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-6px);
   padding: 0 14px;
   transition:
-    max-height 200ms ease,
-    opacity 180ms ease,
-    padding 180ms ease;
+    max-height 300ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 240ms ease,
+    transform 240ms ease,
+    padding 240ms ease,
+    visibility 0s linear 300ms;
 }
 
 .player-library-dock-body.open {
   max-height: 220px;
   opacity: 1;
   overflow: visible;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
   padding: 6px 14px 14px;
+  transition:
+    max-height 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 240ms ease,
+    transform 240ms ease,
+    padding 240ms ease,
+    visibility 0s linear 0s;
 }
 
 .player-library-controls-row {

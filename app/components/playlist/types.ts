@@ -1,4 +1,4 @@
-export type Mode = "playlists" | "artists" | "tracks";
+export type Mode = "playlists" | "artists" | "tracks" | "albums";
 
 export type PlaylistOption = {
   id: string;
@@ -21,6 +21,15 @@ export type TrackOption = {
   coverUrl?: string | null;
   trackId?: string | null;
   artistNames?: string | null;
+};
+
+export type AlbumOption = {
+  id: string;
+  name: string;
+  spotifyUrl: string;
+  albumName: string;
+  artistNames: string;
+  coverUrl?: string | null;
 };
 
 export type PlaylistLink = { id: string; name: string; spotifyUrl: string };

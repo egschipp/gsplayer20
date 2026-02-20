@@ -9,6 +9,7 @@ import ChatGptButton from "./playlist/ChatGptButton";
 import PlaylistChips from "./playlist/PlaylistChips";
 import {
   ALL_MY_MUSIC_OPTION,
+  type AlbumOption,
   type ArtistDetail,
   type ArtistOption,
   type Mode,
@@ -135,6 +136,82 @@ function normalizeArtistOptions(options: ArtistOption[]) {
       numeric: true,
     })
   );
+}
+
+function resolveTrackItemArtistNames(track: TrackItem) {
+  return (
+    dedupeArtistText(
+      (Array.isArray(track.artists) ? track.artists : [])
+        .map((artist) => artist?.name)
+        .filter(Boolean)
+        .join(", ")
+    ) || "Onbekende artiest"
+  );
+}
+
+function createAlbumOptionId(track: TrackItem, artistNames: string) {
+  const albumId =
+    typeof track.album?.id === "string" && track.album.id.trim()
+      ? track.album.id.trim()
+      : null;
+  if (albumId) return `id:${albumId}`;
+  const albumName = String(track.album?.name ?? "").trim();
+  return `meta:${normalizeTrackName(albumName)}::${normalizeTrackName(artistNames)}`;
+}
+
+function normalizeAlbumOptions(items: TrackItem[]) {
+  const unique = new Map<string, AlbumOption>();
+  for (const track of items) {
+    const albumName = String(track.album?.name ?? "").trim() || "Onbekend album";
+    const artistNames = resolveTrackItemArtistNames(track);
+    const key = createAlbumOptionId(track, artistNames);
+    const coverUrl = track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null;
+    const albumId =
+      typeof track.album?.id === "string" && track.album.id.trim()
+        ? track.album.id.trim()
+        : null;
+    const candidate: AlbumOption = {
+      id: key,
+      name: `${albumName} — ${artistNames}`,
+      albumName,
+      artistNames,
+      spotifyUrl: albumId
+        ? `https://open.spotify.com/album/${albumId}`
+        : track.id
+        ? `https://open.spotify.com/track/${track.id}`
+        : "https://open.spotify.com",
+      coverUrl,
+    };
+    const existing = unique.get(key);
+    if (!existing) {
+      unique.set(key, candidate);
+      continue;
+    }
+    const prefersCandidateArtistNames =
+      candidate.artistNames.length > 0 &&
+      (existing.artistNames.length === 0 ||
+        candidate.artistNames.length < existing.artistNames.length);
+    if (prefersCandidateArtistNames || (!existing.coverUrl && candidate.coverUrl)) {
+      unique.set(key, {
+        ...existing,
+        ...candidate,
+        coverUrl: existing.coverUrl ?? candidate.coverUrl,
+      });
+    }
+  }
+  return Array.from(unique.values()).sort((a, b) => {
+    const byAlbum = a.albumName.localeCompare(b.albumName, "nl", {
+      sensitivity: "base",
+      ignorePunctuation: true,
+      numeric: true,
+    });
+    if (byAlbum !== 0) return byAlbum;
+    return a.artistNames.localeCompare(b.artistNames, "nl", {
+      sensitivity: "base",
+      ignorePunctuation: true,
+      numeric: true,
+    });
+  });
 }
 
 function normalizePlaylistOptions(options: PlaylistOption[]) {
@@ -363,6 +440,7 @@ export default function PlaylistBrowser() {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>("");
   const [selectedArtistId, setSelectedArtistId] = useState<string>("");
   const [selectedTrackId, setSelectedTrackId] = useState<string>("");
+  const [selectedAlbumId, setSelectedAlbumId] = useState<string>("");
   const [query, setQuery] = useState<string>("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -546,11 +624,13 @@ export default function PlaylistBrowser() {
         playlistId?: string;
         artistId?: string;
         trackId?: string;
+        albumId?: string;
       };
       if (parsed.mode) setMode(parsed.mode);
       if (parsed.playlistId) setSelectedPlaylistId(parsed.playlistId);
       if (parsed.artistId) setSelectedArtistId(parsed.artistId);
       if (parsed.trackId) setSelectedTrackId(parsed.trackId);
+      if (parsed.albumId) setSelectedAlbumId(parsed.albumId);
     } catch {
       // ignore
     } finally {
@@ -746,9 +826,10 @@ export default function PlaylistBrowser() {
       playlistId: selectedPlaylistId,
       artistId: selectedArtistId,
       trackId: selectedTrackId,
+      albumId: selectedAlbumId,
     });
     safeWriteStorage(window.localStorage, "gs_playlist_selection", payload);
-  }, [mode, selectedPlaylistId, selectedArtistId, selectedTrackId]);
+  }, [mode, selectedPlaylistId, selectedArtistId, selectedTrackId, selectedAlbumId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -902,9 +983,10 @@ export default function PlaylistBrowser() {
       const hasCachedTrackOptions = hasCachedTrackOptionsRef.current;
       setLoadingTracksList(!hasCachedTrackOptions);
       try {
-        const MAX_PAGES = 60;
+        const MAX_PAGES = 500;
         let cursor: string | null = null;
         let pages = 0;
+        const seenCursors = new Set<string>();
         let allMappedItems: TrackItem[] = [];
 
         do {
@@ -923,7 +1005,15 @@ export default function PlaylistBrowser() {
           const data = (await res.json()) as CursorResponse<TrackApiItem>;
           const items = Array.isArray(data.items) ? data.items : [];
           allMappedItems = allMappedItems.concat(mapTrackApiItems(items));
-          cursor = data.nextCursor ?? null;
+          const nextCursor = data.nextCursor ?? null;
+          if (nextCursor && seenCursors.has(nextCursor)) {
+            cursor = null;
+          } else {
+            if (nextCursor) {
+              seenCursors.add(nextCursor);
+            }
+            cursor = nextCursor;
+          }
           pages += 1;
         } while (cursor && pages < MAX_PAGES);
 
@@ -981,6 +1071,11 @@ export default function PlaylistBrowser() {
     };
   }, [allMyMusicTotal, applyAllMyMusicTotal, playlistOptions.length]);
 
+  const albumOptions = useMemo(() => {
+    if (!trackItems.length) return [] as AlbumOption[];
+    return normalizeAlbumOptions(trackItems);
+  }, [trackItems]);
+
   const selectedArtist = useMemo(
     () => artistOptions.find((opt) => opt.id === selectedArtistId) || null,
     [artistOptions, selectedArtistId]
@@ -991,22 +1086,43 @@ export default function PlaylistBrowser() {
     return trackOptions.find((opt) => opt.id === selectedTrackId) || null;
   }, [trackOptions, selectedTrackId]);
 
+  const selectedAlbum = useMemo(() => {
+    if (!selectedAlbumId) return null;
+    return albumOptions.find((opt) => opt.id === selectedAlbumId) || null;
+  }, [albumOptions, selectedAlbumId]);
+
+  useEffect(() => {
+    if (!selectedAlbumId || loadingTracksList) return;
+    const exists = albumOptions.some((option) => option.id === selectedAlbumId);
+    if (!exists) setSelectedAlbumId("");
+  }, [albumOptions, loadingTracksList, selectedAlbumId]);
+
   const selectedOption =
     mode === "playlists"
       ? selectedPlaylist
       : mode === "artists"
       ? selectedArtist
-      : selectedTrack;
+      : mode === "tracks"
+      ? selectedTrack
+      : selectedAlbum;
 
   const selectorModeLabel =
-    mode === "playlists" ? "Playlists" : mode === "artists" ? "Artiesten" : "Tracks";
+    mode === "playlists"
+      ? "Playlists"
+      : mode === "artists"
+      ? "Artiesten"
+      : mode === "tracks"
+      ? "Tracks"
+      : "Albums";
   const selectorCurrentLabel = selectedOption?.name
     ? selectedOption.name
     : mode === "playlists"
     ? "Kies playlist"
     : mode === "artists"
     ? "Kies artiest"
-    : "Kies track";
+    : mode === "tracks"
+    ? "Kies track"
+    : "Kies album";
 
   const selectPlaylistInMyMusic = useCallback((playlistId: string) => {
     if (!playlistId) return;
@@ -1014,6 +1130,7 @@ export default function PlaylistBrowser() {
     setSelectedPlaylistId(playlistId);
     setSelectedArtistId("");
     setSelectedTrackId("");
+    setSelectedAlbumId("");
     setQuery("");
     setDebouncedQuery("");
     setOpen(false);
@@ -1066,10 +1183,12 @@ export default function PlaylistBrowser() {
         ? sortedPlaylists
         : mode === "artists"
         ? artistOptions
-        : trackOptions;
+        : mode === "tracks"
+        ? trackOptions
+        : albumOptions;
     if (!term) return list;
     return list.filter((opt) => opt.name.toLowerCase().includes(term));
-  }, [sortedPlaylists, artistOptions, trackOptions, debouncedQuery, mode]);
+  }, [sortedPlaylists, artistOptions, trackOptions, albumOptions, debouncedQuery, mode]);
 
   useEffect(() => {
     if (skipModeResetRef.current) return;
@@ -1091,6 +1210,19 @@ export default function PlaylistBrowser() {
       (track) => normalizeTrackName(track.name) === selectedTrackId
     );
   }, [trackItems, selectedTrackId]);
+
+  const selectedTrackDetailHasArtists = Boolean(selectedTrackDetail?.artists?.length);
+
+  const filteredAlbumTrackItems = useMemo(() => {
+    if (!selectedAlbumId) return [];
+    return trackItems.filter((track) => {
+      const artistNames = resolveTrackItemArtistNames(track);
+      return createAlbumOptionId(track, artistNames) === selectedAlbumId;
+    });
+  }, [trackItems, selectedAlbumId]);
+
+  const localFilteredTrackItems =
+    mode === "tracks" ? filteredTrackItems : filteredAlbumTrackItems;
 
   const isContextSwitchLoading = Boolean(
     loadingTracks &&
@@ -1297,8 +1429,14 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     const trackId = selectedTrackDetail?.trackId ?? null;
-    if (!trackId) return;
-    if (selectedTrackDetail?.artists && selectedTrackDetail.artists.length > 0) return;
+    if (!trackId) {
+      setTrackArtistsLoading(false);
+      return;
+    }
+    if (selectedTrackDetailHasArtists) {
+      setTrackArtistsLoading(false);
+      return;
+    }
     let cancelled = false;
     async function loadTrackArtists() {
       try {
@@ -1336,7 +1474,7 @@ export default function PlaylistBrowser() {
     return () => {
       cancelled = true;
     };
-  }, [selectedTrackDetail?.trackId, selectedTrackDetail?.artists]);
+  }, [selectedTrackDetail?.trackId, selectedTrackDetailHasArtists]);
 
   useEffect(() => {
     if (!selectedArtistDetail) return;
@@ -1513,7 +1651,7 @@ export default function PlaylistBrowser() {
       }
     }
 
-    if (mode === "tracks") return;
+    if (mode === "tracks" || mode === "albums") return;
 
     if (mode === "artists" && !selectedArtist?.id) return;
 
@@ -1570,6 +1708,7 @@ export default function PlaylistBrowser() {
     if (mode === "playlists" && !selectedPlaylist?.id) return;
     if (mode === "playlists" && selectedPlaylist?.type === "all_music") return;
     if (mode === "artists" && !selectedArtist?.id) return;
+    if (mode === "tracks" || mode === "albums") return;
     const requestVersion = tracksLoadVersionRef.current;
     const cursor = nextCursor;
     const baseUrl =
@@ -1934,12 +2073,12 @@ export default function PlaylistBrowser() {
   );
 
   function buildQueue(): { uris: string[]; byId: Set<string> } {
-    if (mode === "tracks") {
-      const uris = filteredTrackItems
+    if (mode === "tracks" || mode === "albums") {
+      const uris = localFilteredTrackItems
         .map((track) => track.id)
         .filter(Boolean)
         .map((id) => `spotify:track:${id}`);
-      return { uris, byId: new Set(filteredTrackItems.map((t) => t.id)) };
+      return { uris, byId: new Set(localFilteredTrackItems.map((t) => t.id)) };
     }
     const uris = tracks
       .map((track) => track.trackId)
@@ -2032,6 +2171,8 @@ export default function PlaylistBrowser() {
   const hasTrackContext =
     mode === "tracks"
       ? Boolean(selectedTrackId)
+      : mode === "albums"
+      ? Boolean(selectedAlbumId)
       : mode === "playlists"
       ? Boolean(selectedPlaylist?.id)
       : Boolean(selectedArtist?.id);
@@ -2048,6 +2189,8 @@ export default function PlaylistBrowser() {
   const visibleTrackCount = hasTrackContext
     ? mode === "tracks"
       ? filteredTrackItems.length
+      : mode === "albums"
+      ? filteredAlbumTrackItems.length
       : mode === "playlists"
       ? playlistContextTotalCount ??
         (selectedPlaylist?.type === "all_music" ? 0 : tracks.length)
@@ -2112,11 +2255,11 @@ export default function PlaylistBrowser() {
       <div
         id="player-library-dock-body"
         className={`player-library-dock-body${selectorDockOpen ? " open" : ""}`}
-        hidden={!selectorDockOpen}
+        aria-hidden={!selectorDockOpen}
       >
         <div className="player-library-controls-row">
           <div className="segmented segmented-integrated" role="tablist" aria-label="Library modes">
-            {(["playlists", "artists", "tracks"] as Mode[]).map((value) => (
+            {(["playlists", "artists", "tracks", "albums"] as Mode[]).map((value) => (
               <button
                 key={value}
                 type="button"
@@ -2129,7 +2272,9 @@ export default function PlaylistBrowser() {
                   ? "Playlists"
                   : value === "artists"
                   ? "Artiesten"
-                  : "Tracks"}
+                  : value === "tracks"
+                  ? "Tracks"
+                  : "Albums"}
               </button>
             ))}
           </div>
@@ -2173,7 +2318,9 @@ export default function PlaylistBrowser() {
                   ? "Zoek playlists..."
                   : mode === "artists"
                   ? "Zoek artiesten..."
-                  : "Zoek tracks..."
+                  : mode === "tracks"
+                  ? "Zoek tracks..."
+                  : "Zoek albums..."
               }
               disabled={
                 mode === "playlists"
@@ -2206,6 +2353,9 @@ export default function PlaylistBrowser() {
                   if (mode === "artists") setSelectedArtistId("");
                   if (mode === "tracks") {
                     setSelectedTrackId("");
+                  }
+                  if (mode === "albums") {
+                    setSelectedAlbumId("");
                   }
                 }}
               >
@@ -2273,17 +2423,21 @@ export default function PlaylistBrowser() {
                       aria-selected={
                         mode === "playlists"
                           ? opt.id === selectedPlaylistId
-                          : opt.id === selectedArtistId
+                          : mode === "artists"
+                          ? opt.id === selectedArtistId
+                          : opt.id === selectedAlbumId
                       }
                       className={`combo-item${
                         (mode === "playlists" && opt.id === selectedPlaylistId) ||
-                        (mode === "artists" && opt.id === selectedArtistId)
+                        (mode === "artists" && opt.id === selectedArtistId) ||
+                        (mode === "albums" && opt.id === selectedAlbumId)
                           ? " active"
                           : ""
                       }`}
                       onClick={() => {
                         if (mode === "playlists") setSelectedPlaylistId(opt.id);
                         if (mode === "artists") setSelectedArtistId(opt.id);
+                        if (mode === "albums") setSelectedAlbumId(opt.id);
                         setQuery("");
                         setDebouncedQuery("");
                         setOpen(false);
@@ -2360,6 +2514,19 @@ export default function PlaylistBrowser() {
           </div>
         </div>
       ) : null}
+      {loadingTracksList && mode === "albums" ? (
+        <p className="text-body" role="status">
+          Albums laden...
+        </p>
+      ) : null}
+      {!loadingTracksList && mode === "albums" && albumOptions.length === 0 ? (
+        <div className="empty-state">
+          <div style={{ fontWeight: 600 }}>Nog geen albums gevonden</div>
+          <div className="text-body">
+            Werk de bibliotheek bij via Settings en probeer opnieuw.
+          </div>
+        </div>
+      ) : null}
       {error ? (
         <div style={{ color: "#fca5a5" }} role="alert">
           <p>{error}</p>
@@ -2369,7 +2536,7 @@ export default function PlaylistBrowser() {
         <div className="text-subtle">Tracks in lijst: {visibleTrackCount}</div>
       ) : null}
 
-      {mode !== "tracks" ? (
+      {mode === "playlists" || mode === "artists" ? (
         <div className="track-list" style={{ marginTop: 16 }}>
           {!isContextSwitchLoading &&
           !loadingTracks &&
@@ -2431,13 +2598,19 @@ export default function PlaylistBrowser() {
         </div>
       ) : (
         <div className="track-list" style={{ marginTop: 16 }}>
-          {!loadingTracksList && selectedTrackId && !filteredTrackItems.length ? (
+          {!loadingTracksList &&
+          (mode === "tracks" ? selectedTrackId : selectedAlbumId) &&
+          !localFilteredTrackItems.length ? (
             <div className="empty-state">
               <div style={{ fontWeight: 600 }}>Geen resultaten</div>
-              <div className="text-body">Probeer een andere titel.</div>
+              <div className="text-body">
+                {mode === "tracks"
+                  ? "Probeer een andere titel."
+                  : "Probeer een ander album."}
+              </div>
             </div>
           ) : null}
-          {filteredTrackItems.length ? (
+          {localFilteredTrackItems.length ? (
             <div className="track-header columns-6">
               <div />
               <div>Track</div>
@@ -2447,10 +2620,10 @@ export default function PlaylistBrowser() {
               <div className="track-col-actions">Acties</div>
             </div>
           ) : null}
-          {filteredTrackItems.length ? (
+          {localFilteredTrackItems.length ? (
             <List
               height={listHeight}
-              itemCount={filteredTrackItems.length}
+              itemCount={localFilteredTrackItems.length}
               itemSize={TRACK_ROW_HEIGHT}
               width="100%"
               overscanCount={6}
@@ -2459,7 +2632,7 @@ export default function PlaylistBrowser() {
                 return item.id || index;
               }}
               itemData={{
-                items: filteredTrackItems,
+                items: localFilteredTrackItems,
                 currentTrackId,
                 openDetailFromItem,
                 handlePlayTrack,
@@ -2480,8 +2653,8 @@ export default function PlaylistBrowser() {
       )}
 
       <div style={{ marginTop: 12 }}>
-        {mode === "tracks" ? (
-          !selectedTrackId && loadingTracksList ? (
+        {mode === "tracks" || mode === "albums" ? (
+          !(mode === "tracks" ? selectedTrackId : selectedAlbumId) && loadingTracksList ? (
             <span className="text-body">Tracks laden...</span>
           ) : null
         ) : loadingTracks || loadingMoreTracks ? (
@@ -2698,6 +2871,14 @@ export default function PlaylistBrowser() {
           <div style={{ fontWeight: 600 }}>Kies een track</div>
           <div className="text-body">
             Selecteer een track om resultaten te bekijken.
+          </div>
+        </div>
+      ) : null}
+      {mode === "albums" && !selectedAlbumId ? (
+        <div className="empty-state" style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 600 }}>Kies een album</div>
+          <div className="text-body">
+            Selecteer een album om resultaten te bekijken.
           </div>
         </div>
       ) : null}

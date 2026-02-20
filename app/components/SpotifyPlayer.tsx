@@ -627,6 +627,79 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     return false;
   }
 
+  function resolveTrackIdFromUri(uri?: string | null) {
+    if (!uri) return null;
+    const id = uri.split(":").pop();
+    return id ? id : null;
+  }
+
+  async function readCurrentPlayback() {
+    const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
+    if (!res?.ok) return null;
+    return await readJsonSafely<any>(res);
+  }
+
+  function playbackMatchesExpectedTrack(
+    playback: any,
+    expectedTrackId?: string | null
+  ) {
+    if (!expectedTrackId) return true;
+    const currentTrackId =
+      typeof playback?.item?.id === "string" ? playback.item.id : null;
+    if (!currentTrackId) return true;
+    return currentTrackId === expectedTrackId;
+  }
+
+  async function forceResumePlayback(deviceId: string) {
+    if (deviceId === sdkDeviceIdRef.current) {
+      try {
+        await playerRef.current?.activateElement?.();
+      } catch {
+        // ignore; fallback to Web API play call below
+      }
+      try {
+        await playerRef.current?.resume?.();
+      } catch {
+        // ignore; fallback to Web API play call below
+      }
+    }
+    await spotifyApiFetch(
+      withDeviceId("https://api.spotify.com/v1/me/player/play", deviceId),
+      { method: "PUT" }
+    );
+  }
+
+  async function ensurePlaybackStarted(
+    deviceId: string,
+    expectedTrackId?: string | null
+  ) {
+    const wait = async (ms: number) => {
+      if (ms <= 0) return;
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    };
+
+    const verifyPlaying = async (delayMs: number) => {
+      await wait(delayMs);
+      const playback = await readCurrentPlayback();
+      const playing = Boolean(playback?.is_playing);
+      if (!playing) return false;
+      return playbackMatchesExpectedTrack(playback, expectedTrackId);
+    };
+
+    if (await verifyPlaying(180)) {
+      return true;
+    }
+
+    await forceResumePlayback(deviceId);
+    if (await verifyPlaying(240)) {
+      return true;
+    }
+
+    await wait(420);
+    await forceResumePlayback(deviceId);
+    return await verifyPlaying(260);
+  }
+
   const getIndexFromTrackId = useCallback((uris: string[], trackId?: string | null) => {
     if (!trackId) return -1;
     const target = String(trackId);
@@ -765,6 +838,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       { method: "PUT", body: JSON.stringify(payload) }
     );
     if (res && res.ok) {
+      await ensurePlaybackStarted(deviceId, id);
       applyProgressPosition(0);
       setTimeout(() => {
         spotifyApiFetch(
@@ -1979,6 +2053,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             );
           }
           if (playRes.ok) {
+            const expectedTrackId = resolveTrackIdFromUri(resolvedUri);
+            await ensurePlaybackStarted(
+              currentDevice as string,
+              expectedTrackId
+            );
             queueModeRef.current = "queue";
             queueUrisRef.current = uris;
             queueIndexRef.current = startIndex;
@@ -2120,6 +2199,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             );
           }
           if (contextRes.ok) {
+            const expectedTrackId = resolveTrackIdFromUri(offsetUri ?? null);
+            await ensurePlaybackStarted(
+              currentDevice as string,
+              expectedTrackId
+            );
             queueModeRef.current = "context";
             queueUrisRef.current = null;
             queueOrderRef.current = null;

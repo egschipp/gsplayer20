@@ -75,6 +75,7 @@
 .queueHeader,
 .queueRowInner {
   min-width: 760px;
+  grid-template-columns: 136px minmax(0, 1fr) minmax(120px, 0.6fr) 72px 124px;
 }
 
 .statusHeader {
@@ -231,12 +232,6 @@
   color: #fcd38d;
 }
 
-.statusPlaylistUnknown {
-  border-color: rgba(148, 163, 184, 0.36);
-  background: rgba(148, 163, 184, 0.1);
-  color: #cbd5e1;
-}
-
 .durationCell {
   font-variant-numeric: tabular-nums;
 }
@@ -259,4 +254,17 @@
   border-color: rgba(239, 68, 68, 0.58);
   background: rgba(239, 68, 68, 0.16);
   color: #fecaca;
+}
+
+@media (max-width: 900px) {
+  .queueHeader,
+  .queueRowInner {
+    min-width: 620px;
+    grid-template-columns: 136px minmax(0, 1fr) 72px 124px;
+  }
+
+  .statusHeader,
+  .statusCell {
+    display: none;
+  }
 }

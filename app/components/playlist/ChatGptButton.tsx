@@ -144,14 +144,7 @@ export default function ChatGptButton({
       type="button"
       aria-label="Open ChatGPT"
       title="Open ChatGPT"
-      style={{
-        color: "var(--text-primary)",
-        display: "inline-flex",
-        background: "transparent",
-        border: "none",
-        padding: 0,
-        cursor: "pointer",
-      }}
+      className="chatgpt-btn"
       onClick={handleClick}
     >
       <svg

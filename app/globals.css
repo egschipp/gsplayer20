@@ -200,7 +200,11 @@ header.panel {
   font-size: 0.875rem;
   height: 44px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    transform 0.12s ease;
 }
 
 .btn-primary {
@@ -889,12 +893,12 @@ a:focus-visible {
 
 .player-library-dock {
   border-radius: 16px;
-  border: 1px solid rgba(2, 154, 228, 0.26);
+  border: 1px solid rgba(29, 185, 84, 0.28);
   background: linear-gradient(
       135deg,
-      rgba(2, 154, 228, 0.17),
-      rgba(19, 194, 161, 0.14),
-      rgba(69, 221, 97, 0.1)
+      rgba(29, 185, 84, 0.14),
+      rgba(29, 185, 84, 0.08),
+      rgba(255, 255, 255, 0.03)
     ),
     rgba(0, 0, 0, 0.44);
   margin-bottom: 12px;
@@ -941,6 +945,29 @@ a:focus-visible {
   font-size: 0.95rem;
   color: var(--text-subtle);
   transition: transform 160ms ease;
+}
+
+.player-library-dock-chevron-btn {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.player-library-dock-chevron-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.player-library-dock-chevron-btn:focus-visible {
+  outline: 2px solid var(--tide);
+  outline-offset: 2px;
 }
 
 .player-library-dock-chevron.open {
@@ -1162,7 +1189,7 @@ a:focus-visible {
     justify-items: start;
   }
 
-  .player-library-dock-chevron {
+  .player-library-dock-chevron-btn {
     grid-column: 2 / 3;
     grid-row: 1 / 3;
     align-self: center;
@@ -1255,6 +1282,28 @@ details[open] > .details-summary::after {
 .track-action-link {
   color: var(--text-primary);
   display: inline-flex;
+}
+
+.chatgpt-btn {
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  transition: color 120ms ease, transform 120ms ease;
+}
+
+.chatgpt-btn:hover {
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.chatgpt-btn:focus-visible {
+  outline: 2px solid var(--tide);
+  outline-offset: 2px;
 }
 
 .track-row-inner:hover {
@@ -1628,14 +1677,14 @@ details[open] > .details-summary::after {
   align-items: center;
   padding: 14px 16px;
   border-radius: 18px;
-  border: 1px solid rgba(2, 154, 228, 0.25);
+  border: 1px solid rgba(29, 185, 84, 0.24);
   background: linear-gradient(
       135deg,
-      rgba(2, 154, 228, 0.18),
-      rgba(19, 194, 161, 0.16),
-      rgba(69, 221, 97, 0.12)
+      rgba(29, 185, 84, 0.14),
+      rgba(29, 185, 84, 0.08),
+      rgba(255, 255, 255, 0.03)
     ),
-    rgba(0, 0, 0, 0.55);
+    rgba(0, 0, 0, 0.58);
   margin: 16px 0 20px;
 }
 
@@ -1644,8 +1693,8 @@ details[open] > .details-summary::after {
   height: 80px;
   border-radius: 14px;
   overflow: hidden;
-  background: rgba(2, 154, 228, 0.18);
-  border: 1px solid rgba(2, 154, 228, 0.35);
+  background: rgba(29, 185, 84, 0.12);
+  border: 1px solid rgba(29, 185, 84, 0.3);
 }
 
 .player-cover img {
@@ -1674,12 +1723,12 @@ details[open] > .details-summary::after {
   border-radius: 16px;
   background: linear-gradient(
       135deg,
-      rgba(2, 154, 228, 0.18),
-      rgba(19, 194, 161, 0.16),
-      rgba(69, 221, 97, 0.12)
+      rgba(29, 185, 84, 0.13),
+      rgba(29, 185, 84, 0.06),
+      rgba(255, 255, 255, 0.03)
     ),
     rgba(0, 0, 0, 0.45);
-  border: 1px solid rgba(2, 154, 228, 0.25);
+  border: 1px solid rgba(29, 185, 84, 0.24);
 }
 
 .player-queue {
@@ -1688,12 +1737,12 @@ details[open] > .details-summary::after {
   border-radius: 16px;
   background: linear-gradient(
       135deg,
-      rgba(2, 154, 228, 0.18),
-      rgba(19, 194, 161, 0.16),
-      rgba(69, 221, 97, 0.12)
+      rgba(29, 185, 84, 0.13),
+      rgba(29, 185, 84, 0.06),
+      rgba(255, 255, 255, 0.03)
     ),
     rgba(0, 0, 0, 0.45);
-  border: 1px solid rgba(2, 154, 228, 0.25);
+  border: 1px solid rgba(29, 185, 84, 0.24);
 }
 
 .player-queue-title {
@@ -1717,8 +1766,8 @@ details[open] > .details-summary::after {
   width: 40px;
   height: 40px;
   border-radius: 8px;
-  background: rgba(2, 154, 228, 0.2);
-  border: 1px solid rgba(2, 154, 228, 0.3);
+  background: rgba(29, 185, 84, 0.14);
+  border: 1px solid rgba(29, 185, 84, 0.24);
 }
 
 .player-queue-name {
@@ -1755,7 +1804,7 @@ details[open] > .details-summary::after {
   width: 32px;
   height: 32px;
   border-radius: 999px;
-  border: 1px solid rgba(2, 154, 228, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   background: rgba(0, 0, 0, 0.35);
   color: rgba(255, 255, 255, 0.92);
   display: inline-flex;
@@ -1782,6 +1831,11 @@ details[open] > .details-summary::after {
 .player-like-btn:disabled {
   opacity: 0.75;
   cursor: default;
+}
+
+.player-like-btn:focus-visible {
+  outline: 2px solid var(--tide);
+  outline-offset: 2px;
 }
 
 .player-controls {
@@ -1818,7 +1872,7 @@ details[open] > .details-summary::after {
   width: 100%;
   height: 18px;
   border-radius: 999px;
-  background: rgba(2, 154, 228, 0.2);
+  background: rgba(255, 255, 255, 0.12);
   outline: none;
   cursor: pointer;
   touch-action: pan-y;
@@ -1836,7 +1890,7 @@ details[open] > .details-summary::after {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #13c2a1;
+  background: #1db954;
   cursor: pointer;
   border: 2px solid rgba(0, 0, 0, 0.4);
   transition: transform 120ms ease, background 120ms ease;
@@ -1846,7 +1900,7 @@ details[open] > .details-summary::after {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #13c2a1;
+  background: #1db954;
   cursor: pointer;
   border: 2px solid rgba(0, 0, 0, 0.4);
   transition: transform 120ms ease, background 120ms ease;
@@ -1895,6 +1949,11 @@ details[open] > .details-summary::after {
   transition: transform 0.08s ease, color 0.08s ease, background 0.08s ease;
 }
 
+.player-control:focus-visible {
+  outline: 2px solid var(--tide);
+  outline-offset: 2px;
+}
+
 .player-control svg {
   width: 24px;
   height: 24px;
@@ -1904,12 +1963,12 @@ details[open] > .details-summary::after {
 .player-control-grad {
   background: linear-gradient(
       135deg,
-      rgba(2, 154, 228, 0.25),
-      rgba(19, 194, 161, 0.2),
-      rgba(69, 221, 97, 0.18)
+      rgba(29, 185, 84, 0.28),
+      rgba(29, 185, 84, 0.16),
+      rgba(255, 255, 255, 0.06)
     ),
     rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(2, 154, 228, 0.25);
+  border: 1px solid rgba(29, 185, 84, 0.28);
 }
 
 .player-control:hover {
@@ -1919,6 +1978,12 @@ details[open] > .details-summary::after {
 
 .player-control:active {
   transform: scale(0.98);
+}
+
+.player-control:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .player-control-play {
@@ -1931,12 +1996,12 @@ details[open] > .details-summary::after {
 .player-control-play.player-control-grad {
   background: linear-gradient(
       135deg,
-      rgba(2, 154, 228, 0.35),
-      rgba(19, 194, 161, 0.3),
-      rgba(69, 221, 97, 0.28)
+      rgba(29, 185, 84, 0.55),
+      rgba(29, 185, 84, 0.38),
+      rgba(255, 255, 255, 0.08)
     ),
     #1db954;
-  border: 1px solid rgba(2, 154, 228, 0.3);
+  border: 1px solid rgba(29, 185, 84, 0.46);
 }
 
 .account-page {
@@ -2220,7 +2285,7 @@ details[open] > .details-summary::after {
 
 .player-badge {
   font-size: 0.7rem;
-  color: rgba(2, 154, 228, 0.9);
+  color: rgba(105, 246, 157, 0.95);
   text-transform: uppercase;
   letter-spacing: 0.14em;
 }

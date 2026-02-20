@@ -307,6 +307,40 @@ function buildApiUrl(
   return qs ? `${path}?${qs}` : path;
 }
 
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function getFocusableElements(root: HTMLElement | null) {
+  if (!root) return [] as HTMLElement[];
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (element) => element.offsetParent !== null || element === document.activeElement
+  );
+}
+
+function trapTabWithin(event: KeyboardEvent, root: HTMLElement | null) {
+  if (event.key !== "Tab" || !root) return;
+  const focusable = getFocusableElements(root);
+  if (focusable.length === 0) {
+    event.preventDefault();
+    root.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  if (event.shiftKey) {
+    if (active === first || !active || !root.contains(active)) {
+      event.preventDefault();
+      last.focus();
+    }
+    return;
+  }
+  if (active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function mapTrackApiItems(items: TrackApiItem[]): TrackItem[] {
   return items.map((track): TrackItem => ({
     id: String(track.id ?? track.trackId ?? ""),
@@ -446,6 +480,7 @@ export default function PlaylistBrowser() {
   const [open, setOpen] = useState(false);
   const [selectorDockPinned, setSelectorDockPinned] = useState(false);
   const [selectorDockHovered, setSelectorDockHovered] = useState(false);
+  const [selectorDockManualOpen, setSelectorDockManualOpen] = useState(false);
   const [selectorDockHost, setSelectorDockHost] = useState<HTMLElement | null>(null);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [trackItems, setTrackItems] = useState<TrackItem[]>([]);
@@ -456,6 +491,7 @@ export default function PlaylistBrowser() {
   const [loadingMorePlaylists, setLoadingMorePlaylists] = useState(false);
   const [loadingMoreArtists, setLoadingMoreArtists] = useState(false);
   const [loadingMoreTracks, setLoadingMoreTracks] = useState(false);
+  const [loadingMoreTrackOptions, setLoadingMoreTrackOptions] = useState(false);
   const [loadingPlaylists, setLoadingPlaylists] = useState(true);
   const [loadingArtists, setLoadingArtists] = useState(false);
   const [loadingTracksList, setLoadingTracksList] = useState(false);
@@ -491,6 +527,8 @@ export default function PlaylistBrowser() {
   const hasCachedPlaylistsRef = useRef(false);
   const hasCachedArtistsRef = useRef(false);
   const hasCachedTrackOptionsRef = useRef(false);
+  const artistsBootstrapDoneRef = useRef(false);
+  const trackOptionsBootstrapDoneRef = useRef(false);
   const lastHandledRefreshTokenRef = useRef(0);
   const tracksLoadVersionRef = useRef(0);
   const forceLivePlaylistRefreshRef = useRef(false);
@@ -499,13 +537,18 @@ export default function PlaylistBrowser() {
   const cacheWriteBlockedRef = useRef(false);
   const cacheWriteTimerRef = useRef<number | null>(null);
   const trackDetailTriggerRef = useRef<HTMLElement | null>(null);
+  const trackDetailDialogRef = useRef<HTMLDivElement | null>(null);
+  const artistDetailDialogRef = useRef<HTMLDivElement | null>(null);
+  const artistDetailRestoreFocusRef = useRef<HTMLElement | null>(null);
+  const hydratingPlaylistTargetsRef = useRef(false);
   const comboMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setOpen(false),
   });
   const CACHE_KEY = "gs_library_cache_v1";
   const LEGACY_SELECTOR_DOCK_KEY = "gs_selector_dock_open_v1";
   const SELECTOR_DOCK_PIN_KEY = "gs_selector_dock_pinned_v1";
-  const selectorDockOpen = selectorDockPinned || selectorDockHovered || open;
+  const selectorDockOpen =
+    selectorDockPinned || selectorDockHovered || selectorDockManualOpen || open;
   const allPlaylistNames = useMemo(() => {
     return playlistOptions
       .map((pl) => pl.name || "Untitled playlist")
@@ -843,44 +886,35 @@ export default function PlaylistBrowser() {
       setError(null);
       setAuthRequired(false);
       try {
-        const all: PlaylistOption[] = [];
-        let cursor: string | null = null;
-        do {
-          const res = await fetch(
-            buildApiUrl("/api/spotify/me/playlists", { limit: "50", cursor, live: "1" }),
-            { cache: "no-store" }
-          );
-          if (!res.ok) {
-            const mapped = mapSpotifyApiError(
-              res.status,
-              "Playlists laden lukt nu niet."
-            );
-            if (!cancelled && !hasCachedPlaylists) {
-              setAuthRequired(Boolean(mapped.authRequired));
-              setError(mapped.message);
-            }
-            return;
+        const res = await fetch(
+          buildApiUrl("/api/spotify/me/playlists", { limit: "100", live: "1" }),
+          { cache: "no-store" }
+        );
+        if (!res.ok) {
+          const mapped = mapSpotifyApiError(res.status, "Playlists laden lukt nu niet.");
+          if (!cancelled && !hasCachedPlaylists) {
+            setAuthRequired(Boolean(mapped.authRequired));
+            setError(mapped.message);
           }
-          const data = (await res.json()) as CursorResponse<PlaylistApiItem>;
-          const items = Array.isArray(data.items) ? data.items : [];
-          const mappedItems = items.map(
-            (p): PlaylistOption => ({
-              id: p.playlistId,
-              name: p.name,
-              type: "playlist",
-              spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
-              tracksTotal:
-                typeof p.tracksTotal === "number" ? p.tracksTotal : null,
-            })
-          );
-          all.push(...mappedItems);
-          cursor = data.nextCursor ?? null;
-        } while (cursor);
-
-        const list = normalizePlaylistOptions(all);
+          return;
+        }
+        const data = (await res.json()) as CursorResponse<PlaylistApiItem>;
+        const items = Array.isArray(data.items) ? data.items : [];
+        const mappedItems = items.map(
+          (p): PlaylistOption => ({
+            id: p.playlistId,
+            name: p.name,
+            type: "playlist",
+            spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
+            tracksTotal: typeof p.tracksTotal === "number" ? p.tracksTotal : null,
+          })
+        );
         if (!cancelled) {
-          setPlaylistOptions(list);
-          setPlaylistCursor(cursor ?? null);
+          hasCachedPlaylistsRef.current = hasCachedPlaylists || mappedItems.length > 0;
+          setPlaylistOptions((prev) =>
+            normalizePlaylistOptions((hasCachedPlaylists ? prev : []).concat(mappedItems))
+          );
+          setPlaylistCursor(data.nextCursor ?? null);
         }
       } catch {
         if (!cancelled && !hasCachedPlaylists) {
@@ -903,6 +937,9 @@ export default function PlaylistBrowser() {
   }, [loadingPlaylists, playlistOptions, selectedPlaylistId]);
 
   useEffect(() => {
+    const shouldLoadArtists = mode === "artists" || Boolean(selectedArtistId);
+    if (!shouldLoadArtists) return;
+    if (artistsBootstrapDoneRef.current) return;
     let cancelled = false;
     async function loadArtists() {
       const hasCachedArtists = hasCachedArtistsRef.current;
@@ -912,50 +949,36 @@ export default function PlaylistBrowser() {
         setLoadingArtists(false);
       }
       try {
-        const all: ArtistOption[] = [];
-        const seenCursors = new Set<string>();
-        let cursor: string | null = null;
-        do {
-          const res = await fetch(
-            buildApiUrl("/api/spotify/artists", {
-              limit: "50",
-              cursor,
-            }),
-            { cache: "no-store" }
-          );
-          if (!res.ok) {
-            const mapped = mapSpotifyApiError(res.status, "Artiesten laden lukt nu niet.");
-            if (!cancelled && !hasCachedArtists) {
-              setAuthRequired(Boolean(mapped.authRequired));
-              setError(mapped.message);
-            }
-            return;
+        const res = await fetch(
+          buildApiUrl("/api/spotify/artists", {
+            limit: "100",
+          }),
+          { cache: "no-store" }
+        );
+        if (!res.ok) {
+          const mapped = mapSpotifyApiError(res.status, "Artiesten laden lukt nu niet.");
+          if (!cancelled && !hasCachedArtists) {
+            setAuthRequired(Boolean(mapped.authRequired));
+            setError(mapped.message);
           }
-          const data = (await res.json()) as CursorResponse<ArtistApiItem>;
-          const items = Array.isArray(data.items) ? data.items : [];
-          const mappedItems = items.map(
-            (artist): ArtistOption => ({
-              id: artist.artistId,
-              name: artist.name,
-              spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
-            })
-          );
-          all.push(...mappedItems);
-          const nextCursor = data.nextCursor ?? null;
-          if (nextCursor && seenCursors.has(nextCursor)) {
-            cursor = null;
-          } else {
-            if (nextCursor) {
-              seenCursors.add(nextCursor);
-            }
-            cursor = nextCursor;
-          }
-        } while (cursor);
-        const list = normalizeArtistOptions(all);
+          return;
+        }
+        const data = (await res.json()) as CursorResponse<ArtistApiItem>;
+        const items = Array.isArray(data.items) ? data.items : [];
+        const mappedItems = items.map(
+          (artist): ArtistOption => ({
+            id: artist.artistId,
+            name: artist.name,
+            spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
+          })
+        );
         if (!cancelled) {
-          setArtistOptions(list);
-          setArtistCursor(null);
-          hasCachedArtistsRef.current = list.length > 0;
+          artistsBootstrapDoneRef.current = true;
+          setArtistOptions((prev) =>
+            normalizeArtistOptions((hasCachedArtists ? prev : []).concat(mappedItems))
+          );
+          setArtistCursor(data.nextCursor ?? null);
+          hasCachedArtistsRef.current = hasCachedArtists || mappedItems.length > 0;
         }
       } catch {
         if (!cancelled && !hasCachedArtists) {
@@ -969,7 +992,7 @@ export default function PlaylistBrowser() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mode, selectedArtistId]);
 
   useEffect(() => {
     if (!selectedArtistId || loadingArtists) return;
@@ -978,51 +1001,44 @@ export default function PlaylistBrowser() {
   }, [artistOptions, loadingArtists, selectedArtistId]);
 
   useEffect(() => {
+    const shouldLoadTrackSelectors =
+      mode === "tracks" ||
+      mode === "albums" ||
+      Boolean(selectedTrackId) ||
+      Boolean(selectedAlbumId);
+    if (!shouldLoadTrackSelectors) return;
+    if (trackOptionsBootstrapDoneRef.current) return;
     let cancelled = false;
     async function loadTracksList() {
       const hasCachedTrackOptions = hasCachedTrackOptionsRef.current;
       setLoadingTracksList(!hasCachedTrackOptions);
       try {
-        const MAX_PAGES = 500;
-        let cursor: string | null = null;
-        let pages = 0;
-        const seenCursors = new Set<string>();
-        let allMappedItems: TrackItem[] = [];
-
-        do {
-          const res = await fetch(
-            buildApiUrl("/api/spotify/tracks", { limit: "100", cursor }),
-            { cache: "no-store" }
-          );
-          if (!res.ok) {
-            const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
-            if (!cancelled && !hasCachedTrackOptions) {
-              setAuthRequired(Boolean(mapped.authRequired));
-              setError(mapped.message);
-            }
-            return;
+        const res = await fetch(buildApiUrl("/api/spotify/tracks", { limit: "100" }), {
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
+          if (!cancelled && !hasCachedTrackOptions) {
+            setAuthRequired(Boolean(mapped.authRequired));
+            setError(mapped.message);
           }
-          const data = (await res.json()) as CursorResponse<TrackApiItem>;
-          const items = Array.isArray(data.items) ? data.items : [];
-          allMappedItems = allMappedItems.concat(mapTrackApiItems(items));
-          const nextCursor = data.nextCursor ?? null;
-          if (nextCursor && seenCursors.has(nextCursor)) {
-            cursor = null;
-          } else {
-            if (nextCursor) {
-              seenCursors.add(nextCursor);
-            }
-            cursor = nextCursor;
-          }
-          pages += 1;
-        } while (cursor && pages < MAX_PAGES);
+          return;
+        }
+        const data = (await res.json()) as CursorResponse<TrackApiItem>;
+        const items = Array.isArray(data.items) ? data.items : [];
+        const mappedItems = mapTrackApiItems(items);
 
         if (!cancelled) {
-          const nextOptions = mergeTrackOptions([], allMappedItems);
-          setTrackOptions(nextOptions);
-          setTrackItems(allMappedItems);
-          setTrackCursor(cursor ?? null);
-          hasCachedTrackOptionsRef.current = nextOptions.length > 0;
+          trackOptionsBootstrapDoneRef.current = true;
+          setTrackOptions((prev) =>
+            mergeTrackOptions(hasCachedTrackOptions ? prev : [], mappedItems)
+          );
+          setTrackItems((prev) =>
+            hasCachedTrackOptions ? prev.concat(mappedItems) : mappedItems
+          );
+          setTrackCursor(data.nextCursor ?? null);
+          hasCachedTrackOptionsRef.current =
+            hasCachedTrackOptions || mappedItems.length > 0;
         }
       } catch {
         if (!cancelled && !hasCachedTrackOptions) {
@@ -1036,7 +1052,7 @@ export default function PlaylistBrowser() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mode, selectedAlbumId, selectedTrackId]);
 
   const selectedPlaylist = useMemo(() => {
     if (!selectedPlaylistId) return null;
@@ -1212,6 +1228,15 @@ export default function PlaylistBrowser() {
   }, [trackItems, selectedTrackId]);
 
   const selectedTrackDetailHasArtists = Boolean(selectedTrackDetail?.artists?.length);
+  const selectedTrackDetailDialogKey = selectedTrackDetail
+    ? selectedTrackDetail.trackId ??
+      selectedTrackDetail.id ??
+      selectedTrackDetail.itemId ??
+      `__track-detail__:${selectedTrackDetail.name ?? ""}`
+    : null;
+  const selectedArtistDetailDialogKey = selectedArtistDetail
+    ? selectedArtistDetail.artistId || "__artist-detail__"
+    : null;
 
   const filteredAlbumTrackItems = useMemo(() => {
     if (!selectedAlbumId) return [];
@@ -1264,6 +1289,42 @@ export default function PlaylistBrowser() {
     }
   }, [playlistCursor, loadingMorePlaylists]);
 
+  const ensureAllPlaylistOptionsLoaded = useCallback(async () => {
+    if (!playlistCursor) return;
+    if (hydratingPlaylistTargetsRef.current) return;
+    hydratingPlaylistTargetsRef.current = true;
+    let cursor: string | null = playlistCursor;
+    try {
+      while (cursor) {
+        const res = await fetch(
+          buildApiUrl("/api/spotify/me/playlists", {
+            limit: "100",
+            cursor,
+            live: "1",
+          }),
+          { cache: "no-store" }
+        );
+        if (!res.ok) break;
+        const data = (await res.json()) as CursorResponse<PlaylistApiItem>;
+        const items = Array.isArray(data.items) ? data.items : [];
+        const mappedItems = items.map(
+          (p): PlaylistOption => ({
+            id: p.playlistId,
+            name: p.name,
+            type: "playlist",
+            spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
+            tracksTotal: typeof p.tracksTotal === "number" ? p.tracksTotal : null,
+          })
+        );
+        setPlaylistOptions((prev) => normalizePlaylistOptions(prev.concat(mappedItems)));
+        cursor = data.nextCursor ?? null;
+        setPlaylistCursor(cursor);
+      }
+    } finally {
+      hydratingPlaylistTargetsRef.current = false;
+    }
+  }, [playlistCursor]);
+
   const loadMoreArtists = useCallback(async () => {
     if (!artistCursor || loadingMoreArtists) return;
     setLoadingMoreArtists(true);
@@ -1292,6 +1353,41 @@ export default function PlaylistBrowser() {
     }
   }, [artistCursor, loadingMoreArtists]);
 
+  const loadMoreTrackOptions = useCallback(async () => {
+    if (!trackCursor || loadingMoreTrackOptions) return;
+    setLoadingMoreTrackOptions(true);
+    try {
+      const res = await fetch(
+        buildApiUrl("/api/spotify/tracks", {
+          limit: "100",
+          cursor: trackCursor,
+        }),
+        { cache: "no-store" }
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as CursorResponse<TrackApiItem>;
+      const items = Array.isArray(data.items) ? data.items : [];
+      const mappedItems = mapTrackApiItems(items);
+      setTrackItems((prev) => {
+        const seen = new Set<string>();
+        const combined: TrackItem[] = [];
+        const pushUnique = (item: TrackItem) => {
+          const key = item.id || item.trackId || "";
+          if (!key || seen.has(key)) return;
+          seen.add(key);
+          combined.push(item);
+        };
+        for (const item of prev) pushUnique(item);
+        for (const item of mappedItems) pushUnique(item);
+        return combined;
+      });
+      setTrackOptions((prev) => mergeTrackOptions(prev, mappedItems));
+      setTrackCursor(data.nextCursor ?? null);
+    } finally {
+      setLoadingMoreTrackOptions(false);
+    }
+  }, [loadingMoreTrackOptions, trackCursor]);
+
   useEffect(() => {
     const term = debouncedQuery.trim();
     const shouldPrefetchBySearch = open && term.length >= 2;
@@ -1312,16 +1408,27 @@ export default function PlaylistBrowser() {
     ) {
       loadMoreArtists();
     }
+    if (
+      shouldPrefetchBySearch &&
+      (mode === "tracks" || mode === "albums") &&
+      trackCursor &&
+      !loadingMoreTrackOptions
+    ) {
+      loadMoreTrackOptions();
+    }
   }, [
     debouncedQuery,
     open,
     mode,
     playlistCursor,
     artistCursor,
+    trackCursor,
     loadingMorePlaylists,
     loadingMoreArtists,
+    loadingMoreTrackOptions,
     loadMorePlaylists,
     loadMoreArtists,
+    loadMoreTrackOptions,
   ]);
 
 
@@ -1417,15 +1524,24 @@ export default function PlaylistBrowser() {
   }
 
   useEffect(() => {
-    if (!selectedTrackDetail) return;
-    function handleEscape(event: KeyboardEvent) {
+    if (!selectedTrackDetailDialogKey || selectedArtistDetailDialogKey) return;
+    const dialog = trackDetailDialogRef.current;
+    if (!dialog) return;
+    const focusable = getFocusableElements(dialog);
+    (focusable[0] ?? dialog).focus();
+    const handleDialogKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         closeTrackDetail();
+        return;
       }
-    }
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [closeTrackDetail, selectedTrackDetail]);
+      trapTabWithin(event, dialog);
+    };
+    dialog.addEventListener("keydown", handleDialogKeyDown);
+    return () => {
+      dialog.removeEventListener("keydown", handleDialogKeyDown);
+    };
+  }, [closeTrackDetail, selectedArtistDetailDialogKey, selectedTrackDetailDialogKey]);
 
   useEffect(() => {
     const trackId = selectedTrackDetail?.trackId ?? null;
@@ -1477,15 +1593,33 @@ export default function PlaylistBrowser() {
   }, [selectedTrackDetail?.trackId, selectedTrackDetailHasArtists]);
 
   useEffect(() => {
-    if (!selectedArtistDetail) return;
-    function handleEscape(event: KeyboardEvent) {
+    if (!selectedArtistDetailDialogKey) return;
+    artistDetailRestoreFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = artistDetailDialogRef.current;
+    if (!dialog) return;
+    const focusable = getFocusableElements(dialog);
+    (focusable[0] ?? dialog).focus();
+    const handleDialogKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         setSelectedArtistDetail(null);
+        return;
       }
-    }
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [selectedArtistDetail]);
+      trapTabWithin(event, dialog);
+    };
+    dialog.addEventListener("keydown", handleDialogKeyDown);
+    return () => {
+      dialog.removeEventListener("keydown", handleDialogKeyDown);
+      const restore = artistDetailRestoreFocusRef.current;
+      artistDetailRestoreFocusRef.current = null;
+      if (restore && document.contains(restore)) {
+        window.requestAnimationFrame(() => {
+          restore.focus();
+        });
+      }
+    };
+  }, [selectedArtistDetailDialogKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2225,12 +2359,21 @@ export default function PlaylistBrowser() {
           <strong>{selectorCurrentLabel}</strong>
           <span className="player-badge player-badge-compact">{visibleTrackCountLabel}</span>
         </span>
-        <span
-          className={`player-library-dock-chevron${selectorDockOpen ? " open" : ""}`}
-          aria-hidden="true"
+        <button
+          type="button"
+          className="player-library-dock-chevron-btn"
+          aria-controls="player-library-dock-body"
+          aria-expanded={selectorDockOpen}
+          aria-label={selectorDockOpen ? "Selectiebalk inklappen" : "Selectiebalk uitklappen"}
+          onClick={() => setSelectorDockManualOpen((prev) => !prev)}
         >
-          ⌄
-        </span>
+          <span
+            className={`player-library-dock-chevron${selectorDockOpen ? " open" : ""}`}
+            aria-hidden="true"
+          >
+            ⌄
+          </span>
+        </button>
         <button
           type="button"
           className={`player-library-dock-pin${selectorDockPinned ? " active" : ""}`}
@@ -2373,6 +2516,7 @@ export default function PlaylistBrowser() {
                   if (target.scrollHeight - target.scrollTop - target.clientHeight < 80) {
                     if (mode === "playlists") loadMorePlaylists();
                     if (mode === "artists") loadMoreArtists();
+                    if (mode === "tracks" || mode === "albums") loadMoreTrackOptions();
                   }
                 }}
               >
@@ -2452,6 +2596,9 @@ export default function PlaylistBrowser() {
                 ) : null}
                 {mode === "artists" && loadingMoreArtists ? (
                   <div className="combo-loading">Meer artiesten laden...</div>
+                ) : null}
+                {(mode === "tracks" || mode === "albums") && loadingMoreTrackOptions ? (
+                  <div className="combo-loading">Meer tracks laden...</div>
                 ) : null}
               </div>
             ) : null}
@@ -2587,6 +2734,7 @@ export default function PlaylistBrowser() {
                 selectPlaylistInMyMusic,
                 addTargetOptions,
                 addingTargetKey,
+                ensureAllPlaylistOptionsLoaded,
                 allPlaylistNames,
                 MAX_PLAYLIST_CHIPS,
               }}
@@ -2641,6 +2789,7 @@ export default function PlaylistBrowser() {
                 selectPlaylistInMyMusic,
                 addTargetOptions,
                 addingTargetKey,
+                ensureAllPlaylistOptionsLoaded,
                 allPlaylistNames,
                 MAX_PLAYLIST_CHIPS,
               }}
@@ -2667,11 +2816,13 @@ export default function PlaylistBrowser() {
           className="track-detail-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label="Track details"
+          aria-labelledby="track-detail-dialog-title"
           onClick={closeTrackDetail}
         >
           <div
             className="track-detail-card"
+            ref={trackDetailDialogRef}
+            tabIndex={-1}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="track-detail-header">
@@ -2695,7 +2846,7 @@ export default function PlaylistBrowser() {
                 </div>
                 <div>
                   <div className="text-subtle">Trackdetails</div>
-                  <div style={{ fontWeight: 700, fontSize: 20 }}>
+                  <div id="track-detail-dialog-title" style={{ fontWeight: 700, fontSize: 20 }}>
                     {selectedTrackDetail.name || "Onbekende track"}
                   </div>
                   {selectedTrackDetail.artists?.length ? (
@@ -2904,18 +3055,20 @@ export default function PlaylistBrowser() {
           className="track-detail-overlay"
           role="dialog"
           aria-modal="true"
-            aria-label="Artiestdetails"
+          aria-labelledby="artist-detail-dialog-title"
           onClick={() => setSelectedArtistDetail(null)}
         >
           <div
             className="track-detail-card"
+            ref={artistDetailDialogRef}
+            tabIndex={-1}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="track-detail-header">
               <div className="track-detail-header-left">
                 <div>
                   <div className="text-subtle">Artiestdetails</div>
-                  <div style={{ fontWeight: 700, fontSize: 20 }}>
+                  <div id="artist-detail-dialog-title" style={{ fontWeight: 700, fontSize: 20 }}>
                     {selectedArtistDetail.name || "Onbekende artiest"}
                   </div>
                   {selectedArtistDetail.genres?.length ? (
@@ -3038,6 +3191,7 @@ type AddToPlaylistMenuProps = {
   options: PlaylistOption[];
   addingTargetKey: string | null;
   onAdd: (track: TrackRow | TrackItem, target: PlaylistOption) => Promise<void>;
+  onOpen?: () => void;
 };
 
 function AddToPlaylistMenu({
@@ -3045,6 +3199,7 @@ function AddToPlaylistMenu({
   options,
   addingTargetKey,
   onAdd,
+  onOpen,
 }: AddToPlaylistMenuProps) {
   const trackId = resolveTrackId(track);
   const [open, setOpen] = useState(false);
@@ -3066,7 +3221,13 @@ function AddToPlaylistMenu({
         aria-label="Toevoegen aan playlist"
         title="Toevoegen aan playlist"
         disabled={!trackId || options.length === 0}
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() =>
+          setOpen((prev) => {
+            const next = !prev;
+            if (next) onOpen?.();
+            return next;
+          })
+        }
         onBlur={handleBlur}
       >
         ＋
@@ -3147,6 +3308,7 @@ type TrackRowData = {
   selectPlaylistInMyMusic: (playlistId: string) => void;
   addTargetOptions: PlaylistOption[];
   addingTargetKey: string | null;
+  ensureAllPlaylistOptionsLoaded: () => void;
   allPlaylistNames: string[];
   MAX_PLAYLIST_CHIPS: number;
 };
@@ -3171,6 +3333,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
       tabIndex={0}
       onClick={(event) => data.openDetailFromRow(track, event.currentTarget)}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           data.openDetailFromRow(track, event.currentTarget);
@@ -3248,6 +3411,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             options={data.addTargetOptions}
             addingTargetKey={data.addingTargetKey}
             onAdd={data.addTrackToPlaylist}
+            onOpen={data.ensureAllPlaylistOptionsLoaded}
           />
           <ChatGptButton
             trackUrl={
@@ -3307,6 +3471,7 @@ type TrackItemData = {
   selectPlaylistInMyMusic: (playlistId: string) => void;
   addTargetOptions: PlaylistOption[];
   addingTargetKey: string | null;
+  ensureAllPlaylistOptionsLoaded: () => void;
   allPlaylistNames: string[];
   MAX_PLAYLIST_CHIPS: number;
 };
@@ -3338,6 +3503,7 @@ function TrackItemRenderer({
       tabIndex={0}
       onClick={(event) => data.openDetailFromItem(track, event.currentTarget)}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           data.openDetailFromItem(track, event.currentTarget);
@@ -3408,6 +3574,7 @@ function TrackItemRenderer({
             options={data.addTargetOptions}
             addingTargetKey={data.addingTargetKey}
             onAdd={data.addTrackToPlaylist}
+            onOpen={data.ensureAllPlaylistOptionsLoaded}
           />
           <ChatGptButton
             trackUrl={track.id ? `https://open.spotify.com/track/${track.id}` : null}

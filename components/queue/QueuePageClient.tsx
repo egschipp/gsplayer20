@@ -4,7 +4,6 @@ import Image from "next/image";
 import { type DragEvent, useEffect, useMemo, useState } from "react";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
-import { QUEUE_GRID_COLUMNS } from "@/lib/ui/trackLayout";
 import styles from "./QueuePageClient.module.css";
 
 function formatDuration(ms: number | null) {
@@ -170,10 +169,7 @@ export default function QueuePageClient() {
 
       {queue.hydrated && hasItems ? (
         <div className={`track-list ${styles.tableWrap}`}>
-          <div
-            className={`track-header ${styles.queueHeader}`}
-            style={{ gridTemplateColumns: QUEUE_GRID_COLUMNS }}
-          >
+          <div className={`track-header ${styles.queueHeader}`}>
             <div />
             <div>Track</div>
             <div className={styles.statusHeader}>Status</div>
@@ -192,8 +188,8 @@ export default function QueuePageClient() {
               const selectedPlaylistMembership = selectedPlaylistId
                 ? Array.isArray(item.playlists)
                   ? item.playlists.some((playlist) => playlist.id === selectedPlaylistId)
-                  : null
-                : null;
+                  : undefined
+                : undefined;
 
               return (
                 <li
@@ -214,7 +210,6 @@ export default function QueuePageClient() {
                     } ${isDragged ? styles.queueRowDragging : ""} ${
                       isDragOver ? styles.queueRowDragOver : ""
                     }`}
-                    style={{ gridTemplateColumns: QUEUE_GRID_COLUMNS }}
                   >
                     <div className={styles.coverCell}>
                       <span className={styles.dragHandle} aria-hidden="true">
@@ -268,24 +263,18 @@ export default function QueuePageClient() {
 	                      >
 	                        {isCurrent ? (isStarting ? "Starten..." : "Nu spelend") : isNext ? "Volgende" : "Queue"}
 	                      </span>
-	                      {selectedPlaylistId ? (
-	                        <span
-	                          className={`${styles.statusPlaylist} ${
-	                            selectedPlaylistMembership === true
-	                              ? styles.statusPlaylistIn
-	                              : selectedPlaylistMembership === false
-	                              ? styles.statusPlaylistOut
-	                              : styles.statusPlaylistUnknown
-	                          }`}
-	                        >
-	                          {selectedPlaylistMembership === true
-	                            ? "In selectie"
-	                            : selectedPlaylistMembership === false
-	                            ? "Niet in selectie"
-	                            : "Status onbekend"}
-	                        </span>
-	                      ) : null}
-	                    </div>
+                      {typeof selectedPlaylistMembership === "boolean" ? (
+                        <span
+                          className={`${styles.statusPlaylist} ${
+                            selectedPlaylistMembership
+                              ? styles.statusPlaylistIn
+                              : styles.statusPlaylistOut
+                          }`}
+                        >
+                          {selectedPlaylistMembership ? "In selectie" : "Niet in selectie"}
+                        </span>
+                      ) : null}
+                    </div>
 
                     <div className={`text-subtle track-col-duration ${styles.durationCell}`}>
                       {formatDuration(item.durationMs)}

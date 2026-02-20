@@ -2,13 +2,11 @@ import { getDb } from "@/lib/db/client";
 import {
   artists,
   trackArtists,
-  userSavedTracks,
-  playlistItems,
-  userPlaylists,
 } from "@/lib/db/schema";
-import { and, eq, or } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { requireAppUser, jsonPrivateCache, rateLimitResponse } from "@/lib/api/guards";
+import { upsertArtist, upsertTrackArtist } from "@/lib/db/queries";
 
 export const runtime = "nodejs";
 
@@ -40,90 +38,54 @@ export async function GET(
     })
     .from(trackArtists)
     .innerJoin(artists, eq(artists.artistId, trackArtists.artistId))
-    .leftJoin(
-      userSavedTracks,
-      and(
-        eq(userSavedTracks.trackId, trackArtists.trackId),
-        eq(userSavedTracks.userId, session.appUserId as string)
-      )
-    )
-    .leftJoin(playlistItems, eq(playlistItems.trackId, trackArtists.trackId))
-    .leftJoin(
-      userPlaylists,
-      and(
-        eq(userPlaylists.playlistId, playlistItems.playlistId),
-        eq(userPlaylists.userId, session.appUserId as string)
-      )
-    )
-    .where(
-      and(
-        eq(trackArtists.trackId, trackId),
-        or(
-          eq(userSavedTracks.userId, session.appUserId as string),
-          eq(userPlaylists.userId, session.appUserId as string)
-        )
-      )
-    )
+    .where(eq(trackArtists.trackId, trackId))
     .groupBy(artists.artistId)
     .orderBy(artists.name);
 
-  const items = rows.map((row) => ({
+  const dbItems = rows.map((row) => ({
     artistId: row.artistId,
     name: row.name,
     genres: row.genres,
     popularity: row.popularity,
   }));
 
-  const missing = items.filter(
-    (artist) =>
-      !artist.genres ||
-      artist.genres === "[]" ||
-      artist.genres === "null" ||
-      artist.genres === ""
-  );
-
-  if (missing.length) {
-    try {
-      const ids = missing.map((artist) => artist.artistId).filter(Boolean);
-      if (!ids.length) {
-        return jsonPrivateCache({ items, asOf: Date.now() });
-      }
-      for (let i = 0; i < ids.length; i += 50) {
-        const batch = ids.slice(i, i + 50);
-        const data = await spotifyFetch<{ artists?: { id?: string; genres?: string[]; popularity?: number }[] }>({
-          url: `https://api.spotify.com/v1/artists?ids=${batch.join(",")}`,
-          userLevel: false,
-        });
-        for (const artist of data.artists || []) {
-          if (!artist?.id) continue;
-          await db
-            .update(artists)
-            .set({
-              genres: artist.genres ? JSON.stringify(artist.genres) : null,
-              popularity: artist.popularity ?? null,
-              updatedAt: Date.now(),
-            })
-            .where(eq(artists.artistId, artist.id))
-            .run();
-        }
-      }
-    } catch {
-      // ignore enrichment errors
-    }
+  if (dbItems.length > 0) {
+    return jsonPrivateCache({ items: dbItems, asOf: Date.now() });
   }
 
-  const refreshed = await db
-    .select({
-      artistId: artists.artistId,
-      name: artists.name,
-      genres: artists.genres,
-      popularity: artists.popularity,
-    })
-    .from(trackArtists)
-    .innerJoin(artists, eq(artists.artistId, trackArtists.artistId))
-    .where(eq(trackArtists.trackId, trackId))
-    .groupBy(artists.artistId)
-    .orderBy(artists.name);
+  try {
+    // Fallback: fetch artists directly from Spotify track endpoint when local cache is empty.
+    const track = await spotifyFetch<{
+      artists?: { id?: string; name?: string }[];
+    }>({
+      url: `https://api.spotify.com/v1/tracks/${encodeURIComponent(trackId)}`,
+      userLevel: true,
+    });
+    const fetched = Array.isArray(track?.artists)
+      ? track.artists
+          .map((artist) => ({
+            artistId: String(artist?.id ?? ""),
+            name: String(artist?.name ?? ""),
+            genres: null as string[] | null,
+            popularity: null as number | null,
+          }))
+          .filter((artist) => artist.artistId && artist.name)
+      : [];
+    if (fetched.length) {
+      for (const artist of fetched) {
+        await upsertArtist({
+          artistId: artist.artistId,
+          name: artist.name,
+          genres: null,
+          popularity: null,
+        });
+        await upsertTrackArtist(trackId, artist.artistId);
+      }
+      return jsonPrivateCache({ items: fetched, asOf: Date.now() });
+    }
+  } catch {
+    // fall through to empty payload
+  }
 
-  return jsonPrivateCache({ items: refreshed, asOf: Date.now() });
+  return jsonPrivateCache({ items: [], asOf: Date.now() });
 }

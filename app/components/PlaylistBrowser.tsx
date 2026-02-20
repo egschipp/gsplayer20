@@ -1555,10 +1555,14 @@ export default function PlaylistBrowser() {
     }
     let cancelled = false;
     async function loadTrackArtists() {
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      const controller = new AbortController();
       try {
         setTrackArtistsLoading(true);
+        timeout = setTimeout(() => controller.abort(), 10000);
         const res = await fetch(`/api/spotify/tracks/${trackId}/artists`, {
           cache: "no-store",
+          signal: controller.signal,
         });
         if (!res.ok) return;
         const data = await res.json();
@@ -1583,6 +1587,7 @@ export default function PlaylistBrowser() {
       } catch {
         // ignore
       } finally {
+        if (timeout) clearTimeout(timeout);
         if (!cancelled) setTrackArtistsLoading(false);
       }
     }

@@ -874,7 +874,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   async function ensureActiveDevice(
     targetId: string,
     token: string,
-    shouldPlay = false
+    shouldPlay = false,
+    expectedCurrentDeviceId?: string | null
   ) {
     const confirmed = lastConfirmedActiveDeviceRef.current;
     if (
@@ -899,7 +900,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       // ignore
     }
 
-    const transferred = await transferPlayback(targetId, shouldPlay);
+    const transferred = await transferPlayback(
+      targetId,
+      shouldPlay,
+      expectedCurrentDeviceId
+    );
     if (!transferred) {
       if (pendingDeviceIdRef.current === targetId) {
         pendingDeviceIdRef.current = null;
@@ -3148,6 +3153,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       return;
     }
     if (Date.now() < rateLimitRef.current.until) return;
+    const previousActiveDeviceId =
+      activeDeviceIdRef.current || deviceIdRef.current || null;
     const operationEpoch = beginOperationEpoch();
     setConnectConflict(null);
     preferSdkDeviceRef.current = targetId === sdkDeviceIdRef.current;
@@ -3171,7 +3178,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     deviceIdRef.current = targetId;
     const shouldPlay = lastIsPlayingRef.current;
     await enqueuePlaybackCommand(async () => {
-      const ready = await ensureActiveDevice(targetId, token, shouldPlay);
+      const ready = await ensureActiveDevice(
+        targetId,
+        token,
+        shouldPlay,
+        previousActiveDeviceId
+      );
       if (ready) {
         lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
       } else if (pendingDeviceIdRef.current === targetId) {
@@ -3553,7 +3565,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     await handleVolume(0);
   }
 
-  async function transferPlayback(id: string, play = false) {
+  async function transferPlayback(
+    id: string,
+    play = false,
+    expectedCurrentDeviceId?: string | null
+  ) {
     const token = accessTokenRef.current;
     if (!token) return false;
     if (Date.now() < rateLimitRef.current.until) return false;
@@ -3567,7 +3583,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
         try {
           const expectedActiveDeviceId =
-            activeDeviceIdRef.current || deviceIdRef.current || null;
+            expectedCurrentDeviceId && expectedCurrentDeviceId !== id
+              ? expectedCurrentDeviceId
+              : null;
           const proxyRes = await fetch("/api/spotify/me/player", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -3575,7 +3593,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             body: JSON.stringify({
               device_ids: [id],
               play: playFlag,
-              expectedActiveDeviceId,
+              ...(expectedActiveDeviceId ? { expectedActiveDeviceId } : {}),
             }),
           });
           if (proxyRes.ok) return true;

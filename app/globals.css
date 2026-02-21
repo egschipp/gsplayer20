@@ -2286,6 +2286,62 @@ details[open] > .details-summary::after {
   gap: 7px;
 }
 
+.monitoring-tooltip-target {
+  position: relative;
+}
+
+.monitoring-tooltip-target[data-tip]:not([data-tip=""])::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 12px;
+  top: calc(100% + 10px);
+  z-index: 30;
+  width: min(340px, calc(100vw - 56px));
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(29, 185, 84, 0.35);
+  background: rgba(7, 10, 9, 0.95);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  pointer-events: none;
+  white-space: normal;
+}
+
+.monitoring-tooltip-target[data-tip]:not([data-tip=""])::before {
+  content: "";
+  position: absolute;
+  left: 22px;
+  top: calc(100% + 2px);
+  z-index: 31;
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg) translateY(-1px);
+  border-left: 1px solid rgba(29, 185, 84, 0.35);
+  border-top: 1px solid rgba(29, 185, 84, 0.35);
+  background: rgba(7, 10, 9, 0.95);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.monitoring-tooltip-target[data-tip]:not([data-tip=""]):hover::after,
+.monitoring-tooltip-target[data-tip]:not([data-tip=""]):hover::before,
+.monitoring-tooltip-target[data-tip]:not([data-tip=""]):focus-within::after,
+.monitoring-tooltip-target[data-tip]:not([data-tip=""]):focus-within::before {
+  opacity: 1;
+}
+
+.monitoring-tooltip-target[data-tip]:not([data-tip=""]):hover::after,
+.monitoring-tooltip-target[data-tip]:not([data-tip=""]):focus-within::after {
+  transform: translateY(0);
+}
+
 .monitoring-tone-ok {
   border-color: rgba(29, 185, 84, 0.22);
   background: linear-gradient(
@@ -2403,11 +2459,27 @@ details[open] > .details-summary::after {
 
 .monitoring-endpoint-label {
   min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.monitoring-endpoint-main {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.88);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.monitoring-endpoint-raw {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.69rem;
+  color: rgba(255, 255, 255, 0.56);
+  letter-spacing: 0.02em;
 }
 
 .monitoring-endpoint-bar {

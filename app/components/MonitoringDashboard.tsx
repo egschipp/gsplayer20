@@ -82,10 +82,95 @@ function clamp01(value: number) {
 }
 
 function authTone(status: string): Tone {
-  const normalized = status.toUpperCase();
-  if (normalized === "OK") return "ok";
-  if (normalized === "CHECKING" || normalized === "LOGGED_OUT") return "warn";
+  const normalized = status.trim().toUpperCase();
+  if (
+    normalized === "OK" ||
+    normalized === "CONNECTED" ||
+    normalized === "AUTHENTICATED" ||
+    normalized === "READY"
+  ) {
+    return "ok";
+  }
+  if (
+    normalized === "CHECKING" ||
+    normalized === "REAUTH_REQUIRED" ||
+    normalized === "PENDING" ||
+    normalized === "UNKNOWN"
+  ) {
+    return "warn";
+  }
   return "error";
+}
+
+function formatAuthStatus(status: string) {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "CONNECTED" || normalized === "OK") return "Connected";
+  if (normalized === "REAUTH_REQUIRED") return "Herlogin nodig";
+  if (normalized === "DISCONNECTED") return "Disconnected";
+  if (normalized === "CHECKING") return "Controleren";
+  return status;
+}
+
+const ENDPOINT_LABEL_MAP: Record<string, { label: string; description: string }> = {
+  me_player: {
+    label: "Player bediening",
+    description: "Acties voor play/pause/next, seek en device playback-status.",
+  },
+  me_tracks: {
+    label: "Liked Songs",
+    description: "Lezen/schrijven van tracks in je persoonlijke library.",
+  },
+  me_playlists: {
+    label: "Playlists",
+    description: "Ophalen en beheren van playlistoverzicht.",
+  },
+  playlists_items: {
+    label: "Playlist tracks",
+    description: "Items binnen playlists ophalen en aanpassen.",
+  },
+  me_player_devices: {
+    label: "Connect devices",
+    description: "Beschikbare Spotify Connect-apparaten ophalen.",
+  },
+  artists: {
+    label: "Artiesten",
+    description: "Artist metadata, details en related queries.",
+  },
+  tracks: {
+    label: "Tracks",
+    description: "Track metadata en trackgerichte requests.",
+  },
+};
+
+function describeEndpoint(endpoint: string) {
+  const raw = String(endpoint ?? "").trim();
+  const key = raw.toLowerCase();
+  const known = ENDPOINT_LABEL_MAP[key];
+  if (known) {
+    return {
+      label: known.label,
+      raw,
+      title: `${known.label} (${raw}) - ${known.description}`,
+    };
+  }
+  const normalized = raw
+    .replace(/^\/+/, "")
+    .replace(/^api\/spotify\//i, "")
+    .replace(/^v1\//i, "")
+    .replace(/^me[_/]/i, "")
+    .replace(/[_/]+/g, " ")
+    .trim();
+  const label =
+    normalized
+      .split(" ")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ") || "Onbekend endpoint";
+  return {
+    label,
+    raw,
+    title: `${label} (${raw})`,
+  };
 }
 
 function toneByThreshold(value: number, okFrom: number, warnFrom: number): Tone {
@@ -106,15 +191,21 @@ function MiniMetric({
   subtitle,
   tone = "ok",
   meter = null,
+  hint,
 }: {
   label: string;
   value: string;
   subtitle?: string;
   tone?: Tone;
   meter?: number | null;
+  hint?: string;
 }) {
   return (
-    <div className={`monitoring-metric monitoring-tone-${tone}`}>
+    <div
+      className={`monitoring-metric monitoring-tone-${tone} monitoring-tooltip-target`}
+      data-tip={hint ?? ""}
+      title={hint ?? undefined}
+    >
       <div className="monitoring-metric-label">{label}</div>
       <div className="monitoring-metric-value">{value}</div>
       {subtitle ? <div className="monitoring-metric-subtitle">{subtitle}</div> : null}
@@ -131,13 +222,19 @@ function DataPanel({
   title,
   children,
   span = "6",
+  hint,
 }: {
   title: string;
   children: ReactNode;
   span?: "4" | "6" | "8" | "12";
+  hint?: string;
 }) {
   return (
-    <div className={`panel monitoring-panel monitoring-span-${span}`}>
+    <div
+      className={`panel monitoring-panel monitoring-span-${span} monitoring-tooltip-target`}
+      data-tip={hint ?? ""}
+      title={hint ?? undefined}
+    >
       <div className="account-panel-title">{title}</div>
       {children}
     </div>
@@ -219,6 +316,7 @@ export default function MonitoringDashboard() {
   }
 
   const authStatus = summary?.authStatus.status ?? "CHECKING";
+  const authStatusLabel = formatAuthStatus(authStatus);
   const authStatusTone = authTone(authStatus);
   const tokenExpirySec = summary?.tokenHealth.expiresInSec ?? null;
   const tokenTone: Tone =
@@ -239,7 +337,7 @@ export default function MonitoringDashboard() {
             <div className="text-subtle">Advanced view voor snelle operationele checks</div>
           </div>
           <div className="monitoring-meta-wrap">
-            <span className={pillClass(authStatusTone)}>Auth: {authStatus}</span>
+            <span className={pillClass(authStatusTone)}>Auth: {authStatusLabel}</span>
             <span className="monitoring-meta-time">
               Update {summary ? fmtCompactTime(summary.generatedAt) : "..."}
             </span>
@@ -254,9 +352,10 @@ export default function MonitoringDashboard() {
             <div className="monitoring-kpi-grid">
               <MiniMetric
                 label="Koppeling"
-                value={summary.authStatus.status}
+                value={authStatusLabel}
                 subtitle={summary.authStatus.userId ?? "geen gebruiker"}
                 tone={authStatusTone}
+                hint="Status van Spotify-koppeling. Groen is goed, oranje betekent aandacht, rood betekent dat koppelen of herlogin nodig is."
               />
               <MiniMetric
                 label="Token"
@@ -272,6 +371,7 @@ export default function MonitoringDashboard() {
                     ? null
                     : summary.tokenHealth.expiresInSec / 3600
                 }
+                hint="Hoe lang je access token nog geldig is. Groen is ruim geldig, oranje bijna verlopen, rood direct actie nodig."
               />
               <MiniMetric
                 label="API success"
@@ -279,6 +379,7 @@ export default function MonitoringDashboard() {
                 subtitle={`5xx ${summary.apiHealth.upstream5xx}`}
                 tone={toneByThreshold(summary.apiHealth.successRate, 0.97, 0.9)}
                 meter={summary.apiHealth.successRate}
+                hint="Aandeel succesvolle Spotify API-calls. Hoe hoger en groener, hoe stabieler de koppeling."
               />
               <MiniMetric
                 label="Latency p95"
@@ -292,6 +393,7 @@ export default function MonitoringDashboard() {
                     : "error"
                 }
                 meter={1 - clamp01(summary.apiHealth.latencyMs.p95 / 1800)}
+                hint="Snelheid van API-responses voor de traagste 5% requests. Groen is snel, oranje merkbaar trager, rood geeft UX-risico."
               />
               <MiniMetric
                 label="Rate limits"
@@ -305,6 +407,7 @@ export default function MonitoringDashboard() {
                     : "error"
                 }
                 meter={1 - clamp01(summary.rateLimits.count429 / 20)}
+                hint="Aantal rate-limit signalen. Groen is geen limietdruk, oranje tijdelijk druk, rood betekent dat acties vaker geblokkeerd raken."
               />
               <MiniMetric
                 label="Requests/min"
@@ -312,6 +415,7 @@ export default function MonitoringDashboard() {
                 subtitle={`actieve users ${summary.traffic.activeUsers ?? "n/a"}`}
                 tone={summary.traffic.requestsPerMin > 0 ? "ok" : "warn"}
                 meter={clamp01(summary.traffic.requestsPerMin / 120)}
+                hint="Huidige API-verkeer per minuut. Dit helpt om load en piekmomenten te volgen."
               />
               <MiniMetric
                 label="invalid_grant"
@@ -325,6 +429,7 @@ export default function MonitoringDashboard() {
                     : "error"
                 }
                 meter={1 - clamp01(summary.tokenHealth.invalidGrantCount / 10)}
+                hint="Aantal refresh-token fouten. Groen is 0, oranje is incidenteel, rood betekent meestal opnieuw inloggen."
               />
               <MiniMetric
                 label="Incidents"
@@ -332,16 +437,30 @@ export default function MonitoringDashboard() {
                 subtitle={summary.incidents.active.length ? "actie nodig" : "stabiel"}
                 tone={summary.incidents.active.length ? "error" : "ok"}
                 meter={1 - clamp01(summary.incidents.active.length / 4)}
+                hint="Actieve incidenten uit monitoringregels. Groen betekent geen open issues."
               />
             </div>
 
             <div className="monitoring-data-grid">
-              <DataPanel title="Endpoint verkeer" span="8">
+              <DataPanel
+                title="Endpoint verkeer"
+                span="8"
+                hint="Top API-endpoints op volume. Lange balk = vaker gebruikt endpoint."
+              >
                 {topEndpoints.length ? (
                   <div className="monitoring-endpoint-list">
-                    {topEndpoints.map((row) => (
-                      <div key={row.endpoint} className="monitoring-endpoint-row">
-                        <div className="monitoring-endpoint-label">{row.endpoint}</div>
+                    {topEndpoints.map((row) => {
+                      const endpointMeta = describeEndpoint(row.endpoint);
+                      return (
+                      <div
+                        key={row.endpoint}
+                        className="monitoring-endpoint-row"
+                        title={endpointMeta.title}
+                      >
+                        <div className="monitoring-endpoint-label">
+                          <span className="monitoring-endpoint-main">{endpointMeta.label}</span>
+                          <span className="monitoring-endpoint-raw">{endpointMeta.raw}</span>
+                        </div>
                         <div className="monitoring-endpoint-bar" aria-hidden="true">
                           <span
                             style={{
@@ -351,14 +470,19 @@ export default function MonitoringDashboard() {
                         </div>
                         <div className="monitoring-endpoint-rpm">{row.rpm}/m</div>
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 ) : (
                   <div className="text-subtle">Nog geen endpointdata.</div>
                 )}
               </DataPanel>
 
-              <DataPanel title="Latency profiel" span="4">
+              <DataPanel
+                title="Latency profiel"
+                span="4"
+                hint="Respons-snelheid verdeling. p50 is gemiddeld, p95/p99 laten piekvertraging zien."
+              >
                 <div className="monitoring-latency-list">
                   {["p50", "p95", "p99"].map((key) => {
                     const value =
@@ -380,12 +504,25 @@ export default function MonitoringDashboard() {
                 </div>
               </DataPanel>
 
-              <DataPanel title="Error mix" span="6">
+              <DataPanel
+                title="Error mix"
+                span="6"
+                hint="Welke errorgroepen het meest voorkomen. Rode langere balken zijn hoogste prioriteit."
+              >
                 {topErrors.length ? (
                   <div className="monitoring-endpoint-list">
-                    {topErrors.map((row) => (
-                      <div key={row.label} className="monitoring-endpoint-row">
-                        <div className="monitoring-endpoint-label">{row.label}</div>
+                    {topErrors.map((row) => {
+                      const endpointMeta = describeEndpoint(row.label);
+                      return (
+                      <div
+                        key={row.label}
+                        className="monitoring-endpoint-row"
+                        title={endpointMeta.title}
+                      >
+                        <div className="monitoring-endpoint-label">
+                          <span className="monitoring-endpoint-main">{endpointMeta.label}</span>
+                          <span className="monitoring-endpoint-raw">{endpointMeta.raw}</span>
+                        </div>
                         <div className="monitoring-endpoint-bar monitoring-endpoint-bar-danger" aria-hidden="true">
                           <span
                             style={{
@@ -395,14 +532,19 @@ export default function MonitoringDashboard() {
                         </div>
                         <div className="monitoring-endpoint-rpm">{row.value}</div>
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 ) : (
                   <div className="text-subtle">Geen errorgroepen geregistreerd.</div>
                 )}
               </DataPanel>
 
-              <DataPanel title="Callback health" span="6">
+              <DataPanel
+                title="Callback health"
+                span="6"
+                hint="Status van callback/webhook-keten. Toont of callback-pad beschikbaar en snel genoeg is."
+              >
                 <div className="monitoring-mini-stack">
                   <div className="monitoring-mini-row">
                     <span>Enabled</span>
@@ -423,7 +565,11 @@ export default function MonitoringDashboard() {
                 </div>
               </DataPanel>
 
-              <DataPanel title="Recente errors" span="6">
+              <DataPanel
+                title="Recente errors"
+                span="6"
+                hint="Laatste fouten met tijd en correlatie-id. Handig voor snelle troubleshooting."
+              >
                 {summary.recentErrors.length ? (
                   <div className="monitoring-feed-list">
                     {summary.recentErrors.slice(0, 6).map((item) => (
@@ -445,7 +591,11 @@ export default function MonitoringDashboard() {
                 )}
               </DataPanel>
 
-              <DataPanel title="Incidents" span="6">
+              <DataPanel
+                title="Incidents"
+                span="6"
+                hint="Open alerts met ernstniveau. Oranje/rood items hebben opvolging nodig."
+              >
                 {summary.incidents.active.length ? (
                   <div className="monitoring-feed-list">
                     {summary.incidents.active.map((incident) => (

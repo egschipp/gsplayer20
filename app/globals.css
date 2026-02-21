@@ -740,6 +740,38 @@ a:focus-visible {
   font-size: 0.8rem;
 }
 
+.track-meta-link {
+  display: block;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.track-meta-link:hover:not(:disabled) {
+  text-decoration: underline;
+  color: var(--text-primary);
+}
+
+.track-meta-link:focus-visible {
+  outline: 2px solid var(--tide);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.track-meta-link:disabled {
+  cursor: default;
+}
+
 .track-col-year {
   width: 100%;
   justify-self: start;

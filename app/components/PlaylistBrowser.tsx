@@ -163,6 +163,10 @@ function resolveTrackItemArtistNames(track: TrackItem) {
   );
 }
 
+function resolveTrackRowArtistNames(track: TrackRow) {
+  return dedupeArtistText(track.artists || "") || "Onbekende artiest";
+}
+
 function createAlbumOptionId(track: TrackItem, artistNames: string) {
   const albumId =
     typeof track.album?.id === "string" && track.album.id.trim()
@@ -171,6 +175,73 @@ function createAlbumOptionId(track: TrackItem, artistNames: string) {
   if (albumId) return `id:${albumId}`;
   const albumName = String(track.album?.name ?? "").trim();
   return `meta:${normalizeTrackName(albumName)}::${normalizeTrackName(artistNames)}`;
+}
+
+function createAlbumOptionIdFromTrackRow(track: TrackRow) {
+  const albumId =
+    typeof track.albumId === "string" && track.albumId.trim()
+      ? track.albumId.trim()
+      : null;
+  if (albumId) return `id:${albumId}`;
+  const albumName = String(track.albumName ?? "").trim();
+  if (!albumName) return null;
+  return `meta:${normalizeTrackName(albumName)}::${normalizeTrackName(
+    resolveTrackRowArtistNames(track)
+  )}`;
+}
+
+function createTrackItemFromTrackRow(track: TrackRow): TrackItem {
+  const trackId =
+    typeof track.trackId === "string" && track.trackId.trim()
+      ? track.trackId.trim()
+      : null;
+  const fallbackId = [
+    "row",
+    normalizeTrackName(track.name),
+    normalizeTrackName(track.albumName),
+    normalizeTrackName(track.artists),
+    typeof track.durationMs === "number" ? String(track.durationMs) : "",
+  ]
+    .filter(Boolean)
+    .join(":");
+  const itemId =
+    trackId ||
+    (typeof track.id === "string" && track.id.trim() ? track.id.trim() : fallbackId);
+  const artistNames = resolveTrackRowArtistNames(track);
+  const artists = artistNames
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((name, index) => ({
+      id: `name:${normalizeTrackName(name) || String(index)}`,
+      name,
+    }));
+  const coverUrl = track.coverUrl || track.albumImageUrl || null;
+  return {
+    id: itemId || `row:${Date.now()}`,
+    trackId,
+    name: String(track.name ?? "Onbekend"),
+    artists,
+    album: {
+      id: track.albumId ?? null,
+      name: track.albumName ?? null,
+      images: coverUrl ? [{ url: coverUrl }] : [],
+      release_date: track.albumReleaseDate ?? null,
+    },
+    releaseYear: track.releaseYear ?? null,
+    durationMs: track.durationMs ?? null,
+    explicit: track.explicit ?? null,
+    isLocal: track.isLocal ?? null,
+    restrictionsReason: track.restrictionsReason ?? null,
+    linkedFromTrackId: track.linkedFromTrackId ?? null,
+    popularity: track.popularity ?? null,
+    albumImageUrl: track.albumImageUrl ?? null,
+    playlists: sortPlaylistLinks(track.playlists),
+  };
+}
+
+function isTrackItem(value: TrackRow | TrackItem): value is TrackItem {
+  return Array.isArray((value as TrackItem).artists);
 }
 
 function normalizeAlbumOptions(items: TrackItem[]) {
@@ -1332,6 +1403,163 @@ export default function PlaylistBrowser() {
     setQuery("");
     setDebouncedQuery("");
     setOpen(false);
+  }, []);
+
+  const selectArtistInMyMusic = useCallback(
+    async (
+      track: TrackRow | TrackItem,
+      preferredArtistName?: string | null,
+      preferredArtistId?: string | null
+    ) => {
+      const trackId = resolveTrackId(track);
+      const normalizedName =
+        String(
+          preferredArtistName ||
+            (isTrackItem(track)
+              ? resolveTrackItemArtistNames(track)
+              : resolveTrackRowArtistNames(track))
+        )
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean)[0] ?? "";
+      const applyArtistSelection = (artistId: string, artistName: string) => {
+        const cleanName = String(artistName || normalizedName || "Onbekende artiest")
+          .trim()
+          .slice(0, 160);
+        setArtistOptions((prev) =>
+          normalizeArtistOptions(
+            prev.concat({
+              id: artistId,
+              name: cleanName || "Onbekende artiest",
+              spotifyUrl: `https://open.spotify.com/artist/${artistId}`,
+            })
+          )
+        );
+        setMode("artists");
+        setSelectedPlaylistId("");
+        setSelectedTrackId("");
+        setSelectedAlbumId("");
+        setSelectedArtistId(artistId);
+        setQuery("");
+        setDebouncedQuery("");
+        setOpen(false);
+        setError(null);
+      };
+
+      if (preferredArtistId) {
+        applyArtistSelection(preferredArtistId, normalizedName);
+        return;
+      }
+
+      if (isTrackItem(track) && track.artists.length > 0) {
+        const directArtist =
+          track.artists.find(
+            (artist) =>
+              normalizeTrackName(artist?.name) === normalizeTrackName(normalizedName)
+          ) ?? track.artists[0];
+        if (directArtist?.id) {
+          applyArtistSelection(directArtist.id, directArtist.name || normalizedName);
+          return;
+        }
+      }
+
+      const byName = artistOptions.find(
+        (option) => normalizeTrackName(option.name) === normalizeTrackName(normalizedName)
+      );
+      if (byName?.id) {
+        applyArtistSelection(byName.id, byName.name || normalizedName);
+        return;
+      }
+
+      if (trackId) {
+        try {
+          const res = await fetch(`/api/spotify/tracks/${trackId}/artists`, {
+            cache: "no-store",
+          });
+          if (res.ok) {
+            const payload = await res.json().catch(() => null);
+            const items = (Array.isArray(payload?.items) ? payload.items : []) as {
+              artistId?: string;
+              id?: string;
+              name?: string;
+            }[];
+            const artistsFromApi = items
+              .map((item) => ({
+                id: String(item?.artistId ?? item?.id ?? "").trim(),
+                name: String(item?.name ?? "").trim(),
+              }))
+              .filter((artist) => artist.id && artist.name);
+            if (artistsFromApi.length > 0) {
+              setArtistOptions((prev) =>
+                normalizeArtistOptions(
+                  prev.concat(
+                    artistsFromApi.map((artist) => ({
+                      id: artist.id,
+                      name: artist.name,
+                      spotifyUrl: `https://open.spotify.com/artist/${artist.id}`,
+                    }))
+                  )
+                )
+              );
+              const matchedArtist =
+                artistsFromApi.find(
+                  (artist) =>
+                    normalizeTrackName(artist.name) === normalizeTrackName(normalizedName)
+                ) ?? artistsFromApi[0];
+              if (matchedArtist) {
+                applyArtistSelection(matchedArtist.id, matchedArtist.name);
+                return;
+              }
+            }
+          }
+        } catch {
+          // ignore and use fallback selection behavior
+        }
+      }
+
+      setMode("artists");
+      setSelectedPlaylistId("");
+      setSelectedTrackId("");
+      setSelectedAlbumId("");
+      setSelectedArtistId("");
+      setQuery(normalizedName);
+      setDebouncedQuery(normalizedName);
+      setOpen(true);
+      setError(null);
+    },
+    [artistOptions]
+  );
+
+  const selectAlbumInMyMusic = useCallback((track: TrackRow | TrackItem) => {
+    let albumSelectionId: string | null = null;
+    if ("album" in track) {
+      const artistNames = resolveTrackItemArtistNames(track);
+      albumSelectionId = createAlbumOptionId(track, artistNames);
+    } else {
+      albumSelectionId = createAlbumOptionIdFromTrackRow(track);
+      const rowTrack = createTrackItemFromTrackRow(track);
+      setTrackItems((prev) => {
+        const exists = prev.some((item) => {
+          const itemTrackId = item.trackId || item.id;
+          return (
+            item.id === rowTrack.id ||
+            (rowTrack.trackId && itemTrackId === rowTrack.trackId)
+          );
+        });
+        if (exists) return prev;
+        return [rowTrack, ...prev];
+      });
+    }
+    if (!albumSelectionId) return;
+    setMode("albums");
+    setSelectedPlaylistId("");
+    setSelectedArtistId("");
+    setSelectedTrackId("");
+    setSelectedAlbumId(albumSelectionId);
+    setQuery("");
+    setDebouncedQuery("");
+    setOpen(false);
+    setError(null);
   }, []);
 
   const triggerSelectedPlaylistLiveRefresh = useCallback(
@@ -3108,6 +3336,8 @@ export default function PlaylistBrowser() {
                 ensureAllPlaylistOptionsLoaded,
                 allPlaylistNames,
                 MAX_PLAYLIST_CHIPS,
+                selectArtistInMyMusic,
+                selectAlbumInMyMusic,
               }}
               className="track-virtual-list"
             >
@@ -3163,6 +3393,8 @@ export default function PlaylistBrowser() {
                 ensureAllPlaylistOptionsLoaded,
                 allPlaylistNames,
                 MAX_PLAYLIST_CHIPS,
+                selectArtistInMyMusic,
+                selectAlbumInMyMusic,
               }}
               className="track-virtual-list"
             >
@@ -3754,11 +3986,24 @@ type TrackRowData = {
   ensureAllPlaylistOptionsLoaded: () => void;
   allPlaylistNames: string[];
   MAX_PLAYLIST_CHIPS: number;
+  selectArtistInMyMusic: (
+    track: TrackRow | TrackItem,
+    artistName?: string | null,
+    artistId?: string | null
+  ) => Promise<void>;
+  selectAlbumInMyMusic: (track: TrackRow | TrackItem) => void;
 };
 
 function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackRowData>) {
   const track = data.items[index];
   const isGrid = data.mode === "artists" || data.mode === "playlists";
+  const artistLine = resolveTrackRowArtistNames(track);
+  const primaryArtistName =
+    artistLine
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)[0] ?? "";
+  const albumLine = String(track.albumName ?? "").trim();
   const isPlaying = Boolean(
     data.currentTrackId &&
       (track.trackId === data.currentTrackId || track.id === data.currentTrackId)
@@ -3821,16 +4066,31 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
               </span>
             ) : null}
           </div>
-          <div
-            className="text-body track-artist-line"
-            title={dedupeArtistText(track.artists || "") || "Onbekende artiest"}
+          <button
+            type="button"
+            className="track-meta-link text-body track-artist-line"
+            title={artistLine || "Onbekende artiest"}
+            disabled={!primaryArtistName}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!primaryArtistName) return;
+              void data.selectArtistInMyMusic(track, primaryArtistName, null);
+            }}
           >
-            {dedupeArtistText(track.artists || "") || "Onbekende artiest"}
-          </div>
-          {track.albumName ? (
-            <div className="text-subtle track-album-line" title={track.albumName}>
-              {track.albumName}
-            </div>
+            {artistLine || "Onbekende artiest"}
+          </button>
+          {albumLine ? (
+            <button
+              type="button"
+              className="track-meta-link text-subtle track-album-line"
+              title={albumLine}
+              onClick={(event) => {
+                event.stopPropagation();
+                data.selectAlbumInMyMusic(track);
+              }}
+            >
+              {albumLine}
+            </button>
           ) : null}
         </div>
         {isGrid ? (
@@ -3918,6 +4178,12 @@ type TrackItemData = {
   ensureAllPlaylistOptionsLoaded: () => void;
   allPlaylistNames: string[];
   MAX_PLAYLIST_CHIPS: number;
+  selectArtistInMyMusic: (
+    track: TrackRow | TrackItem,
+    artistName?: string | null,
+    artistId?: string | null
+  ) => Promise<void>;
+  selectAlbumInMyMusic: (track: TrackRow | TrackItem) => void;
 };
 
 function TrackItemRenderer({
@@ -3936,6 +4202,14 @@ function TrackItemRenderer({
     .filter(Boolean)
     .join(", ");
   const uniqueArtistNames = dedupeArtistText(artistNames);
+  const primaryArtist =
+    track.artists.find((artist) => artist?.name && String(artist.name).trim()) ?? null;
+  const primaryArtistId =
+    primaryArtist && typeof primaryArtist.id === "string" ? primaryArtist.id : null;
+  const primaryArtistName = String(
+    primaryArtist?.name || uniqueArtistNames || "Onbekende artiest"
+  ).trim();
+  const albumLine = String(track.album?.name ?? "").trim();
   const rowColumnsStyle = {
     ["--track-row-height" as const]: `${TRACK_ROW_HEIGHT}px`,
     ["--track-row-columns" as const]: TRACK_GRID_COLUMNS_FULL,
@@ -3991,16 +4265,31 @@ function TrackItemRenderer({
               </span>
             ) : null}
           </div>
-          <div
-            className="text-body track-artist-line"
+          <button
+            type="button"
+            className="track-meta-link text-body track-artist-line"
             title={uniqueArtistNames || "Onbekende artiest"}
+            disabled={!primaryArtistName}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!primaryArtistName) return;
+              void data.selectArtistInMyMusic(track, primaryArtistName, primaryArtistId);
+            }}
           >
             {uniqueArtistNames || "Onbekende artiest"}
-          </div>
-          {track.album?.name ? (
-            <div className="text-subtle track-album-line" title={track.album.name}>
-              {track.album.name}
-            </div>
+          </button>
+          {albumLine ? (
+            <button
+              type="button"
+              className="track-meta-link text-subtle track-album-line"
+              title={albumLine}
+              onClick={(event) => {
+                event.stopPropagation();
+                data.selectAlbumInMyMusic(track);
+              }}
+            >
+              {albumLine}
+            </button>
           ) : null}
         </div>
         <div className="text-subtle track-col-year">{track.releaseYear ?? "—"}</div>

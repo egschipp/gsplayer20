@@ -110,4 +110,16 @@ sqlite.exec(
   "CREATE INDEX IF NOT EXISTS user_recently_played_track_idx ON user_recently_played(track_id)"
 );
 
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS token_refresh_locks (
+    user_id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  )
+`);
+sqlite.exec(
+  "CREATE INDEX IF NOT EXISTS token_refresh_locks_expires_idx ON token_refresh_locks(expires_at)"
+);
+
 console.log("Migrations applied");

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { spotifyFetch } from "@/lib/spotify/client";
 import {
+  getCorrelationId,
   jsonError,
   jsonNoStore,
   rateLimitResponse,
@@ -45,16 +46,26 @@ function parseSearch(input: unknown) {
 
 function mapSpotifyError(error: unknown) {
   if (error instanceof SpotifyFetchError) {
-    if (error.status === 401) return jsonError("UNAUTHENTICATED", 401);
-    if (error.status === 403) return jsonError("FORBIDDEN", 403);
-    if (error.status === 404) return jsonError("NOT_FOUND", 404);
-    if (error.status === 429) return jsonError("RATE_LIMIT", 429);
-    return jsonError("SPOTIFY_UPSTREAM", 502);
+    if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
+    if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
+    if (error.status === 404) return jsonNoStore({ error: "NOT_FOUND" }, 404);
+    if (error.status === 429) {
+      const retryAfter =
+        error.retryAfterMs && error.retryAfterMs > 0
+          ? Math.max(1, Math.ceil(error.retryAfterMs / 1000))
+          : null;
+      return jsonNoStore(
+        { error: "RATE_LIMIT", ...(retryAfter ? { retryAfter } : {}) },
+        429,
+        retryAfter ? { "Retry-After": String(retryAfter) } : undefined
+      );
+    }
+    return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
   }
   if (String(error).includes("UserNotAuthenticated")) {
-    return jsonError("UNAUTHENTICATED", 401);
+    return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
   }
-  return jsonError("PLAYER_COMMAND_FAILED", 500);
+  return jsonNoStore({ error: "PLAYER_COMMAND_FAILED" }, 500);
 }
 
 function cleanupCommandCache() {
@@ -95,6 +106,7 @@ function cacheCommandResult(commandId: string, status: number, body: Record<stri
 }
 
 export async function POST(req: NextRequest) {
+  const correlationId = getCorrelationId(req);
   const originError = requireSameOrigin(req);
   if (originError) return originError;
 
@@ -152,6 +164,7 @@ export async function POST(req: NextRequest) {
       const current = await spotifyFetch<{ device?: { id?: string | null } | null } | undefined>({
         url: "https://api.spotify.com/v1/me/player",
         userLevel: true,
+        correlationId,
       });
       const currentDeviceId =
         typeof current?.device?.id === "string" ? current.device.id : null;
@@ -183,6 +196,7 @@ export async function POST(req: NextRequest) {
       method,
       body: method === "GET" ? undefined : payload,
       userLevel: true,
+      correlationId,
     });
     if (method === "GET") {
       return jsonNoStore(data ?? {});

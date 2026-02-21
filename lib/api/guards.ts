@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
 import { rateLimit } from "@/lib/rate-limit/ratelimit";
+import {
+  createCorrelationId,
+  readCorrelationId,
+} from "@/lib/observability/correlation";
 
 export function jsonError(
   error: string,
@@ -38,6 +42,10 @@ export function getRequestIp(req: Request) {
   if (realIp) return realIp;
 
   return "unknown";
+}
+
+export function getCorrelationId(req: Request) {
+  return readCorrelationId(req.headers) || createCorrelationId();
 }
 
 export async function rateLimitResponse(options: {
@@ -92,7 +100,15 @@ export function requireSameOrigin(req: Request) {
     ? new URL(baseUrl).origin
     : new URL(req.url).origin;
   const origin = req.headers.get("origin") || req.headers.get("referer");
-  if (!origin) return null;
+  const method = req.method.toUpperCase();
+  const strictMethod =
+    method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
+  if (!origin) {
+    if (strictMethod) {
+      return jsonError("MISSING_ORIGIN", 403);
+    }
+    return null;
+  }
   try {
     const originUrl = new URL(origin);
     const expectedHost = new URL(expectedOrigin).host.replace(/^www\./, "");

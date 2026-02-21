@@ -1,0 +1,32 @@
+import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
+import { clearMetrics } from "@/lib/observability/metrics";
+import { clearRecentErrors } from "@/lib/observability/logger";
+import { clearAppTokenCache } from "@/lib/spotify/tokens";
+import {
+  createCorrelationId,
+  readCorrelationId,
+} from "@/lib/observability/correlation";
+
+export const runtime = "nodejs";
+
+export async function POST(req: Request) {
+  const { response } = await requireAppUser();
+  if (response) return response;
+
+  const correlationId = readCorrelationId(req.headers) || createCorrelationId();
+
+  clearMetrics();
+  clearRecentErrors();
+  clearAppTokenCache();
+
+  return jsonNoStore(
+    {
+      ok: true,
+      cleared: ["metrics", "recentErrors", "appTokenCache"],
+      correlationId,
+    },
+    200,
+    { "x-correlation-id": correlationId }
+  );
+}
+

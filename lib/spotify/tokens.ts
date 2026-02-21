@@ -10,6 +10,10 @@ let appTokenCache: {
   expiresAt: number;
 } | null = null;
 
+export function clearAppTokenCache() {
+  appTokenCache = null;
+}
+
 function basicAuthHeader() {
   const clientId = requireEnv("SPOTIFY_CLIENT_ID");
   const clientSecret = requireEnv("SPOTIFY_CLIENT_SECRET");

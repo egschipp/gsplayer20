@@ -2,14 +2,13 @@ import type { NextAuthOptions } from "next-auth";
 import SpotifyProvider from "next-auth/providers/spotify";
 import { requireEnv } from "@/lib/env";
 import { scopeString } from "@/lib/spotify/scopes";
-import { refreshAccessToken } from "@/lib/spotify/tokens";
 import {
-  deleteTokens,
   getOrCreateUser,
-  getRefreshToken,
   upsertTokens,
 } from "@/lib/db/queries";
 import { endAuthLog, logAuthEvent } from "@/lib/auth/authLog";
+import { getValidAccessTokenForUser } from "@/lib/spotify/tokenManager";
+import { createCorrelationId } from "@/lib/observability/correlation";
 
 export function getAuthOptions(): NextAuthOptions {
   if (!process.env.NEXTAUTH_URL && process.env.AUTH_URL) {
@@ -191,7 +190,12 @@ export function getAuthOptions(): NextAuthOptions {
           return token;
         }
 
-        if (token.error) {
+        const terminalErrors = new Set([
+          "MissingRefreshToken",
+          "INVALID_GRANT",
+          "MissingUserId",
+        ]);
+        if (token.error && terminalErrors.has(String(token.error))) {
           logAuthEvent({
             level: "warn",
             event: "token_refresh_skipped",
@@ -204,46 +208,45 @@ export function getAuthOptions(): NextAuthOptions {
           return { ...token, error: "MissingUserId" };
         }
 
-        const storedRefresh = await getRefreshToken(token.appUserId as string);
-        const refreshed = await refreshAccessToken({
-          accessToken: token.accessToken as string | undefined,
-          refreshToken: storedRefresh ?? undefined,
-          accessTokenExpires: token.accessTokenExpires as number | undefined,
-          scope: token.scope as string | undefined,
+        const refreshed = await getValidAccessTokenForUser({
+          userId: token.appUserId as string,
+          correlationId: createCorrelationId(),
         });
 
-        if ("error" in refreshed) {
-          if (token.appUserId) {
-            await deleteTokens(token.appUserId as string);
-          }
+        if (!refreshed.ok) {
           logAuthEvent({
             level: "error",
             event: "token_refresh_failed",
-            errorCode: refreshed.error,
-            data: { error: refreshed.error },
+            errorCode: refreshed.code,
+            data: {
+              error: refreshed.code,
+              raw: refreshed.rawError,
+            },
           });
+          if (
+            refreshed.code === "INVALID_GRANT" ||
+            refreshed.code === "MISSING_REFRESH_TOKEN"
+          ) {
+            return {
+              ...token,
+              error: refreshed.code,
+              accessToken: undefined,
+              accessTokenExpires: 0,
+            };
+          }
           return {
             ...token,
-            error: refreshed.error,
-            accessToken: undefined,
-            accessTokenExpires: 0,
+            error: "REFRESH_TEMPORARY_FAILURE",
           };
         }
 
-        if (refreshed.refreshToken) {
-          await upsertTokens({
-            userId: token.appUserId as string,
-            refreshToken: refreshed.refreshToken,
-            accessToken: refreshed.accessToken,
-            accessExpiresAt: refreshed.accessTokenExpires,
-            scope: refreshed.scope,
-          });
-        }
-
-        const { refreshToken, ...rest } = refreshed as {
-          refreshToken?: string;
-        } & typeof refreshed;
-        return rest;
+        return {
+          ...token,
+          error: undefined,
+          accessToken: refreshed.accessToken,
+          accessTokenExpires: refreshed.accessExpiresAt ?? token.accessTokenExpires,
+          scope: refreshed.scope ?? (token.scope as string | undefined),
+        };
       },
       async session({ session, token }) {
         session.accessToken = token.accessToken as string | undefined;

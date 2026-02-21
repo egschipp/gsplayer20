@@ -1,9 +1,11 @@
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
-import { requireAppUser } from "@/lib/api/guards";
+import { getCorrelationId, requireAppUser } from "@/lib/api/guards";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+const STREAM_MAX_PER_USER = 3;
+const streamCountByUser = new Map<string, number>();
 
 type SpotifyPlayerResponse = {
   timestamp?: number;
@@ -66,8 +68,25 @@ function normalizeSnapshot(data: SpotifyPlayerResponse | null) {
 }
 
 export async function GET(req: Request) {
-  const { response } = await requireAppUser();
+  const correlationId = getCorrelationId(req);
+  const { session, response } = await requireAppUser();
   if (response) return response;
+  const userId = String(session.appUserId || "");
+  const active = streamCountByUser.get(userId) || 0;
+  if (active >= STREAM_MAX_PER_USER) {
+    return new NextResponse(
+      JSON.stringify({ error: "RATE_LIMIT", retryAfter: 10 }),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "Retry-After": "10",
+        },
+      }
+    );
+  }
+  streamCountByUser.set(userId, active + 1);
 
   const encoder = new TextEncoder();
   let closed = false;
@@ -90,6 +109,9 @@ export async function GET(req: Request) {
       const close = () => {
         if (closed) return;
         closed = true;
+        const current = streamCountByUser.get(userId) || 0;
+        if (current <= 1) streamCountByUser.delete(userId);
+        else streamCountByUser.set(userId, current - 1);
         if (pollTimer) clearInterval(pollTimer);
         if (pingTimer) clearInterval(pingTimer);
         if (hardTimeout) clearTimeout(hardTimeout);
@@ -102,6 +124,7 @@ export async function GET(req: Request) {
           const data = await spotifyFetch<SpotifyPlayerResponse | undefined>({
             url: "https://api.spotify.com/v1/me/player",
             userLevel: true,
+            correlationId,
           });
           writeEvent("snapshot", normalizeSnapshot(data ?? null));
         } catch (error) {
@@ -140,6 +163,9 @@ export async function GET(req: Request) {
     },
     cancel() {
       closed = true;
+      const current = streamCountByUser.get(userId) || 0;
+      if (current <= 1) streamCountByUser.delete(userId);
+      else streamCountByUser.set(userId, current - 1);
     },
   });
 

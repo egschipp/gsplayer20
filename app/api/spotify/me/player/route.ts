@@ -1,6 +1,7 @@
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import {
+  getCorrelationId,
   jsonNoStore,
   rateLimitResponse,
   requireAppUser,
@@ -40,6 +41,7 @@ type SpotifyPlayerResponse = {
 };
 
 export async function GET(req: NextRequest) {
+  const correlationId = getCorrelationId(req);
   const raw = req.nextUrl.searchParams.get("raw") === "1";
   const { session, response } = await requireAppUser();
   if (response) return response;
@@ -56,6 +58,7 @@ export async function GET(req: NextRequest) {
     const data = await spotifyFetch<SpotifyPlayerResponse | undefined>({
       url: "https://api.spotify.com/v1/me/player",
       userLevel: true,
+      correlationId,
     });
 
     if (!data) {
@@ -179,7 +182,15 @@ export async function GET(req: NextRequest) {
         });
       }
       if (error.status === 429) {
-        return jsonNoStore({ error: "RATE_LIMIT" }, 429);
+        const retryAfter =
+          error.retryAfterMs && error.retryAfterMs > 0
+            ? Math.max(1, Math.ceil(error.retryAfterMs / 1000))
+            : null;
+        return jsonNoStore(
+          { error: "RATE_LIMIT", ...(retryAfter ? { retryAfter } : {}) },
+          429,
+          retryAfter ? { "Retry-After": String(retryAfter) } : undefined
+        );
       }
       return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
     }
@@ -193,6 +204,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const correlationId = getCorrelationId(req);
   const originError = requireSameOrigin(req);
   if (originError) return originError;
 
@@ -234,6 +246,7 @@ export async function PUT(req: NextRequest) {
       const current = await spotifyFetch<{ device?: { id?: string | null } | null } | undefined>({
         url: "https://api.spotify.com/v1/me/player",
         userLevel: true,
+        correlationId,
       });
       const currentDeviceId =
         typeof current?.device?.id === "string" ? current.device.id : null;
@@ -252,7 +265,17 @@ export async function PUT(req: NextRequest) {
         if (error instanceof SpotifyFetchError) {
           if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
           if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
-          if (error.status === 429) return jsonNoStore({ error: "RATE_LIMIT" }, 429);
+          if (error.status === 429) {
+            const retryAfter =
+              error.retryAfterMs && error.retryAfterMs > 0
+                ? Math.max(1, Math.ceil(error.retryAfterMs / 1000))
+                : null;
+            return jsonNoStore(
+              { error: "RATE_LIMIT", ...(retryAfter ? { retryAfter } : {}) },
+              429,
+              retryAfter ? { "Retry-After": String(retryAfter) } : undefined
+            );
+          }
           return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
         }
         if (String(error).includes("UserNotAuthenticated")) {
@@ -269,6 +292,7 @@ export async function PUT(req: NextRequest) {
       method: "PUT",
       body: { device_ids: deviceIds, play },
       userLevel: true,
+      correlationId,
     });
     return jsonNoStore({ ok: true, deviceIds, play });
   } catch (error) {
@@ -276,7 +300,17 @@ export async function PUT(req: NextRequest) {
       if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
       if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
       if (error.status === 404) return jsonNoStore({ error: "DEVICE_NOT_FOUND" }, 404);
-      if (error.status === 429) return jsonNoStore({ error: "RATE_LIMIT" }, 429);
+      if (error.status === 429) {
+        const retryAfter =
+          error.retryAfterMs && error.retryAfterMs > 0
+            ? Math.max(1, Math.ceil(error.retryAfterMs / 1000))
+            : null;
+        return jsonNoStore(
+          { error: "RATE_LIMIT", ...(retryAfter ? { retryAfter } : {}) },
+          429,
+          retryAfter ? { "Retry-After": String(retryAfter) } : undefined
+        );
+      }
       return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
     }
     if (String(error).includes("UserNotAuthenticated")) {

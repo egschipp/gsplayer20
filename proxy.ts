@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ensureCorrelationId, CORRELATION_HEADER } from "@/lib/observability/correlation";
 
 const COOKIE_NAME = "gs_pin";
 const MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
@@ -86,18 +87,31 @@ function isPublicPath(pathname: string) {
 
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (isPublicPath(pathname)) return NextResponse.next();
+  const requestHeaders = new Headers(req.headers);
+  const correlationId = ensureCorrelationId(requestHeaders);
+
+  if (isPublicPath(pathname)) {
+    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    response.headers.set(CORRELATION_HEADER, correlationId);
+    return response;
+  }
 
   const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
   const expectedPin = process.env.APP_PIN || process.env.PIN_CODE;
   if (!secret || !expectedPin) {
     if (pathname.startsWith("/api")) {
-      return NextResponse.json(
+      const response = NextResponse.json(
         { error: "SERVICE_MISCONFIGURED" },
         { status: 503 }
       );
+      response.headers.set(CORRELATION_HEADER, correlationId);
+      return response;
     }
-    return NextResponse.redirect(new URL("/login?error=misconfigured", req.url));
+    const response = NextResponse.redirect(
+      new URL("/login?error=misconfigured", req.url)
+    );
+    response.headers.set(CORRELATION_HEADER, correlationId);
+    return response;
   }
 
   const token = req.cookies.get(COOKIE_NAME)?.value;
@@ -107,16 +121,24 @@ export async function proxy(req: NextRequest) {
       secret,
       req.headers.get("user-agent") || ""
     );
-    if (ok) return NextResponse.next();
+    if (ok) {
+      const response = NextResponse.next({ request: { headers: requestHeaders } });
+      response.headers.set(CORRELATION_HEADER, correlationId);
+      return response;
+    }
   }
 
   if (pathname.startsWith("/api")) {
-    return NextResponse.json({ error: "PIN_REQUIRED" }, { status: 401 });
+    const response = NextResponse.json({ error: "PIN_REQUIRED" }, { status: 401 });
+    response.headers.set(CORRELATION_HEADER, correlationId);
+    return response;
   }
 
   const loginUrl = new URL("/login", req.url);
   loginUrl.searchParams.set("next", pathname);
-  return NextResponse.redirect(loginUrl);
+  const response = NextResponse.redirect(loginUrl);
+  response.headers.set(CORRELATION_HEADER, correlationId);
+  return response;
 }
 
 export const config = {

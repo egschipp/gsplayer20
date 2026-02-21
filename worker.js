@@ -382,12 +382,18 @@ const statements = {
   requeueJob: db.prepare(
     `UPDATE jobs SET status='queued', run_after=?, updated_at=? WHERE id=?`
   ),
-  getRefreshToken: db.prepare(
-    `SELECT refresh_token_enc FROM oauth_tokens WHERE user_id=?`
+  getOAuthTokens: db.prepare(
+    `SELECT refresh_token_enc, access_token, access_expires_at FROM oauth_tokens WHERE user_id=?`
   ),
-  updateRefreshToken: db.prepare(
-    `UPDATE oauth_tokens SET refresh_token_enc=?, updated_at=? WHERE user_id=?`
+  updateOAuthTokens: db.prepare(
+    `UPDATE oauth_tokens
+       SET refresh_token_enc=?,
+           access_token=?,
+           access_expires_at=?,
+           updated_at=?
+     WHERE user_id=?`
   ),
+  clearOAuthTokens: db.prepare(`DELETE FROM oauth_tokens WHERE user_id=?`),
   upsertTrack: db.prepare(
     `INSERT INTO tracks (track_id, name, duration_ms, explicit, is_local, restrictions_reason, linked_from_track_id, album_id, album_name, album_release_date, album_release_year, album_image_url, popularity, updated_at)
      VALUES (@track_id, @name, @duration_ms, @explicit, @is_local, @restrictions_reason, @linked_from_track_id, @album_id, @album_name, @album_release_date, @album_release_year, @album_image_url, @popularity, @updated_at)
@@ -736,14 +742,38 @@ const writePlaylistsPage = db.transaction((items, userId, now) => {
 });
 
 async function getAccessTokenForUser(userId) {
-  const row = statements.getRefreshToken.get(userId);
+  const row = statements.getOAuthTokens.get(userId);
   if (!row) throw new Error("NoRefreshToken");
+
+  const skewMs = 90_000;
+  if (
+    row.access_token &&
+    row.access_expires_at &&
+    Number(row.access_expires_at) - skewMs > Date.now()
+  ) {
+    return row.access_token;
+  }
+
   const refreshToken = decryptToken(row.refresh_token_enc);
   const tokens = await refreshAccessToken(refreshToken);
-  if (tokens.refresh_token) {
-    const encrypted = encryptToken(tokens.refresh_token);
-    statements.updateRefreshToken.run(encrypted, Date.now(), userId);
+  if (!tokens || !tokens.access_token) {
+    throw new Error("RefreshFailed:missing_access_token");
   }
+
+  const expiresAt =
+    Date.now() + Number(tokens.expires_in || 3600) * 1000;
+  const encrypted = tokens.refresh_token
+    ? encryptToken(tokens.refresh_token)
+    : row.refresh_token_enc;
+
+  statements.updateOAuthTokens.run(
+    encrypted,
+    tokens.access_token,
+    expiresAt,
+    Date.now(),
+    userId
+  );
+
   return tokens.access_token;
 }
 
@@ -1491,6 +1521,24 @@ async function runLoop() {
       }
     } catch (error) {
       const resource = getResourceForJob(job);
+      const normalizedError = String(error || "");
+      if (normalizedError.toLowerCase().includes("invalid_grant")) {
+        statements.clearOAuthTokens.run(job.user_id);
+        statements.markJobError.run(
+          Date.now(),
+          JSON.stringify({ error: "INVALID_GRANT" }),
+          job.id
+        );
+        if (resource !== "unknown") {
+          statements.setSyncError.run(
+            "INVALID_GRANT",
+            Date.now(),
+            job.user_id,
+            resource
+          );
+        }
+        continue;
+      }
       if (error && error.retryAfterMs) {
         const jitter = Math.floor(Math.random() * 2000);
         const retryAt = Date.now() + error.retryAfterMs + jitter;

@@ -1,6 +1,7 @@
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import {
+  getCorrelationId,
   jsonNoStore,
   rateLimitResponse,
   requireAppUser,
@@ -23,9 +24,10 @@ type SpotifyDevicesResponse = {
   devices?: SpotifyDevice[];
 };
 
-export async function GET() {
+export async function GET(req: Request) {
   const { session, response } = await requireAppUser();
   if (response) return response;
+  const correlationId = getCorrelationId(req);
 
   const rl = await rateLimitResponse({
     key: `me-player-devices:${session.appUserId}`,
@@ -39,6 +41,7 @@ export async function GET() {
     const data = await spotifyFetch<SpotifyDevicesResponse | undefined>({
       url: "https://api.spotify.com/v1/me/player/devices",
       userLevel: true,
+      correlationId,
     });
     const devices = Array.isArray(data?.devices) ? data.devices : [];
 
@@ -57,13 +60,24 @@ export async function GET() {
         supports_volume: device?.supports_volume !== false,
       })),
       fetchedAt: Date.now(),
+      correlationId,
     });
   } catch (error) {
     if (error instanceof SpotifyFetchError) {
       if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
       if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
       if (error.status === 404) return jsonNoStore({ devices: [] }, 200);
-      if (error.status === 429) return jsonNoStore({ error: "RATE_LIMIT" }, 429);
+      if (error.status === 429) {
+        const retryAfter =
+          error.retryAfterMs && error.retryAfterMs > 0
+            ? Math.max(1, Math.ceil(error.retryAfterMs / 1000))
+            : null;
+        return jsonNoStore(
+          { error: "RATE_LIMIT", ...(retryAfter ? { retryAfter } : {}) },
+          429,
+          retryAfter ? { "Retry-After": String(retryAfter) } : undefined
+        );
+      }
       return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
     }
     if (String(error).includes("UserNotAuthenticated")) {

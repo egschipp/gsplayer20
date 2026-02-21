@@ -1,158 +1,126 @@
-import { getAppAccessToken, refreshAccessToken } from "@/lib/spotify/tokens";
+import { getAppAccessToken } from "@/lib/spotify/tokens";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
-import { getRefreshToken, upsertTokens } from "@/lib/db/queries";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
+import { createCorrelationId } from "@/lib/observability/correlation";
+import { getValidAccessTokenForUser } from "@/lib/spotify/tokenManager";
+import { SpotifyApiError, spotifyApiRequest } from "@/lib/spotify/spotifyApiClient";
 
-const FETCH_TIMEOUT_MS = Number(
-  process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000"
-);
+const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000");
+
+function mapToFetchError(error: unknown, fallbackCorrelationId: string): SpotifyFetchError {
+  if (error instanceof SpotifyApiError) {
+    return new SpotifyFetchError(error.status, error.body || error.code, {
+      code: error.code,
+      retryAfterMs: error.retryAfterMs,
+      correlationId: error.correlationId || fallbackCorrelationId,
+    });
+  }
+  return new SpotifyFetchError(500, String(error), {
+    code: "SPOTIFY_CLIENT_ERROR",
+    correlationId: fallbackCorrelationId,
+  });
+}
 
 export async function spotifyFetch<T>(args: {
   url: string;
   method?: string;
   body?: unknown;
   userLevel?: boolean;
+  correlationId?: string;
 }) {
-  const { url, method = "GET", body, userLevel = false } = args;
-
-  if (!userLevel) {
-    const appToken = await getAppAccessToken();
-    return await doFetch<T>(url, method, body, appToken);
-  }
-
-  const session = await getServerSession(getAuthOptions());
-  const accessToken = session?.accessToken as string | undefined;
-
-  if (!accessToken) {
-    throw new Error("UserNotAuthenticated");
-  }
+  const {
+    url,
+    method = "GET",
+    body,
+    userLevel = false,
+    correlationId = createCorrelationId(),
+  } = args;
 
   try {
-    return await doFetch<T>(url, method, body, accessToken);
-  } catch (error) {
-    if (error instanceof SpotifyFetchError) {
-      if (error.status !== 401) throw error;
-    } else if (!String(error).includes("401")) {
-      throw error;
+    if (!userLevel) {
+      const appToken = await getAppAccessToken();
+      return await spotifyApiRequest<T>({
+        url,
+        method,
+        body,
+        accessToken: appToken,
+        timeoutMs: FETCH_TIMEOUT_MS,
+        correlationId,
+      });
     }
-  }
 
-  if (!session?.appUserId) {
-    throw new Error("UserNotAuthenticated");
-  }
+    const session = await getServerSession(getAuthOptions());
+    const appUserId =
+      typeof session?.appUserId === "string" && session.appUserId.trim()
+        ? session.appUserId.trim()
+        : null;
+    if (!appUserId) {
+      throw new SpotifyFetchError(401, "UserNotAuthenticated", {
+        code: "UNAUTHENTICATED",
+        correlationId,
+      });
+    }
 
-  const storedRefresh = await getRefreshToken(session.appUserId as string);
-  const refreshed = await refreshAccessToken({
-    accessToken: accessToken,
-    refreshToken: storedRefresh ?? undefined,
-    accessTokenExpires: session?.expiresAt as number | undefined,
-    scope: session?.scope as string | undefined,
-  });
-
-  if ("error" in refreshed) {
-    throw new Error("RefreshFailed");
-  }
-
-  if (refreshed.refreshToken) {
-    await upsertTokens({
-      userId: session.appUserId as string,
-      refreshToken: refreshed.refreshToken,
-      accessToken: refreshed.accessToken,
-      accessExpiresAt: refreshed.accessTokenExpires,
-      scope: refreshed.scope,
+    const tokenResult = await getValidAccessTokenForUser({
+      userId: appUserId,
+      correlationId,
     });
-  }
 
-  return await doFetch<T>(url, method, body, refreshed.accessToken as string);
-}
-
-function isRetryableNetworkError(error: unknown) {
-  if (error instanceof DOMException && error.name === "AbortError") return true;
-  const message = String((error as Error)?.message ?? error).toLowerCase();
-  return (
-    message.includes("abort") ||
-    message.includes("timeout") ||
-    message.includes("fetch failed") ||
-    message.includes("network")
-  );
-}
-
-async function doFetch<T>(
-  url: string,
-  method: string,
-  body: unknown,
-  accessToken: string
-) {
-  const maxAttempts = 3;
-  let attempt = 0;
-  let lastError: SpotifyFetchError | Error | null = null;
-
-  while (attempt < maxAttempts) {
-    attempt += 1;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    let res: Response;
+    if (!tokenResult.ok) {
+      if (
+        tokenResult.code === "MISSING_REFRESH_TOKEN" ||
+        tokenResult.code === "INVALID_GRANT"
+      ) {
+        throw new SpotifyFetchError(401, tokenResult.code, {
+          code: tokenResult.code,
+          correlationId,
+        });
+      }
+      throw new SpotifyFetchError(503, tokenResult.code, {
+        code: tokenResult.code,
+        correlationId,
+      });
+    }
 
     try {
-      res = await fetch(url, {
+      return await spotifyApiRequest<T>({
+        url,
         method,
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
+        body,
+        accessToken: tokenResult.accessToken,
+        timeoutMs: FETCH_TIMEOUT_MS,
+        correlationId,
       });
     } catch (error) {
-      const networkError =
-        error instanceof Error ? error : new Error(String(error));
-      lastError = networkError;
-      if (attempt < maxAttempts && isRetryableNetworkError(networkError)) {
-        const waitMs = Math.min(1000 * attempt * attempt, 4000);
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-        continue;
+      if (error instanceof SpotifyApiError && error.status === 401) {
+        const forced = await getValidAccessTokenForUser({
+          userId: appUserId,
+          correlationId,
+          forceRefresh: true,
+        });
+        if (!forced.ok) {
+          throw new SpotifyFetchError(401, forced.code, {
+            code: forced.code,
+            correlationId,
+          });
+        }
+        return await spotifyApiRequest<T>({
+          url,
+          method,
+          body,
+          accessToken: forced.accessToken,
+          timeoutMs: FETCH_TIMEOUT_MS,
+          correlationId,
+        });
       }
-      throw networkError;
-    } finally {
-      clearTimeout(timeout);
+      throw error;
     }
-
-    if (res.ok) {
-      if (res.status === 204 || res.status === 205) {
-        return undefined as T;
-      }
-      const text = await res.text();
-      if (!text) {
-        return undefined as T;
-      }
-      const contentType = res.headers.get("Content-Type") ?? "";
-      const looksJson =
-        contentType.includes("application/json") ||
-        text.trim().startsWith("{") ||
-        text.trim().startsWith("[");
-      if (looksJson) {
-        return JSON.parse(text) as T;
-      }
-      return text as T;
+  } catch (error) {
+    if (error instanceof SpotifyFetchError) {
+      throw error;
     }
-
-    const retryAfter = res.headers.get("Retry-After");
-    const retryAfterMs = retryAfter ? Number(retryAfter) * 1000 : null;
-    const text = await res.text();
-    lastError = new SpotifyFetchError(res.status, text);
-
-    const shouldRetry =
-      res.status === 429 || res.status === 500 || res.status === 502 || res.status === 503;
-
-    if (!shouldRetry || attempt >= maxAttempts) {
-      break;
-    }
-
-    const waitMs = retryAfterMs ?? Math.min(1000 * attempt * attempt, 4000);
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    throw mapToFetchError(error, correlationId);
   }
-
-  if (lastError) throw lastError;
-  throw new SpotifyFetchError(500, "SpotifyFetchError:unknown");
 }
+

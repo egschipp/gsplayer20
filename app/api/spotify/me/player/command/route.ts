@@ -25,6 +25,16 @@ const ALLOWED_ENDPOINTS = new Set([
   "/queue",
 ]);
 
+const COMMAND_IDEMPOTENCY_TTL_MS = 60_000;
+
+type CachedCommandResult = {
+  status: number;
+  body: Record<string, unknown>;
+  expiresAt: number;
+};
+
+const commandResultCache = new Map<string, CachedCommandResult>();
+
 function parseSearch(input: unknown) {
   if (typeof input !== "string" || !input) return "";
   const trimmed = input.trim();
@@ -45,6 +55,43 @@ function mapSpotifyError(error: unknown) {
     return jsonError("UNAUTHENTICATED", 401);
   }
   return jsonError("PLAYER_COMMAND_FAILED", 500);
+}
+
+function cleanupCommandCache() {
+  const now = Date.now();
+  for (const [key, entry] of commandResultCache.entries()) {
+    if (entry.expiresAt <= now) {
+      commandResultCache.delete(key);
+    }
+  }
+}
+
+function parseCommandId(input: unknown) {
+  if (typeof input !== "string") return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 128);
+}
+
+function parseExpectedDeviceId(input: unknown) {
+  if (typeof input !== "string") return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 128);
+}
+
+function parseIntentSeq(input: unknown) {
+  if (typeof input !== "number" || !Number.isFinite(input)) return null;
+  return Math.max(0, Math.floor(input));
+}
+
+function cacheCommandResult(commandId: string, status: number, body: Record<string, unknown>) {
+  cleanupCommandCache();
+  commandResultCache.set(commandId, {
+    status,
+    body,
+    expiresAt: Date.now() + COMMAND_IDEMPOTENCY_TTL_MS,
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -68,12 +115,18 @@ export async function POST(req: NextRequest) {
         endpoint?: string;
         search?: string;
         payload?: unknown;
+        commandId?: string;
+        expectedDeviceId?: string;
+        intentSeq?: number;
       }
     | null;
 
   const method = String(body?.method ?? "GET").toUpperCase();
   const endpoint = String(body?.endpoint ?? "");
   const search = parseSearch(body?.search);
+  const commandId = parseCommandId(body?.commandId);
+  const expectedDeviceId = parseExpectedDeviceId(body?.expectedDeviceId);
+  const intentSeq = parseIntentSeq(body?.intentSeq);
 
   if (!ALLOWED_METHODS.has(method)) {
     return jsonError("INVALID_METHOD", 400);
@@ -85,6 +138,45 @@ export async function POST(req: NextRequest) {
   const url = `https://api.spotify.com/v1/me/player${endpoint}${search}`;
   const payload = body?.payload;
 
+  const isMutatingCommand = method !== "GET";
+  if (isMutatingCommand && commandId) {
+    cleanupCommandCache();
+    const cached = commandResultCache.get(commandId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return jsonNoStore({ ...cached.body, cached: true }, cached.status);
+    }
+  }
+
+  if (isMutatingCommand && expectedDeviceId) {
+    try {
+      const current = await spotifyFetch<{ device?: { id?: string | null } | null } | undefined>({
+        url: "https://api.spotify.com/v1/me/player",
+        userLevel: true,
+      });
+      const currentDeviceId =
+        typeof current?.device?.id === "string" ? current.device.id : null;
+      if (currentDeviceId && currentDeviceId !== expectedDeviceId) {
+        const conflictBody = {
+          error: "DEVICE_CONFLICT",
+          expectedDeviceId,
+          currentDeviceId,
+          commandId,
+          intentSeq,
+        };
+        if (commandId) {
+          cacheCommandResult(commandId, 409, conflictBody);
+        }
+        return jsonNoStore(conflictBody, 409);
+      }
+    } catch (error) {
+      if (error instanceof SpotifyFetchError && error.status === 404) {
+        // No active player; allow command to continue.
+      } else {
+        return mapSpotifyError(error);
+      }
+    }
+  }
+
   try {
     const data = await spotifyFetch({
       url,
@@ -95,7 +187,16 @@ export async function POST(req: NextRequest) {
     if (method === "GET") {
       return jsonNoStore(data ?? {});
     }
-    return jsonNoStore({ ok: true });
+    const responseBody = {
+      ok: true,
+      commandId,
+      intentSeq,
+      appliedAt: Date.now(),
+    };
+    if (commandId) {
+      cacheCommandResult(commandId, 200, responseBody);
+    }
+    return jsonNoStore(responseBody);
   } catch (error) {
     return mapSpotifyError(error);
   }

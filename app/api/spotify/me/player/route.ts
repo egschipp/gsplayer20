@@ -224,6 +224,44 @@ export async function PUT(req: NextRequest) {
     return jsonNoStore({ error: "INVALID_DEVICE_IDS" }, 400);
   }
   const play = body?.play === true;
+  const expectedActiveDeviceId =
+    typeof body?.expectedActiveDeviceId === "string" && body.expectedActiveDeviceId.trim()
+      ? body.expectedActiveDeviceId.trim().slice(0, 128)
+      : null;
+
+  if (expectedActiveDeviceId) {
+    try {
+      const current = await spotifyFetch<{ device?: { id?: string | null } | null } | undefined>({
+        url: "https://api.spotify.com/v1/me/player",
+        userLevel: true,
+      });
+      const currentDeviceId =
+        typeof current?.device?.id === "string" ? current.device.id : null;
+      if (currentDeviceId && currentDeviceId !== expectedActiveDeviceId) {
+        return jsonNoStore(
+          {
+            error: "DEVICE_CONFLICT",
+            expectedActiveDeviceId,
+            currentDeviceId,
+          },
+          409
+        );
+      }
+    } catch (error) {
+      if (!(error instanceof SpotifyFetchError && error.status === 404)) {
+        if (error instanceof SpotifyFetchError) {
+          if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
+          if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
+          if (error.status === 429) return jsonNoStore({ error: "RATE_LIMIT" }, 429);
+          return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
+        }
+        if (String(error).includes("UserNotAuthenticated")) {
+          return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
+        }
+        return jsonNoStore({ error: "PLAYBACK_TRANSFER_FAILED" }, 500);
+      }
+    }
+  }
 
   try {
     await spotifyFetch({

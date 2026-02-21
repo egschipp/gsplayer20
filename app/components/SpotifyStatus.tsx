@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 
 type AppStatus = {
@@ -14,6 +14,14 @@ type UserStatus = {
   profile?: { display_name?: string; email?: string };
 };
 
+function parseRetryAfterMs(res: Response) {
+  const retryAfter = Number(res.headers.get("Retry-After"));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.min(Math.round(retryAfter * 1000), 60_000);
+  }
+  return 5_000;
+}
+
 function Badge({ label, tone }: { label: string; tone?: "ok" | "warn" }) {
   const cls = tone === "ok" ? "pill pill-success" : "pill pill-warn";
   return <span className={cls}>{label}</span>;
@@ -23,6 +31,7 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
   const { status: sessionStatus } = useSession();
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null);
   const [userStatus, setUserStatus] = useState<UserStatus | null>(null);
+  const authRateLimitedUntilRef = useRef(0);
   const effectiveUserStatus =
     sessionStatus === "unauthenticated"
       ? "LOGGED_OUT"
@@ -61,11 +70,23 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
       : "Status wordt gecontroleerd.";
 
   const refreshStatus = useCallback(async () => {
+    if (Date.now() < authRateLimitedUntilRef.current) return;
     try {
       const [appRes, userRes] = await Promise.all([
         fetch("/api/spotify/app-status", { cache: "no-store" }),
         fetch("/api/spotify/user-status", { cache: "no-store" }),
       ]);
+
+      if (appRes.status === 429 || userRes.status === 429) {
+        const retryMs = Math.max(
+          appRes.status === 429 ? parseRetryAfterMs(appRes) : 0,
+          userRes.status === 429 ? parseRetryAfterMs(userRes) : 0
+        );
+        authRateLimitedUntilRef.current = Date.now() + retryMs;
+        setAppStatus((prev) => prev ?? { status: "CHECKING" });
+        setUserStatus((prev) => prev ?? { status: "CHECKING" });
+        return;
+      }
 
       const appPayload = (await appRes.json().catch(() => null)) as
         | AppStatus

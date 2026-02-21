@@ -8,11 +8,13 @@ export const runtime = "nodejs";
 
 export async function GET(req: Request) {
   const ip = getRequestIp(req);
+  const userAgent = (req.headers.get("user-agent") ?? "unknown").slice(0, 120);
   const rl = await rateLimitResponse({
-    key: `app-status:${ip}`,
-    limit: 30,
+    key: `app-status:${ip}:${userAgent}`,
+    limit: 180,
     windowMs: 60_000,
     body: { status: "ERROR_RATE_LIMIT" },
+    includeRetryAfter: true,
   });
   if (rl) return rl;
 

@@ -8,16 +8,21 @@ import { SpotifyFetchError } from "@/lib/spotify/errors";
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
+  const session = await getServerSession(getAuthOptions());
   const ip = getRequestIp(req);
+  const appUserId =
+    typeof session?.appUserId === "string" && session.appUserId.trim()
+      ? session.appUserId.trim()
+      : null;
   const rl = await rateLimitResponse({
-    key: `user-status:${ip}`,
-    limit: 30,
+    key: appUserId ? `user-status:user:${appUserId}` : `user-status:ip:${ip}`,
+    limit: 120,
     windowMs: 60_000,
     body: { status: "ERROR_RATE_LIMIT" },
+    includeRetryAfter: true,
   });
   if (rl) return rl;
 
-  const session = await getServerSession(getAuthOptions());
   if (!session?.accessToken) {
     return jsonNoStore({ status: "LOGGED_OUT" }, 401);
   }

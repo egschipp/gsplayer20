@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CHATGPT_PROMPT_TEMPLATE,
   CHATGPT_PROMPT_TOKENS,
@@ -112,6 +112,14 @@ function buildApiUrl(
   return qs ? `${path}?${qs}` : path;
 }
 
+function parseRetryAfterMs(res: Response) {
+  const retryAfter = Number(res.headers.get("Retry-After"));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.min(Math.round(retryAfter * 1000), 60_000);
+  }
+  return 5_000;
+}
+
 export default function StatusBox() {
   const [appStatus, setAppStatus] = useState<AppStatus>(null);
   const [userStatus, setUserStatus] = useState<UserStatus>(null);
@@ -129,6 +137,7 @@ export default function StatusBox() {
   const [promptTemplate, setPromptTemplate] = useState("");
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [promptSaved, setPromptSaved] = useState<null | "saved" | "error">(null);
+  const authRateLimitedUntilRef = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -206,12 +215,24 @@ export default function StatusBox() {
   }, [loadingPlaylists, playlistMap]);
 
   const refreshAuthStatus = useCallback(async () => {
+    if (Date.now() < authRateLimitedUntilRef.current) return;
     try {
       const [appRes, userRes, versionRes] = await Promise.all([
         fetch("/api/spotify/app-status", { cache: "no-store" }),
         fetch("/api/spotify/user-status", { cache: "no-store" }),
         fetch("/api/version", { cache: "no-store" }),
       ]);
+
+      if (appRes.status === 429 || userRes.status === 429) {
+        const retryMs = Math.max(
+          appRes.status === 429 ? parseRetryAfterMs(appRes) : 0,
+          userRes.status === 429 ? parseRetryAfterMs(userRes) : 0
+        );
+        authRateLimitedUntilRef.current = Date.now() + retryMs;
+        setAppStatus((prev) => prev ?? { status: "CHECKING" });
+        setUserStatus((prev) => prev ?? { status: "CHECKING" });
+        return;
+      }
 
       const appPayload = (await appRes.json().catch(() => null)) as
         | { status?: string }

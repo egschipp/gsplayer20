@@ -24,6 +24,25 @@ const PLAYER_FETCH_TIMEOUT_MS = 12000;
 const PLAYER_FETCH_MAX_ATTEMPTS = 3;
 const LOCAL_WEBPLAYER_NAME = "Georgies Webplayer";
 const DEVICE_SELECTION_HOLD_MS = 45_000;
+const SEEK_CONFIRM_TOLERANCE_MS = 900;
+const SEEK_ROLLBACK_TIMEOUT_MS = 1400;
+const PROGRESS_DEADBAND_MS = 120;
+const PROGRESS_MAX_STEP_MS = 250;
+
+type PlaybackSource =
+  | "sdk"
+  | "api_sync"
+  | "api_poll"
+  | "api_verify"
+  | "api_bootstrap";
+
+type PendingSeekState = {
+  id: number;
+  targetMs: number;
+  previousMs: number;
+  startedMonoMs: number;
+  epoch: number;
+};
 
 function detectWebplayerPlatform() {
   if (typeof navigator === "undefined") return "";
@@ -273,13 +292,23 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const playerErrorMessage = formatPlayerError(error);
   const lastTrackIdRef = useRef<string | null>(null);
   const pendingTrackIdRef = useRef<string | null>(null);
+  const operationEpochRef = useRef(0);
   const trackChangeLockUntilRef = useRef(0);
   const lastProgressSyncRef = useRef(0);
   const lastKnownPositionRef = useRef(0);
-  const progressAnchorRef = useRef<{ positionMs: number; at: number }>({
+  const progressAnchorRef = useRef<{ positionMs: number; atMono: number }>({
     positionMs: 0,
-    at: Date.now(),
+    atMono:
+      typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now(),
   });
+  const pendingSeekRef = useRef<PendingSeekState | null>(null);
+  const verifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncPlaybackStateRef = useRef<
+    (source?: PlaybackSource, minEpoch?: number) => Promise<void>
+  >(async () => undefined);
+  const lastRafPaintMonoRef = useRef(0);
   const durationMsRef = useRef(0);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -287,6 +316,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const playerCleanupRef = useRef<(() => void) | null>(null);
   const autoBootAttemptedRef = useRef(false);
   const backgroundHandoffInFlightRef = useRef(false);
+
+  const getMonotonicNow = useCallback(() => {
+    if (typeof performance !== "undefined" && typeof performance.now === "function") {
+      return performance.now();
+    }
+    return Date.now();
+  }, []);
+
+  const beginOperationEpoch = useCallback(() => {
+    operationEpochRef.current += 1;
+    return operationEpochRef.current;
+  }, []);
 
   const clampProgressMs = useCallback((nextMs: number) => {
     const raw = Number.isFinite(nextMs) ? Math.floor(nextMs) : 0;
@@ -298,14 +339,90 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }, []);
 
   const applyProgressPosition = useCallback(
-    (nextMs: number, at = Date.now()) => {
+    (nextMs: number, atMono = getMonotonicNow()) => {
       const clamped = clampProgressMs(nextMs);
       setPositionMs(clamped);
       lastKnownPositionRef.current = clamped;
-      progressAnchorRef.current = { positionMs: clamped, at };
+      progressAnchorRef.current = { positionMs: clamped, atMono };
       return clamped;
     },
+    [clampProgressMs, getMonotonicNow]
+  );
+
+  const reconcileProgressPosition = useCallback(
+    (localMs: number, remoteMs: number, hardSync = false) => {
+      const nextRemote = clampProgressMs(remoteMs);
+      if (hardSync) return nextRemote;
+      const delta = nextRemote - clampProgressMs(localMs);
+      if (Math.abs(delta) <= PROGRESS_DEADBAND_MS) {
+        return clampProgressMs(localMs);
+      }
+      const step = Math.sign(delta) * Math.min(Math.abs(delta), PROGRESS_MAX_STEP_MS);
+      return clampProgressMs(localMs + step);
+    },
     [clampProgressMs]
+  );
+
+  const projectRemoteProgressMs = useCallback(
+    (
+      progressMs: number,
+      isPlaying: boolean,
+      timestampMs?: number | null,
+      requestStartedAtWallMs?: number,
+      responseReceivedAtWallMs?: number
+    ) => {
+      const base = clampProgressMs(progressMs);
+      if (!isPlaying) return base;
+      const responseWallMs = responseReceivedAtWallMs ?? Date.now();
+      const rttMs =
+        typeof requestStartedAtWallMs === "number"
+          ? Math.max(0, responseWallMs - requestStartedAtWallMs)
+          : 0;
+      const halfRttMs = rttMs / 2;
+      const serverTs =
+        typeof timestampMs === "number" && Number.isFinite(timestampMs)
+          ? timestampMs
+          : responseWallMs;
+      const elapsedSinceServer = Math.max(0, responseWallMs - serverTs - halfRttMs);
+      return clampProgressMs(base + elapsedSinceServer);
+    },
+    [clampProgressMs]
+  );
+
+  const applyPendingSeekGuard = useCallback(
+    (incomingMs: number, incomingMonoMs: number) => {
+      const pending = pendingSeekRef.current;
+      if (!pending) {
+        return { positionMs: clampProgressMs(incomingMs), hardSync: false };
+      }
+      if (pending.epoch < operationEpochRef.current) {
+        pendingSeekRef.current = null;
+        return { positionMs: clampProgressMs(incomingMs), hardSync: false };
+      }
+      const targetMs = clampProgressMs(pending.targetMs);
+      const incoming = clampProgressMs(incomingMs);
+      if (Math.abs(incoming - targetMs) <= SEEK_CONFIRM_TOLERANCE_MS) {
+        pendingSeekRef.current = null;
+        return { positionMs: targetMs, hardSync: true };
+      }
+      if (incomingMonoMs - pending.startedMonoMs > SEEK_ROLLBACK_TIMEOUT_MS) {
+        pendingSeekRef.current = null;
+        return { positionMs: clampProgressMs(pending.previousMs), hardSync: true };
+      }
+      return { positionMs: targetMs, hardSync: true };
+    },
+    [clampProgressMs]
+  );
+
+  const schedulePlaybackVerify = useCallback(
+    (delayMs = 220, source: PlaybackSource = "api_verify", minEpoch?: number) => {
+      if (verifyTimerRef.current) clearTimeout(verifyTimerRef.current);
+      const epoch = typeof minEpoch === "number" ? minEpoch : operationEpochRef.current;
+      verifyTimerRef.current = setTimeout(() => {
+        syncPlaybackStateRef.current(source, epoch).catch(() => undefined);
+      }, Math.max(0, delayMs));
+    },
+    []
   );
 
   const setScrubPreview = useCallback((nextMs: number | null) => {
@@ -813,9 +930,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       rebuildQueueOrder(confirmed, false);
       return true;
     }
-    setTimeout(() => {
-      syncPlaybackState().catch(() => undefined);
-    }, 700);
+    schedulePlaybackVerify(700, "api_verify");
     return true;
   }
 
@@ -825,6 +940,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     deviceId: string,
     token: string
   ) {
+    const operationEpoch = beginOperationEpoch();
     const offsetUri = uris[index];
     if (!offsetUri) return;
     const id = offsetUri.split(":").pop() || null;
@@ -851,9 +967,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (res && res.ok) {
       await ensurePlaybackStarted(deviceId, id);
       applyProgressPosition(0);
-      setTimeout(() => {
-        syncPlaybackState().catch(() => undefined);
-      }, 280);
+      schedulePlaybackVerify(280, "api_verify", operationEpoch);
     }
   }
 
@@ -929,111 +1043,167 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     }
   }, [spotifyApiFetch]);
 
-  const syncPlaybackState = useCallback(async () => {
-    const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
-    if (!res?.ok) return;
-    const data = await readJsonSafely(res);
-    const device = data?.device;
-    if (shouldAdoptRemoteDevice(device?.id ?? null)) {
-      setActiveDevice(device.id, device.name ?? null);
-      setActiveDeviceRestricted(Boolean(device.is_restricted));
-      setActiveDevicePrivateSession(Boolean(device.is_private_session));
-      setActiveDeviceSupportsVolume(device.supports_volume !== false);
-      lastConfirmedActiveDeviceRef.current = { id: device.id, at: Date.now() };
-      if (device.id === pendingDeviceIdRef.current) {
-        pendingDeviceIdRef.current = null;
+  const syncPlaybackState = useCallback(
+    async (source: PlaybackSource = "api_sync", minEpoch?: number) => {
+      if (
+        typeof minEpoch === "number" &&
+        minEpoch < operationEpochRef.current
+      ) {
+        return;
       }
-    }
-    const disallowsRaw = data?.actions?.disallows;
-    const disallows =
-      disallowsRaw && typeof disallowsRaw === "object"
-        ? Object.fromEntries(
-            Object.entries(disallowsRaw).map(([key, value]) => [key, Boolean(value)])
-          )
-        : {};
-    setPlaybackDisallows(disallows);
-    const item = data?.item;
-    if (item) {
-      const trackId = item.id ?? null;
-      const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
-      if (isNewTrack) {
-        lastTrackIdRef.current = trackId;
-        if (pendingTrackIdRef.current === trackId) {
-          pendingTrackIdRef.current = null;
+      const requestStartedAtWallMs = Date.now();
+      const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
+      if (!res?.ok) return;
+      const responseReceivedAtWallMs = Date.now();
+      const responseReceivedAtMonoMs = getMonotonicNow();
+      if (
+        typeof minEpoch === "number" &&
+        minEpoch < operationEpochRef.current
+      ) {
+        return;
+      }
+      const data = await readJsonSafely(res);
+      const device = data?.device;
+      if (shouldAdoptRemoteDevice(device?.id ?? null)) {
+        setActiveDevice(device.id, device.name ?? null);
+        setActiveDeviceRestricted(Boolean(device.is_restricted));
+        setActiveDevicePrivateSession(Boolean(device.is_private_session));
+        setActiveDeviceSupportsVolume(device.supports_volume !== false);
+        lastConfirmedActiveDeviceRef.current = { id: device.id, at: Date.now() };
+        if (device.id === pendingDeviceIdRef.current) {
+          pendingDeviceIdRef.current = null;
         }
-        trackChangeLockUntilRef.current = Date.now() + 1200;
-        setOptimisticTrack(null);
       }
-      const nextPosition = isNewTrack ? 0 : data.progress_ms ?? 0;
-      setPlayerState((prev) => {
-        const next = {
-          name: item.name ?? prev?.name ?? "Unknown track",
-          artists: (item.artists ?? []).map((a: any) => a.name).join(", "),
-          album: item.album?.name ?? prev?.album ?? "",
-          coverUrl: item.album?.images?.[0]?.url ?? prev?.coverUrl ?? null,
-          paused: Boolean(!data.is_playing),
-          positionMs: nextPosition,
-          durationMs: item.duration_ms ?? 0,
-        };
-        if (
-          prev &&
-          prev.name === next.name &&
-          prev.artists === next.artists &&
-          prev.album === next.album &&
-          prev.coverUrl === next.coverUrl &&
-          prev.paused === next.paused &&
-          prev.positionMs === next.positionMs &&
-          prev.durationMs === next.durationMs
-        ) {
-          return prev;
+      const disallowsRaw = data?.actions?.disallows;
+      const disallows =
+        disallowsRaw && typeof disallowsRaw === "object"
+          ? Object.fromEntries(
+              Object.entries(disallowsRaw).map(([key, value]) => [key, Boolean(value)])
+            )
+          : {};
+      setPlaybackDisallows(disallows);
+      const item = data?.item;
+      if (item) {
+        const trackId = item.id ?? null;
+        const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
+        if (isNewTrack) {
+          lastTrackIdRef.current = trackId;
+          if (pendingTrackIdRef.current === trackId) {
+            pendingTrackIdRef.current = null;
+          }
+          trackChangeLockUntilRef.current = Date.now() + 1200;
+          setOptimisticTrack(null);
         }
-        return next;
-      });
-      const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
-      const syncedPosition = isNewTrack || !allowProgressUpdate ? 0 : nextPosition;
-      if (!isScrubbingRef.current) {
-        applyProgressPosition(syncedPosition);
+        const rawPosition = isNewTrack ? 0 : data.progress_ms ?? 0;
+        const projectedPosition = projectRemoteProgressMs(
+          rawPosition,
+          Boolean(data?.is_playing),
+          typeof data?.timestamp === "number" ? data.timestamp : null,
+          requestStartedAtWallMs,
+          responseReceivedAtWallMs
+        );
+        setPlayerState((prev) => {
+          const next = {
+            name: item.name ?? prev?.name ?? "Unknown track",
+            artists: (item.artists ?? []).map((a: any) => a.name).join(", "),
+            album: item.album?.name ?? prev?.album ?? "",
+            coverUrl: item.album?.images?.[0]?.url ?? prev?.coverUrl ?? null,
+            paused: Boolean(!data.is_playing),
+            positionMs: projectedPosition,
+            durationMs: item.duration_ms ?? 0,
+          };
+          if (
+            prev &&
+            prev.name === next.name &&
+            prev.artists === next.artists &&
+            prev.album === next.album &&
+            prev.coverUrl === next.coverUrl &&
+            prev.paused === next.paused &&
+            prev.positionMs === next.positionMs &&
+            prev.durationMs === next.durationMs
+          ) {
+            return prev;
+          }
+          return next;
+        });
+        const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
+        const syncedPosition = isNewTrack || !allowProgressUpdate ? 0 : projectedPosition;
+        const guarded = applyPendingSeekGuard(syncedPosition, responseReceivedAtMonoMs);
+        const reconciledPosition = reconcileProgressPosition(
+          lastKnownPositionRef.current,
+          guarded.positionMs,
+          Boolean(isNewTrack || guarded.hardSync)
+        );
+        if (!isScrubbingRef.current) {
+          applyProgressPosition(reconciledPosition, responseReceivedAtMonoMs);
+        }
+        setDurationMs(item.duration_ms ?? 0);
+        setCurrentTrackIdState(trackId);
+        if (onTrackChange) onTrackChange(trackId);
+        syncQueuePositionFromTrack(trackId);
+        if (trackId && Date.now() - lastProgressSyncRef.current > 5000) {
+          lastProgressSyncRef.current = Date.now();
+          try {
+            window.localStorage.setItem(
+              "gs_last_playback",
+              JSON.stringify({
+                trackId,
+                positionMs: reconciledPosition,
+                deviceId: device?.id ?? null,
+                source,
+                updatedAt: Date.now(),
+              })
+            );
+          } catch {
+            // ignore storage issues
+          }
+        }
       }
-      setDurationMs(item.duration_ms ?? 0);
-      setCurrentTrackIdState(trackId);
-      if (onTrackChange) onTrackChange(trackId);
-      syncQueuePositionFromTrack(trackId);
-    }
-    if (typeof data?.is_playing === "boolean") {
-      lastIsPlayingRef.current = data.is_playing;
-    }
-    if (
-      typeof data?.shuffle_state === "boolean" &&
-      !(queueModeRef.current === "queue" && queueUrisRef.current?.length)
-    ) {
-      setShuffleOn(data.shuffle_state);
-      shuffleOnRef.current = data.shuffle_state;
-      lastShuffleSyncRef.current = Date.now();
-      rebuildQueueOrder(data.shuffle_state, false);
-    }
-    if (typeof data?.repeat_state === "string") {
-      const mode =
-        data.repeat_state === "track"
-          ? "track"
-          : data.repeat_state === "context"
-          ? "context"
-          : "off";
-      setRepeatMode(mode);
-    }
-    if (typeof device?.volume_percent === "number") {
-      const nextVol = device.volume_percent / 100;
-      setVolume(nextVol);
-      if (nextVol > 0) lastNonZeroVolumeRef.current = nextVol;
-    }
-  }, [
-    applyProgressPosition,
-    onTrackChange,
-    rebuildQueueOrder,
-    setActiveDevice,
-    shouldAdoptRemoteDevice,
-    spotifyApiFetch,
-    syncQueuePositionFromTrack,
-  ]);
+      if (typeof data?.is_playing === "boolean") {
+        lastIsPlayingRef.current = data.is_playing;
+      }
+      if (
+        typeof data?.shuffle_state === "boolean" &&
+        !(queueModeRef.current === "queue" && queueUrisRef.current?.length)
+      ) {
+        setShuffleOn(data.shuffle_state);
+        shuffleOnRef.current = data.shuffle_state;
+        lastShuffleSyncRef.current = Date.now();
+        rebuildQueueOrder(data.shuffle_state, false);
+      }
+      if (typeof data?.repeat_state === "string") {
+        const mode =
+          data.repeat_state === "track"
+            ? "track"
+            : data.repeat_state === "context"
+            ? "context"
+            : "off";
+        setRepeatMode(mode);
+      }
+      if (typeof device?.volume_percent === "number") {
+        const nextVol = device.volume_percent / 100;
+        setVolume(nextVol);
+        if (nextVol > 0) lastNonZeroVolumeRef.current = nextVol;
+      }
+    },
+    [
+      applyPendingSeekGuard,
+      applyProgressPosition,
+      getMonotonicNow,
+      onTrackChange,
+      projectRemoteProgressMs,
+      rebuildQueueOrder,
+      reconcileProgressPosition,
+      setActiveDevice,
+      shouldAdoptRemoteDevice,
+      spotifyApiFetch,
+      syncQueuePositionFromTrack,
+    ]
+  );
+
+  useEffect(() => {
+    syncPlaybackStateRef.current = syncPlaybackState;
+  }, [syncPlaybackState]);
 
   useEffect(() => {
     if (!accessToken || !currentTrackIdState) {
@@ -1149,6 +1319,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const applySdkState = useCallback(
     (state: any) => {
       if (!state) return;
+      const eventMonoMs = getMonotonicNow();
       lastSdkStateRef.current = state;
       lastIsPlayingRef.current = Boolean(!state.paused);
       lastSdkEventAtRef.current = Date.now();
@@ -1169,7 +1340,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       const current = state.track_window?.current_track;
       const trackId = current?.id ?? null;
-      const nextPosition = state.position ?? 0;
+      const rawPosition = state.position ?? 0;
       const nextDuration = current?.duration_ms ?? 0;
       const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
       if (isNewTrack) {
@@ -1183,6 +1354,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (current?.name) {
         setError(null);
       }
+      const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
+      const projectedPosition = isNewTrack || !allowProgressUpdate ? 0 : rawPosition;
+      const guarded = applyPendingSeekGuard(projectedPosition, eventMonoMs);
+      const reconciledPosition = reconcileProgressPosition(
+        lastKnownPositionRef.current,
+        guarded.positionMs,
+        Boolean(isNewTrack || guarded.hardSync)
+      );
       setPlayerState((prev) => {
         const next = {
           name: current?.name ?? prev?.name ?? "Unknown track",
@@ -1192,7 +1371,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           album: current?.album?.name ?? prev?.album ?? "",
           coverUrl: current?.album?.images?.[0]?.url ?? prev?.coverUrl ?? null,
           paused: Boolean(state.paused),
-          positionMs: isNewTrack ? 0 : nextPosition,
+          positionMs: reconciledPosition,
           durationMs: nextDuration,
         };
         if (
@@ -1209,10 +1388,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         }
         return next;
       });
-      const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
-      const safePosition = isNewTrack || !allowProgressUpdate ? 0 : nextPosition;
       if (!isScrubbingRef.current) {
-        applyProgressPosition(safePosition);
+        applyProgressPosition(reconciledPosition, eventMonoMs);
       }
       setDurationMs(nextDuration);
       setCurrentTrackIdState(trackId);
@@ -1225,7 +1402,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             "gs_last_playback",
             JSON.stringify({
               trackId,
-              positionMs: safePosition,
+              positionMs: reconciledPosition,
               deviceId: stateDeviceId,
               updatedAt: Date.now(),
             })
@@ -1235,7 +1412,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         }
       }
     },
-    [applyProgressPosition, onTrackChange, setActiveDevice, syncQueuePositionFromTrack]
+    [
+      applyPendingSeekGuard,
+      applyProgressPosition,
+      getMonotonicNow,
+      onTrackChange,
+      reconcileProgressPosition,
+      setActiveDevice,
+      syncQueuePositionFromTrack,
+    ]
   );
 
   useEffect(() => {
@@ -1282,6 +1467,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current);
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (verifyTimerRef.current) clearTimeout(verifyTimerRef.current);
     };
   }, []);
 
@@ -1738,17 +1924,28 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             }
             const item = data?.item;
             if (item) {
+              const bootstrapPosition = projectRemoteProgressMs(
+                data.progress_ms ?? 0,
+                Boolean(data?.is_playing),
+                typeof data?.timestamp === "number" ? data.timestamp : null
+              );
+              const guarded = applyPendingSeekGuard(bootstrapPosition, getMonotonicNow());
+              const reconciledBootstrapPosition = reconcileProgressPosition(
+                lastKnownPositionRef.current,
+                guarded.positionMs,
+                guarded.hardSync
+              );
               setPlayerState({
                 name: item.name ?? "Unknown track",
                 artists: (item.artists ?? []).map((a: any) => a.name).join(", "),
                 album: item.album?.name ?? "",
                 coverUrl: item.album?.images?.[0]?.url ?? null,
                 paused: Boolean(!data.is_playing),
-                positionMs: data.progress_ms ?? 0,
+                positionMs: reconciledBootstrapPosition,
                 durationMs: item.duration_ms ?? 0,
               });
               if (!isScrubbingRef.current) {
-                applyProgressPosition(data.progress_ms ?? 0);
+                applyProgressPosition(reconciledBootstrapPosition);
               }
               setDurationMs(item.duration_ms ?? 0);
               setCurrentTrackIdState(item.id ?? null);
@@ -1952,6 +2149,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       },
       playQueue: async (uris, offsetUri, offsetIndex) =>
         enqueuePlaybackCommand(async () => {
+          const operationEpoch = beginOperationEpoch();
           setPlaybackTouched(true);
           playerRef.current?.activateElement?.().catch?.(() => undefined);
           playerRef.current?.connect?.().catch?.(() => undefined);
@@ -2111,13 +2309,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               pendingTrackIdRef.current = id;
               trackChangeLockUntilRef.current = Date.now() + 3000;
             }
-            setTimeout(() => {
-              syncPlaybackState().catch(() => undefined);
-            }, 280);
+            schedulePlaybackVerify(280, "api_verify", operationEpoch);
           }
         }),
       playContext: async (contextUri, offsetPosition, offsetUri) =>
         enqueuePlaybackCommand(async () => {
+          const operationEpoch = beginOperationEpoch();
           setPlaybackTouched(true);
           playerRef.current?.activateElement?.().catch?.(() => undefined);
           playerRef.current?.connect?.().catch?.(() => undefined);
@@ -2239,9 +2436,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               pendingTrackIdRef.current = id;
               trackChangeLockUntilRef.current = Date.now() + 3000;
             }
-            setTimeout(() => {
-              syncPlaybackState().catch(() => undefined);
-            }, 280);
+            schedulePlaybackVerify(280, "api_verify", operationEpoch);
           }
           const shuffleReady = await setRemoteShuffleState(
             shuffleOnRef.current,
@@ -2289,12 +2484,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     let rafId = 0;
     const step = () => {
       if (!isScrubbingRef.current) {
+        const nowMono = getMonotonicNow();
         const anchor = progressAnchorRef.current;
-        const elapsed = Math.max(0, Date.now() - anchor.at);
+        const elapsed = Math.max(0, nowMono - anchor.atMono);
         const next = clampProgressMs(anchor.positionMs + elapsed);
-        if (Math.abs(next - lastKnownPositionRef.current) >= 160) {
+        if (
+          nowMono - lastRafPaintMonoRef.current >= 33 ||
+          Math.abs(next - lastKnownPositionRef.current) >= 400
+        ) {
           setPositionMs(next);
           lastKnownPositionRef.current = next;
+          lastRafPaintMonoRef.current = nowMono;
         }
       }
       rafId = window.requestAnimationFrame(step);
@@ -2303,7 +2503,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     return () => {
       window.cancelAnimationFrame(rafId);
     };
-  }, [clampProgressMs, isPlaybackPaused]);
+  }, [clampProgressMs, getMonotonicNow, isPlaybackPaused]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -2314,7 +2514,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     async function handleFocusOrResume() {
       await refreshClientAccessToken();
       refreshDevices(true);
-      await syncPlaybackState().catch(() => undefined);
+      await syncPlaybackState("api_sync").catch(() => undefined);
     }
 
     async function attemptBackgroundHandoff() {
@@ -2473,11 +2673,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           scheduleNext(isPlaying, isPlaying ? 12000 : 15000);
           return;
         }
+        const requestStartedAtWallMs = Date.now();
         const res = await spotifyRequest("https://api.spotify.com/v1/me/player");
         if (!res) {
           scheduleNext();
           return;
         }
+        const responseReceivedAtWallMs = Date.now();
+        const responseReceivedAtMonoMs = getMonotonicNow();
         const data = await readJsonSafely(res);
         if (!data || cancelled) {
           if (!cancelled) {
@@ -2525,12 +2728,21 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               pendingTrackIdRef.current = null;
             }
             trackChangeLockUntilRef.current = Date.now() + 1200;
+            setOptimisticTrack(null);
           }
-          const nextPosition = isNewTrack ? 0 : data.progress_ms ?? 0;
-          const positionDelta = nextPosition - lastKnownPositionRef.current;
+          const rawPosition = isNewTrack ? 0 : data.progress_ms ?? 0;
+          const projectedPosition = projectRemoteProgressMs(
+            rawPosition,
+            Boolean(data?.is_playing),
+            typeof data?.timestamp === "number" ? data.timestamp : null,
+            requestStartedAtWallMs,
+            responseReceivedAtWallMs
+          );
+          const positionDelta = projectedPosition - lastKnownPositionRef.current;
           const shouldSyncPosition =
-            Math.abs(positionDelta) > 2200 ||
-            Date.now() - lastProgressSyncRef.current > 6000;
+            Boolean(pendingSeekRef.current) ||
+            Math.abs(positionDelta) > 1200 ||
+            Date.now() - lastProgressSyncRef.current > 5000;
           setPlayerState((prev) => {
             const next = {
               name: item.name ?? prev?.name ?? "Unknown track",
@@ -2538,7 +2750,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               album: item.album?.name ?? prev?.album ?? "",
               coverUrl: item.album?.images?.[0]?.url ?? prev?.coverUrl ?? null,
               paused: Boolean(!data.is_playing),
-              positionMs: nextPosition,
+              positionMs: projectedPosition,
               durationMs: item.duration_ms ?? 0,
             };
             if (
@@ -2558,7 +2770,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
           if (shouldSyncPosition && !isScrubbingRef.current) {
             lastProgressSyncRef.current = Date.now();
-            const synced = isNewTrack || !allowProgressUpdate ? 0 : nextPosition;
+            const synced = isNewTrack || !allowProgressUpdate ? 0 : projectedPosition;
+            const guarded = applyPendingSeekGuard(synced, responseReceivedAtMonoMs);
+            const reconciled = reconcileProgressPosition(
+              lastKnownPositionRef.current,
+              guarded.positionMs,
+              Boolean(isNewTrack || guarded.hardSync)
+            );
             if (
               positionDelta < -1200 &&
               data?.is_playing &&
@@ -2566,7 +2784,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             ) {
               // Avoid small backward jumps while playing unless the user just sought.
             } else {
-              applyProgressPosition(synced);
+              applyProgressPosition(reconciled, responseReceivedAtMonoMs);
             }
           }
           setDurationMs(item.duration_ms ?? 0);
@@ -2617,10 +2835,19 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
     function scheduleNext(isPlaying?: boolean, overrideDelay?: number) {
       if (cancelled) return;
-      const baseDelay = isPlaying ? 3500 : 8000;
+      const hidden =
+        typeof document !== "undefined" && document.visibilityState === "hidden";
+      const hasPendingSeek = Boolean(pendingSeekRef.current);
+      let baseDelay = isPlaying ? 3000 : 9000;
+      if (hidden && !hasPendingSeek) {
+        baseDelay = 20000;
+      }
+      if (hasPendingSeek) {
+        baseDelay = 1500;
+      }
       const base = overrideDelay ?? baseDelay;
       const waitExtra = Math.max(rateLimitRef.current.until - Date.now(), 0);
-      const delay = Math.min(base + waitExtra, 15000);
+      const delay = Math.min(base + waitExtra, 20000);
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
       pollTimerRef.current = setTimeout(poll, delay);
     }
@@ -2632,9 +2859,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     };
   }, [
     accessToken,
+    applyPendingSeekGuard,
     applyProgressPosition,
+    getMonotonicNow,
     onTrackChange,
+    projectRemoteProgressMs,
     rebuildQueueOrder,
+    reconcileProgressPosition,
     setActiveDevice,
     shouldAdoptRemoteDevice,
     spotifyApiFetch,
@@ -2653,6 +2884,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       return;
     }
     if (Date.now() < rateLimitRef.current.until) return;
+    const operationEpoch = beginOperationEpoch();
     preferSdkDeviceRef.current = targetId === sdkDeviceIdRef.current;
     if (targetId === sdkDeviceIdRef.current) {
       try {
@@ -2693,6 +2925,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       refreshDevices(true);
       setTimeout(() => refreshDevices(true), 800);
+      schedulePlaybackVerify(280, "api_verify", operationEpoch);
     });
     clearPendingDeviceIfStale();
   }
@@ -2715,13 +2948,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       return;
     }
     if (Date.now() < rateLimitRef.current.until) return;
+    const operationEpoch = beginOperationEpoch();
     await enqueuePlaybackCommand(async () => {
       if (currentDevice === sdkDeviceIdRef.current) {
         await playerRef.current?.activateElement?.();
         await playerRef.current?.togglePlay?.();
-        setTimeout(() => {
-          syncPlaybackState().catch(() => undefined);
-        }, 220);
+        schedulePlaybackVerify(220, "api_verify", operationEpoch);
         return;
       }
       const ready = await ensureActiveDevice(
@@ -2741,9 +2973,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         ),
         { method: "PUT" }
       );
-      setTimeout(() => {
-        syncPlaybackState().catch(() => undefined);
-      }, 220);
+      schedulePlaybackVerify(220, "api_verify", operationEpoch);
     });
   }
 
@@ -2757,15 +2987,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
+    const operationEpoch = beginOperationEpoch();
     await enqueuePlaybackCommand(async () => {
       if (
         currentDevice === sdkDeviceIdRef.current &&
         queueModeRef.current !== "queue"
       ) {
         await playerRef.current?.nextTrack?.();
-        setTimeout(() => {
-          syncPlaybackState().catch(() => undefined);
-        }, 220);
+        schedulePlaybackVerify(220, "api_verify", operationEpoch);
         return;
       }
       if (queueModeRef.current === "queue" && queueUrisRef.current?.length) {
@@ -2793,9 +3022,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         { method: "POST" }
       );
       pendingTrackIdRef.current = null;
-      setTimeout(() => {
-        syncPlaybackState().catch(() => undefined);
-      }, 220);
+      schedulePlaybackVerify(220, "api_verify", operationEpoch);
     });
   }
 
@@ -2809,15 +3036,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
+    const operationEpoch = beginOperationEpoch();
     await enqueuePlaybackCommand(async () => {
       if (
         currentDevice === sdkDeviceIdRef.current &&
         queueModeRef.current !== "queue"
       ) {
         await playerRef.current?.previousTrack?.();
-        setTimeout(() => {
-          syncPlaybackState().catch(() => undefined);
-        }, 220);
+        schedulePlaybackVerify(220, "api_verify", operationEpoch);
         return;
       }
       if (queueModeRef.current === "queue" && queueUrisRef.current?.length) {
@@ -2844,9 +3070,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         withDeviceId("https://api.spotify.com/v1/me/player/previous", currentDevice),
         { method: "POST" }
       );
-      setTimeout(() => {
-        syncPlaybackState().catch(() => undefined);
-      }, 220);
+      schedulePlaybackVerify(220, "api_verify", operationEpoch);
     });
   }
 
@@ -2856,6 +3080,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice || shufflePendingRef.current) return;
     if (Date.now() < rateLimitRef.current.until) return;
+    const operationEpoch = beginOperationEpoch();
     const next = !shuffleOnRef.current;
     shufflePendingRef.current = true;
     setShufflePending(true);
@@ -2873,6 +3098,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         } else {
           setError(null);
         }
+        schedulePlaybackVerify(260, "api_verify", operationEpoch);
       } finally {
         shufflePendingRef.current = false;
         setShufflePending(false);
@@ -2886,6 +3112,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
     if (Date.now() < rateLimitRef.current.until) return;
+    const operationEpoch = beginOperationEpoch();
     const next =
       repeatMode === "off" ? "context" : repeatMode === "context" ? "track" : "off";
     await enqueuePlaybackCommand(async () => {
@@ -2903,6 +3130,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       );
       if (res?.ok) {
         setRepeatMode(next);
+        schedulePlaybackVerify(260, "api_verify", operationEpoch);
       }
     });
   }
@@ -2926,44 +3154,67 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const token = accessTokenRef.current;
     const fallbackDevice =
       activeDeviceIdRef.current || deviceIdRef.current || sdkDeviceIdRef.current;
+    const previousMs = lastKnownPositionRef.current;
     const targetMs = applyProgressPosition(nextMs);
-    if (!token || !fallbackDevice) return;
-    if (Date.now() < rateLimitRef.current.until) return;
+    if (!token || !fallbackDevice) {
+      pendingSeekRef.current = null;
+      return;
+    }
+    if (Date.now() < rateLimitRef.current.until) {
+      pendingSeekRef.current = null;
+      return;
+    }
+    const operationEpoch = beginOperationEpoch();
     lastUserSeekAtRef.current = Date.now();
     const seekSeq = ++seekRequestSeqRef.current;
+    pendingSeekRef.current = {
+      id: seekSeq,
+      targetMs,
+      previousMs,
+      startedMonoMs: getMonotonicNow(),
+      epoch: operationEpoch,
+    };
     if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
     seekTimerRef.current = setTimeout(async () => {
       if (seekSeq !== seekRequestSeqRef.current) return;
-      await enqueuePlaybackCommand(async () => {
-        if (seekSeq !== seekRequestSeqRef.current) return;
-        const currentDevice =
-          activeDeviceIdRef.current || deviceIdRef.current || fallbackDevice;
-        if (!currentDevice) return;
-        if (currentDevice === sdkDeviceIdRef.current) {
-          await playerRef.current?.seek?.(targetMs);
-          setTimeout(() => {
-            syncPlaybackState().catch(() => undefined);
-          }, 180);
-          return;
+      try {
+        await enqueuePlaybackCommand(async () => {
+          if (seekSeq !== seekRequestSeqRef.current) return;
+          const currentDevice =
+            activeDeviceIdRef.current || deviceIdRef.current || fallbackDevice;
+          if (!currentDevice) return;
+          if (currentDevice === sdkDeviceIdRef.current) {
+            await playerRef.current?.seek?.(targetMs);
+            schedulePlaybackVerify(180, "api_verify", operationEpoch);
+            return;
+          }
+          const ready = await ensureActiveDevice(currentDevice, token, false);
+          if (!ready) {
+            setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+            return;
+          }
+          const seekRes = await spotifyApiFetch(
+            withDeviceId(
+              `https://api.spotify.com/v1/me/player/seek?position_ms=${Math.floor(
+                targetMs
+              )}`,
+              currentDevice
+            ),
+            { method: "PUT" }
+          );
+          if (seekRes && !seekRes.ok && seekRes.status !== 204) {
+            throw new Error("SPOTIFY_SEEK_FAILED");
+          }
+          schedulePlaybackVerify(180, "api_verify", operationEpoch);
+        });
+      } catch {
+        const pending = pendingSeekRef.current;
+        if (pending && pending.id === seekSeq) {
+          pendingSeekRef.current = null;
+          applyProgressPosition(pending.previousMs);
         }
-        const ready = await ensureActiveDevice(currentDevice, token, false);
-        if (!ready) {
-          setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
-          return;
-        }
-        await spotifyApiFetch(
-          withDeviceId(
-            `https://api.spotify.com/v1/me/player/seek?position_ms=${Math.floor(
-              targetMs
-            )}`,
-            currentDevice
-          ),
-          { method: "PUT" }
-        );
-        setTimeout(() => {
-          syncPlaybackState().catch(() => undefined);
-        }, 180);
-      });
+        setError("Seek kon niet bevestigd worden. Positie is hersteld.");
+      }
     }, 120);
   }
 

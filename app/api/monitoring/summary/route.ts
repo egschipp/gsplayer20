@@ -116,6 +116,9 @@ export async function GET() {
 
   return jsonNoStore({
     generatedAt: now,
+    meta: {
+      environment: process.env.NODE_ENV || "unknown",
+    },
     authStatus: {
       status:
         !session?.accessToken || !tokenRow

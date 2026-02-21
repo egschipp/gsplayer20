@@ -122,9 +122,10 @@ function parseRetryAfterMs(res: Response) {
 
 type StatusBoxProps = {
   embedded?: boolean;
+  mode?: "full" | "advanced-settings";
 };
 
-export default function StatusBox({ embedded = false }: StatusBoxProps) {
+export default function StatusBox({ embedded = false, mode = "full" }: StatusBoxProps) {
   const [appStatus, setAppStatus] = useState<AppStatus>(null);
   const [userStatus, setUserStatus] = useState<UserStatus>(null);
   const [dbStatus, setDbStatus] = useState<DbStatus>(null);
@@ -459,6 +460,12 @@ export default function StatusBox({ embedded = false }: StatusBoxProps) {
       : userStatus?.status === "ERROR_NETWORK"
       ? "Spotify is tijdelijk niet bereikbaar."
       : "Niet verbonden met Spotify.";
+  const showConnectionPanel = mode === "full";
+  const showActionPanel = mode === "full";
+  const statusPanelSpan = showConnectionPanel || showActionPanel ? "span-3" : "span-12";
+  const promptPanelSpan = showConnectionPanel || showActionPanel ? "span-6" : "span-12";
+  const embeddedTitle =
+    mode === "advanced-settings" ? "Geavanceerde settings" : "Geavanceerde instellingen";
 
   return (
     <section
@@ -467,7 +474,7 @@ export default function StatusBox({ embedded = false }: StatusBoxProps) {
     >
       <div className="account-header">
         <div className="account-panel-title">
-          {embedded ? "Geavanceerde instellingen" : ""}
+          {embedded ? embeddedTitle : ""}
         </div>
         <div className="account-version">
           <div className="account-panel-title">Versie</div>
@@ -476,71 +483,73 @@ export default function StatusBox({ embedded = false }: StatusBoxProps) {
       </div>
 
       <div className="account-grid">
-        <div className="panel account-panel span-6">
-          <div className="account-panel-title">Spotify‑koppeling</div>
-          <div className="account-connection">
-            {userStatus?.status === "OK" && userStatus.profile ? (
-              <div className="account-user">
-                <div className="account-user-avatar">
-                  {userStatus.profile.images?.[0]?.url ? (
-                    <Image
-                      src={userStatus.profile.images[0].url}
-                      alt={userStatus.profile.display_name ?? "Spotify user"}
-                      width={56}
-                      height={56}
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="account-user-avatar placeholder" />
-                  )}
+        {showConnectionPanel ? (
+          <div className="panel account-panel span-6">
+            <div className="account-panel-title">Spotify‑koppeling</div>
+            <div className="account-connection">
+              {userStatus?.status === "OK" && userStatus.profile ? (
+                <div className="account-user">
+                  <div className="account-user-avatar">
+                    {userStatus.profile.images?.[0]?.url ? (
+                      <Image
+                        src={userStatus.profile.images[0].url}
+                        alt={userStatus.profile.display_name ?? "Spotify user"}
+                        width={56}
+                        height={56}
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="account-user-avatar placeholder" />
+                    )}
+                  </div>
+                  <div className="account-user-meta">
+                    <div className="account-user-name">
+                      {userStatus.profile.display_name ?? "Spotify gebruiker"}
+                    </div>
+                    <div className="text-subtle">
+                      {userStatus.profile.email ?? "Geen e-mail"} ·{" "}
+                      {userStatus.profile.country ?? "—"} ·{" "}
+                      {userStatus.profile.product ?? "free"}
+                    </div>
+                    <div className="text-subtle">
+                      Spotify ID: {userStatus.profile.id ?? "—"}
+                    </div>
+                  </div>
                 </div>
-                <div className="account-user-meta">
-                  <div className="account-user-name">
-                    {userStatus.profile.display_name ?? "Spotify gebruiker"}
-                  </div>
-                  <div className="text-subtle">
-                    {userStatus.profile.email ?? "Geen e-mail"} ·{" "}
-                    {userStatus.profile.country ?? "—"} ·{" "}
-                    {userStatus.profile.product ?? "free"}
-                  </div>
-                  <div className="text-subtle">
-                    Spotify ID: {userStatus.profile.id ?? "—"}
-                  </div>
-                </div>
+              ) : (
+                <div className="text-body">{connectionMessage}</div>
+              )}
+              <div className="status-badges">
+                <Badge
+                  label={`Koppeling: ${userStatus?.status ?? "CHECKING"}`}
+                  tone={toneFromStatus(userStatus?.status)}
+                />
               </div>
-            ) : (
-              <div className="text-body">{connectionMessage}</div>
-            )}
-            <div className="status-badges">
-              <Badge
-                label={`Koppeling: ${userStatus?.status ?? "CHECKING"}`}
-                tone={toneFromStatus(userStatus?.status)}
-              />
-            </div>
-            <div className="account-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => {
-                  window.location.href = "/api/auth/login";
-                }}
-              >
-                Spotify login
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => {
-                  window.location.href = "/api/auth/logout";
-                }}
-              >
-                Spotify logout
-              </button>
+              <div className="account-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    window.location.href = "/api/auth/login";
+                  }}
+                >
+                  Spotify login
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    window.location.href = "/api/auth/logout";
+                  }}
+                >
+                  Spotify logout
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
 
-        <div className="panel account-panel span-3">
+        <div className={`panel account-panel ${statusPanelSpan}`}>
           <div className="account-panel-title">Status</div>
           <div className="status-badges">
             {statusBadgeItems.map((item) => (
@@ -580,41 +589,43 @@ export default function StatusBox({ embedded = false }: StatusBoxProps) {
           </div>
         </div>
 
-        <div className="panel account-panel span-3">
-          <div className="account-panel-title">Acties</div>
-          <div className="account-actions">
-            <button
-              onClick={async () => {
-                setSyncing(true);
-                try {
-                  await forceSync();
-                  await fetch("/api/spotify/sync", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ type: "track_metadata" }),
-                  });
-                  await fetch("/api/spotify/sync", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ type: "covers" }),
-                  });
-                } finally {
-                  setSyncing(false);
-                  refresh();
-                }
-              }}
-              disabled={syncing}
-              className="btn btn-primary account-action-primary"
-            >
-              {syncing ? "Bijwerken..." : "Database bijwerken"}
-            </button>
-            <button onClick={logoutPin} className="btn btn-secondary">
-              Uitloggen App
-            </button>
+        {showActionPanel ? (
+          <div className="panel account-panel span-3">
+            <div className="account-panel-title">Acties</div>
+            <div className="account-actions">
+              <button
+                onClick={async () => {
+                  setSyncing(true);
+                  try {
+                    await forceSync();
+                    await fetch("/api/spotify/sync", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ type: "track_metadata" }),
+                    });
+                    await fetch("/api/spotify/sync", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ type: "covers" }),
+                    });
+                  } finally {
+                    setSyncing(false);
+                    refresh();
+                  }
+                }}
+                disabled={syncing}
+                className="btn btn-primary account-action-primary"
+              >
+                {syncing ? "Bijwerken..." : "Database bijwerken"}
+              </button>
+              <button onClick={logoutPin} className="btn btn-secondary">
+                Uitloggen App
+              </button>
+            </div>
           </div>
-        </div>
+        ) : null}
 
-        <details className="panel account-panel span-6">
+        <details className={`panel account-panel ${promptPanelSpan}`}>
           <summary className="details-summary">
             ChatGPT prompt
             <span aria-hidden="true">▾</span>

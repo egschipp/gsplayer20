@@ -2714,6 +2714,397 @@ details[open] > .details-summary::after {
   margin: 20px 0;
 }
 
+.settings-redesign-page {
+  gap: 18px;
+}
+
+.settings-redesign-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-redesign-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.settings-redesign-header-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-redesign-title {
+  margin: 0;
+  font-size: 1.45rem;
+  line-height: 1.2;
+  font-family: var(--font-display), system-ui, sans-serif;
+}
+
+.settings-redesign-subtitle {
+  max-width: 68ch;
+}
+
+.settings-redesign-header-controls {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+}
+
+.settings-mode-toggle {
+  display: inline-flex;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  gap: 4px;
+}
+
+.settings-mode-toggle-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 14px;
+  background: transparent;
+  color: var(--text-subtle);
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.settings-mode-toggle-btn.active {
+  background: rgba(29, 185, 84, 0.26);
+  color: #ffffff;
+}
+
+.settings-mode-toggle-btn:focus-visible {
+  outline: 2px solid rgba(29, 185, 84, 0.9);
+  outline-offset: 2px;
+}
+
+.settings-redesign-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-redesign-meta-item {
+  font-size: 0.78rem;
+  color: var(--text-subtle);
+}
+
+.settings-threshold-legend {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-section-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  width: fit-content;
+}
+
+.settings-section-tab-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.settings-section-tab-btn.active {
+  background: rgba(29, 185, 84, 0.2);
+  color: #ffffff;
+}
+
+.settings-section-tab-btn:focus-visible {
+  outline: 2px solid rgba(29, 185, 84, 0.9);
+  outline-offset: 2px;
+}
+
+.settings-inline-alert {
+  border-radius: 10px;
+  border: 1px solid rgba(251, 146, 60, 0.35);
+  background: rgba(251, 146, 60, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+  padding: 10px 12px;
+  font-size: 0.82rem;
+}
+
+.settings-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-redesign-metric {
+  gap: 8px;
+}
+
+.settings-metric-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-help-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.settings-help-tip-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.67rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+}
+
+.settings-help-tip-btn:focus-visible {
+  outline: 2px solid rgba(29, 185, 84, 0.9);
+  outline-offset: 2px;
+}
+
+.settings-help-tip-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: min(320px, calc(100vw - 56px));
+  border-radius: 10px;
+  border: 1px solid rgba(29, 185, 84, 0.35);
+  background: rgba(7, 10, 9, 0.95);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  padding: 9px 10px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.settings-help-tip:hover .settings-help-tip-popover,
+.settings-help-tip:focus-within .settings-help-tip-popover {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.settings-redesign-panel {
+  gap: 12px;
+}
+
+.settings-panel-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-runbook-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.settings-account-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-account-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.84rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 7px;
+}
+
+.settings-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-preferences-list {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-switch-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.85rem;
+}
+
+.settings-switch-row input[type=\"checkbox\"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #1db954;
+}
+
+.settings-input-row {
+  display: grid;
+  gap: 6px;
+  font-size: 0.84rem;
+}
+
+.settings-select {
+  max-width: 220px;
+}
+
+.settings-advanced-note {
+  margin-top: 6px;
+}
+
+.settings-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-action-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-action-card[data-risk=\"warn\"] {
+  border-color: rgba(251, 146, 60, 0.35);
+}
+
+.settings-action-card[data-risk=\"danger\"] {
+  border-color: rgba(239, 68, 68, 0.38);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.settings-action-card-head {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.settings-action-history-list {
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.settings-action-history-item {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 9px 10px;
+  display: grid;
+  gap: 5px;
+}
+
+.settings-action-history-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-action-history-name {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.settings-danger-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-danger-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-danger-card {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.settings-danger-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.settings-danger-modal {
+  width: min(560px, 100%);
+  border-radius: 14px;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: rgba(10, 12, 11, 0.98);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  box-shadow: 0 20px 46px rgba(0, 0, 0, 0.5);
+}
+
+.settings-danger-modal-title {
+  margin: 0;
+  font-size: 1rem;
+  color: #ffffff;
+}
+
+.settings-modal-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 10px;
+}
+
+.settings-danger-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .account-resource-list {
   display: grid;
   gap: 12px;
@@ -2822,6 +3213,20 @@ details[open] > .details-summary::after {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .settings-action-grid,
+  .settings-danger-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-redesign-header-controls {
+    justify-items: start;
+  }
+
+  .settings-runbook-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .span-3,
   .span-4,
   .span-6,
@@ -2848,6 +3253,16 @@ details[open] > .details-summary::after {
 
   .monitoring-action-grid {
     grid-template-columns: 1fr;
+  }
+
+  .settings-section-tabs {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .settings-section-tab-btn {
+    flex: 1 1 0;
+    text-align: center;
   }
 }
 

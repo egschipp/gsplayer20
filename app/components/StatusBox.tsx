@@ -120,7 +120,11 @@ function parseRetryAfterMs(res: Response) {
   return 5_000;
 }
 
-export default function StatusBox() {
+type StatusBoxProps = {
+  embedded?: boolean;
+};
+
+export default function StatusBox({ embedded = false }: StatusBoxProps) {
   const [appStatus, setAppStatus] = useState<AppStatus>(null);
   const [userStatus, setUserStatus] = useState<UserStatus>(null);
   const [dbStatus, setDbStatus] = useState<DbStatus>(null);
@@ -457,9 +461,14 @@ export default function StatusBox() {
       : "Niet verbonden met Spotify.";
 
   return (
-    <section className="card account-page" style={{ marginTop: 24 }}>
+    <section
+      className={embedded ? "account-page statusbox-embedded" : "card account-page"}
+      style={embedded ? undefined : { marginTop: 24 }}
+    >
       <div className="account-header">
-        <div />
+        <div className="account-panel-title">
+          {embedded ? "Geavanceerde instellingen" : ""}
+        </div>
         <div className="account-version">
           <div className="account-panel-title">Versie</div>
           <div className="account-version-value">{versionInfo?.version ?? "n/a"}</div>

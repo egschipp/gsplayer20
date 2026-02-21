@@ -331,7 +331,11 @@ function normalizePlaylistOptions(options: PlaylistOption[]) {
         numeric: true,
       })
     );
-  return [LIKED_OPTION, ALL_MY_MUSIC_OPTION, ...sorted];
+  return [
+    unique.get(LIKED_OPTION.id) ?? LIKED_OPTION,
+    unique.get(ALL_MY_MUSIC_OPTION.id) ?? ALL_MY_MUSIC_OPTION,
+    ...sorted,
+  ];
 }
 
 function toPlaylistLink(option: PlaylistOption): PlaylistLink {
@@ -807,13 +811,27 @@ export default function PlaylistBrowser() {
 
   const applyAllMyMusicTotal = useCallback((nextTotal: number | null) => {
     setAllMyMusicTotal(nextTotal);
-    setPlaylistOptions((prev) =>
-      prev.map((option) =>
-        option.id === ALL_MY_MUSIC_OPTION.id
-          ? { ...option, tracksTotal: nextTotal }
-          : option
-      )
-    );
+    setPlaylistOptions((prev) => {
+      let changed = false;
+      const next = prev.map((option) => {
+        if (option.id !== ALL_MY_MUSIC_OPTION.id) return option;
+        if (option.tracksTotal === nextTotal) return option;
+        changed = true;
+        return { ...option, tracksTotal: nextTotal };
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
+  const applyLikedTracksTotal = useCallback((nextTotal: number | null) => {
+    setLikedTracksTotal(nextTotal);
+  }, []);
+
+  const bumpLikedTracksTotal = useCallback((delta: number) => {
+    setLikedTracksTotal((prev) => {
+      if (typeof prev !== "number" || !Number.isFinite(prev)) return prev;
+      return Math.max(0, Math.floor(prev + delta));
+    });
   }, []);
 
   const closeTrackDetail = useCallback(() => {
@@ -1313,9 +1331,17 @@ export default function PlaylistBrowser() {
   }, [playlistOptions, selectedPlaylistId]);
 
   useEffect(() => {
-    if (mode === "playlists" && selectedPlaylist?.type === "liked") return;
-    setLikedTracksTotal(null);
-  }, [mode, selectedPlaylist?.id, selectedPlaylist?.type]);
+    setPlaylistOptions((prev) => {
+      let changed = false;
+      const next = prev.map((option) => {
+        if (option.id !== LIKED_OPTION.id) return option;
+        if (option.tracksTotal === likedTracksTotal) return option;
+        changed = true;
+        return { ...option, tracksTotal: likedTracksTotal };
+      });
+      return changed ? next : prev;
+    });
+  }, [likedTracksTotal]);
 
   useEffect(() => {
     if (!playlistOptions.length) return;
@@ -2306,9 +2332,7 @@ export default function PlaylistBrowser() {
               typeof data.totalCount === "number" && Number.isFinite(data.totalCount)
                 ? Math.max(0, Math.floor(data.totalCount))
                 : null;
-            setLikedTracksTotal(nextTotal);
-          } else {
-            setLikedTracksTotal(null);
+            applyLikedTracksTotal(nextTotal);
           }
           if (nextContextKey) setTracksContextKey(nextContextKey);
           setPendingTracksContextKey(null);
@@ -2349,9 +2373,14 @@ export default function PlaylistBrowser() {
         nextContextKey === tracksContextKey &&
         tracks.length > 0
     );
+    const likedTotalMissing =
+      mode === "playlists" &&
+      selectedPlaylist?.type === "liked" &&
+      (typeof likedTracksTotal !== "number" || !Number.isFinite(likedTracksTotal));
     if (
       !contextChanged &&
       hasCachedTracksForContext &&
+      !likedTotalMissing &&
       !shouldRefreshLiked &&
       !shouldRefreshRequested
     ) {
@@ -2370,6 +2399,7 @@ export default function PlaylistBrowser() {
     };
   }, [
     applyAllMyMusicTotal,
+    applyLikedTracksTotal,
     mode,
     selectedPlaylist?.id,
     selectedPlaylist?.type,
@@ -2378,6 +2408,7 @@ export default function PlaylistBrowser() {
     tracksRefreshToken,
     tracks.length,
     tracksContextKey,
+    likedTracksTotal,
   ]);
 
   async function loadMore() {
@@ -2591,6 +2622,7 @@ export default function PlaylistBrowser() {
             throw new Error(`ADD_LIKED_FAILED_${likedRes.status}_${code}`);
           }
           emitLikedTracksUpdated(trackId, "added");
+          bumpLikedTracksTotal(1);
           setLikedRefreshNonce((prev) => prev + 1);
         } else {
           const playlistRes = await fetch(`/api/spotify/playlists/${target.id}/items`, {
@@ -2646,6 +2678,7 @@ export default function PlaylistBrowser() {
     },
     [
       appendTrackToSelectedPlaylist,
+      bumpLikedTracksTotal,
       emitLikedTracksUpdated,
       mode,
       requestPlaylistItemsSync,
@@ -2676,6 +2709,7 @@ export default function PlaylistBrowser() {
             throw new Error(`REMOVE_LIKED_FAILED_${likedRes.status}_${code}`);
           }
           emitLikedTracksUpdated(trackId, "removed");
+          bumpLikedTracksTotal(-1);
           setLikedRefreshNonce((prev) => prev + 1);
         } else {
           const playlistRes = await fetch(`/api/spotify/playlists/${playlist.id}/items`, {
@@ -2728,6 +2762,7 @@ export default function PlaylistBrowser() {
       }
     },
     [
+      bumpLikedTracksTotal,
       emitLikedTracksUpdated,
       mode,
       removePlaylistOnTrack,

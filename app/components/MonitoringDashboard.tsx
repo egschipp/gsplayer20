@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import StatusBox from "./StatusBox";
 import { clientFetch } from "@/lib/http/clientFetch";
 
@@ -93,18 +93,6 @@ type Insight = {
   title: string;
   text: string;
 };
-
-type DangerDialogState =
-  | {
-      kind: "clear-cache";
-      acknowledged: boolean;
-      confirmText: string;
-    }
-  | {
-      kind: "deep-sync";
-      acknowledged: boolean;
-      confirmText: string;
-    };
 
 const ENDPOINT_LABEL_MAP: Record<string, { label: string; description: string }> = {
   me_player: {
@@ -322,14 +310,10 @@ export default function MonitoringDashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<null | string>(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshIntervalSec, setRefreshIntervalSec] = useState(15);
   const [actionHistory, setActionHistory] = useState<ActionHistoryItem[]>([]);
   const [tokenRefreshCooldownUntil, setTokenRefreshCooldownUntil] = useState(0);
-  const [dangerDialog, setDangerDialog] = useState<DangerDialogState | null>(null);
-  const [dangerExpanded, setDangerExpanded] = useState(false);
-  const dialogCancelRef = useRef<HTMLButtonElement | null>(null);
 
   const preferenceKey = useMemo(
     () => `gs_settings_page_preferences:v2:${summary?.authStatus.appUserId ?? "anon"}`,
@@ -408,13 +392,9 @@ export default function MonitoringDashboard() {
       const raw = window.localStorage.getItem(preferenceKey);
       if (!raw) return;
       const parsed = JSON.parse(raw) as {
-        showAdvanced?: boolean;
         autoRefresh?: boolean;
         refreshIntervalSec?: number;
       };
-      if (typeof parsed.showAdvanced === "boolean") {
-        setShowAdvanced(parsed.showAdvanced);
-      }
       if (typeof parsed.autoRefresh === "boolean") {
         setAutoRefresh(parsed.autoRefresh);
       }
@@ -434,30 +414,11 @@ export default function MonitoringDashboard() {
     window.localStorage.setItem(
       preferenceKey,
       JSON.stringify({
-        showAdvanced,
         autoRefresh,
         refreshIntervalSec,
       })
     );
-  }, [autoRefresh, preferenceKey, refreshIntervalSec, showAdvanced]);
-
-  useEffect(() => {
-    if (!dangerDialog) return;
-    dialogCancelRef.current?.focus();
-  }, [dangerDialog]);
-
-  useEffect(() => {
-    if (!dangerDialog) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && actionBusy === null) {
-        setDangerDialog(null);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [dangerDialog, actionBusy]);
+  }, [autoRefresh, preferenceKey, refreshIntervalSec]);
 
   const pushActionHistory = useCallback((entry: Omit<ActionHistoryItem, "id">) => {
     setActionHistory((prev) => {
@@ -605,60 +566,6 @@ export default function MonitoringDashboard() {
     downloadJson("gsplayer-diagnostics", payload);
   }, [runAction]);
 
-  const copyDebugBundle = useCallback(async () => {
-    const name = "Debug bundle kopieeren";
-    setActionBusy(name);
-    try {
-      const res = await clientFetch("/api/monitoring/diagnostics", { method: "GET" });
-      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      const correlationId =
-        typeof payload.correlationId === "string"
-          ? payload.correlationId
-          : res.headers.get("x-correlation-id");
-
-      if (!res.ok) {
-        pushActionHistory({
-          name,
-          outcome: "error",
-          message: typeof payload.error === "string" ? payload.error : `http_${res.status}`,
-          correlationId,
-          at: Date.now(),
-        });
-        return;
-      }
-
-      if (!navigator.clipboard?.writeText) {
-        pushActionHistory({
-          name,
-          outcome: "error",
-          message: "Clipboard niet beschikbaar op dit apparaat.",
-          correlationId,
-          at: Date.now(),
-        });
-        return;
-      }
-
-      await navigator.clipboard.writeText(JSON.stringify(payload));
-      pushActionHistory({
-        name,
-        outcome: "success",
-        message: "Debug bundle naar klembord gekopieerd.",
-        correlationId,
-        at: Date.now(),
-      });
-    } catch (err) {
-      pushActionHistory({
-        name,
-        outcome: "error",
-        message: String(err),
-        correlationId: null,
-        at: Date.now(),
-      });
-    } finally {
-      setActionBusy(null);
-    }
-  }, [pushActionHistory]);
-
   const summaryAvailable = Boolean(summary);
 
   const authStatus = summary?.authStatus.status ?? "CHECKING";
@@ -698,8 +605,8 @@ export default function MonitoringDashboard() {
 
   const topErrors = useMemo(() => {
     const rows = summary?.apiHealth.errorBreakdown ?? [];
-    return (showAdvanced ? rows.slice(0, 12) : rows.slice(0, 6)).filter((row) => row.value > 0);
-  }, [showAdvanced, summary?.apiHealth.errorBreakdown]);
+    return rows.slice(0, 6).filter((row) => row.value > 0);
+  }, [summary?.apiHealth.errorBreakdown]);
 
   const maxErrorCount = useMemo(
     () => Math.max(1, ...topErrors.map((row) => row.value)),
@@ -708,8 +615,8 @@ export default function MonitoringDashboard() {
 
   const visibleRecentErrors = useMemo(() => {
     const rows = summary?.recentErrors ?? [];
-    return showAdvanced ? rows.slice(0, 18) : rows.slice(0, 8);
-  }, [showAdvanced, summary?.recentErrors]);
+    return rows.slice(0, 8);
+  }, [summary?.recentErrors]);
 
   const environmentLabel =
     summary?.meta?.environment && summary.meta.environment.trim()
@@ -803,18 +710,8 @@ export default function MonitoringDashboard() {
       });
     }
 
-    return list.slice(0, showAdvanced ? 8 : 5);
-  }, [authStatusTone, showAdvanced, summary]);
-
-  const dangerClearReady =
-    dangerDialog?.kind === "clear-cache" &&
-    dangerDialog.acknowledged &&
-    dangerDialog.confirmText.trim().toUpperCase() === "RESET";
-
-  const dangerSyncReady =
-    dangerDialog?.kind === "deep-sync" &&
-    dangerDialog.acknowledged &&
-    dangerDialog.confirmText.trim().toUpperCase() === "SYNC";
+    return list.slice(0, 5);
+  }, [authStatusTone, summary]);
 
   return (
     <main className="page settings-page ops-page">
@@ -944,7 +841,7 @@ export default function MonitoringDashboard() {
                     }}
                     disabled={actionBusy !== null}
                   >
-                    Spotify opnieuw koppelen
+                    Spotify koppelen
                   </button>
 
                   <button
@@ -976,7 +873,7 @@ export default function MonitoringDashboard() {
                     disabled={actionBusy !== null}
                     onClick={() => void runAction("API test", "/api/monitoring/test-api", "POST")}
                   >
-                    {actionBusy === "API test" ? "Bezig..." : "Verbinding testen"}
+                    {actionBusy === "API test" ? "Bezig..." : "API-test"}
                   </button>
 
                   <button
@@ -991,7 +888,7 @@ export default function MonitoringDashboard() {
                       await runBulkSync();
                     }}
                   >
-                    {actionBusy === "Bibliotheek bijwerken" ? "Bezig..." : "Bibliotheek bijwerken"}
+                    {actionBusy === "Bibliotheek bijwerken" ? "Bezig..." : "Bibliotheek sync"}
                   </button>
 
                   <button
@@ -1000,7 +897,7 @@ export default function MonitoringDashboard() {
                     disabled={actionBusy !== null}
                     onClick={() => void runDiagnosticsExport()}
                   >
-                    {actionBusy === "Diagnostics export" ? "Bezig..." : "Diagnose export"}
+                    {actionBusy === "Diagnostics export" ? "Bezig..." : "Diagnose"}
                   </button>
 
                   <button
@@ -1018,7 +915,7 @@ export default function MonitoringDashboard() {
                       }
                     }}
                   >
-                    Uitloggen app
+                    App uitloggen
                   </button>
                 </div>
               </article>
@@ -1100,7 +997,7 @@ export default function MonitoringDashboard() {
                   <h3 className="ops-section-title">Recente fouten</h3>
                   <HelpTip
                     label="Recente fouten"
-                    text="Laatste gebeurtenissen met basisuitleg. Schakel advanced in voor technische details."
+                    text="Laatste gebeurtenissen met basisuitleg."
                   />
                 </div>
                 {visibleRecentErrors.length ? (
@@ -1115,9 +1012,6 @@ export default function MonitoringDashboard() {
                           </div>
                           <strong>{endpoint.label}</strong>
                           <div className="text-subtle">{item.message}</div>
-                          {showAdvanced ? (
-                            <div className="ops-recent-extra">corr: {item.correlationId}</div>
-                          ) : null}
                         </div>
                       );
                     })}
@@ -1132,7 +1026,7 @@ export default function MonitoringDashboard() {
                   <h3 className="ops-section-title">Weergave & updates</h3>
                   <HelpTip
                     label="Weergave"
-                    text="Kies hoe vaak de pagina ververst en of je geavanceerde tools wilt tonen."
+                    text="Kies hoe vaak de pagina automatisch ververst."
                   />
                 </div>
 
@@ -1166,19 +1060,23 @@ export default function MonitoringDashboard() {
                       <option value="60">60 seconden</option>
                     </select>
                   </label>
-
-                  <label className="ops-switch-row">
-                    <span>Toon geavanceerde tools</span>
-                    <input
-                      type="checkbox"
-                      checked={showAdvanced}
-                      onChange={(event) => setShowAdvanced(event.target.checked)}
-                    />
-                  </label>
                 </div>
               </article>
 
-              <article className="panel ops-panel span-8">
+              <article className="panel ops-panel span-12">
+                <div className="ops-section-head">
+                  <h3 className="ops-section-title">Bibliotheek & prompt</h3>
+                  <HelpTip
+                    label="Bibliotheek & prompt"
+                    text="Toont basis-overzicht van playlists/tracks/artiesten en de ChatGPT prompt instellingen."
+                  />
+                </div>
+                <div className="ops-statusbox-basic">
+                  <StatusBox embedded mode="basic-core" />
+                </div>
+              </article>
+
+              <article className="panel ops-panel span-12">
                 <div className="ops-section-head">
                   <h3 className="ops-section-title">Actiehistorie</h3>
                   <HelpTip
@@ -1199,9 +1097,6 @@ export default function MonitoringDashboard() {
                         </div>
                         <strong>{entry.name}</strong>
                         <div className="text-subtle">{entry.message}</div>
-                        {showAdvanced && entry.correlationId ? (
-                          <div className="ops-recent-extra">corr: {entry.correlationId}</div>
-                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -1210,248 +1105,9 @@ export default function MonitoringDashboard() {
                 )}
               </article>
             </section>
-
-            <section className="panel ops-panel ops-advanced-wrap">
-              <button
-                type="button"
-                className="ops-advanced-toggle"
-                onClick={() => setDangerExpanded((prev) => !prev)}
-                aria-expanded={dangerExpanded}
-              >
-                {dangerExpanded ? "Geavanceerde tools verbergen" : "Geavanceerde tools tonen"}
-              </button>
-
-              {dangerExpanded ? (
-                <div className="ops-advanced-body">
-                  <div className="ops-advanced-actions">
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      disabled={actionBusy !== null}
-                      onClick={async () => {
-                        const payload = await runAction(
-                          "Error export",
-                          "/api/monitoring/errors/export",
-                          "GET",
-                          () => "Error export opgebouwd"
-                        );
-                        if (!payload) return;
-                        downloadJson("gsplayer-errors", payload);
-                      }}
-                    >
-                      {actionBusy === "Error export" ? "Bezig..." : "Exporteer error details"}
-                    </button>
-
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      disabled={actionBusy !== null}
-                      onClick={() => void copyDebugBundle()}
-                    >
-                      {actionBusy === "Debug bundle kopieeren"
-                        ? "Bezig..."
-                        : "Kopieer debug bundle"}
-                    </button>
-
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      disabled={actionBusy !== null}
-                      onClick={() =>
-                        setDangerDialog({
-                          kind: "clear-cache",
-                          acknowledged: false,
-                          confirmText: "",
-                        })
-                      }
-                    >
-                      Cache reset (gevaarlijk)
-                    </button>
-
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      disabled={actionBusy !== null}
-                      onClick={() =>
-                        setDangerDialog({
-                          kind: "deep-sync",
-                          acknowledged: false,
-                          confirmText: "",
-                        })
-                      }
-                    >
-                      Diepe synchronisatie (gevaarlijk)
-                    </button>
-                  </div>
-
-                  {summary?.incidents.active.length ? (
-                    <div className="ops-incident-rail">
-                      <span className="pill pill-error">
-                        {summary.incidents.active.length} actieve incident{summary.incidents.active.length === 1 ? "" : "en"}
-                      </span>
-                      <a className="btn btn-secondary" href={summary.incidents.runbookUrl || "#"}>
-                        Open runbook
-                      </a>
-                    </div>
-                  ) : null}
-
-                  {showAdvanced ? <StatusBox embedded mode="advanced-settings" /> : null}
-                </div>
-              ) : null}
-            </section>
           </>
         ) : null}
       </section>
-
-      {dangerDialog ? (
-        <div className="settings-danger-modal-backdrop" role="presentation">
-          <div
-            className="settings-danger-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="settings-danger-dialog-title"
-          >
-            {dangerDialog.kind === "clear-cache" ? (
-              <>
-                <h2 id="settings-danger-dialog-title" className="settings-danger-modal-title">
-                  Bevestig cache reset
-                </h2>
-                <p className="text-subtle">
-                  Deze actie wist monitoring-metrics en recente errors. Alleen gebruiken bij
-                  troubleshooting.
-                </p>
-
-                <label className="ops-switch-row settings-modal-row">
-                  <span>Ik begrijp de impact van deze reset.</span>
-                  <input
-                    type="checkbox"
-                    checked={dangerDialog.acknowledged}
-                    onChange={(event) =>
-                      setDangerDialog({
-                        ...dangerDialog,
-                        acknowledged: event.target.checked,
-                      })
-                    }
-                  />
-                </label>
-
-                <label className="ops-input-row settings-modal-row">
-                  <span>Typ RESET om te bevestigen</span>
-                  <input
-                    type="text"
-                    className="input"
-                    value={dangerDialog.confirmText}
-                    onChange={(event) =>
-                      setDangerDialog({
-                        ...dangerDialog,
-                        confirmText: event.target.value,
-                      })
-                    }
-                  />
-                </label>
-
-                <div className="settings-danger-modal-actions">
-                  <button
-                    ref={dialogCancelRef}
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => setDangerDialog(null)}
-                    disabled={actionBusy !== null}
-                  >
-                    Annuleren
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={!dangerClearReady || actionBusy !== null}
-                    onClick={async () => {
-                      const payload = await runAction(
-                        "Cache legen",
-                        "/api/monitoring/cache/clear",
-                        "POST",
-                        () => "Cache reset uitgevoerd"
-                      );
-                      if (payload) {
-                        setDangerDialog(null);
-                      }
-                    }}
-                  >
-                    {actionBusy === "Cache legen" ? "Bezig..." : "Definitief resetten"}
-                  </button>
-                </div>
-              </>
-            ) : null}
-
-            {dangerDialog.kind === "deep-sync" ? (
-              <>
-                <h2 id="settings-danger-dialog-title" className="settings-danger-modal-title">
-                  Bevestig diepe synchronisatie
-                </h2>
-                <p className="text-subtle">
-                  Deze run start een volledige sync voor tracks, playlists, artiesten, metadata en
-                  covers. Dit kan tijdelijk extra load geven.
-                </p>
-
-                <label className="ops-switch-row settings-modal-row">
-                  <span>Ik begrijp de operationele impact van deze actie.</span>
-                  <input
-                    type="checkbox"
-                    checked={dangerDialog.acknowledged}
-                    onChange={(event) =>
-                      setDangerDialog({
-                        ...dangerDialog,
-                        acknowledged: event.target.checked,
-                      })
-                    }
-                  />
-                </label>
-
-                <label className="ops-input-row settings-modal-row">
-                  <span>Typ SYNC om te bevestigen</span>
-                  <input
-                    type="text"
-                    className="input"
-                    value={dangerDialog.confirmText}
-                    onChange={(event) =>
-                      setDangerDialog({
-                        ...dangerDialog,
-                        confirmText: event.target.value,
-                      })
-                    }
-                  />
-                </label>
-
-                <div className="settings-danger-modal-actions">
-                  <button
-                    ref={dialogCancelRef}
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => setDangerDialog(null)}
-                    disabled={actionBusy !== null}
-                  >
-                    Annuleren
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={!dangerSyncReady || actionBusy !== null}
-                    onClick={async () => {
-                      const ok = await runBulkSync();
-                      if (ok) {
-                        setDangerDialog(null);
-                      }
-                    }}
-                  >
-                    {actionBusy === "Bibliotheek bijwerken" ? "Bezig..." : "Definitief starten"}
-                  </button>
-                </div>
-              </>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
     </main>
   );
 }

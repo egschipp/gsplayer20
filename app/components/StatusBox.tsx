@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CHATGPT_PROMPT_TEMPLATE,
   CHATGPT_PROMPT_TOKENS,
@@ -38,6 +38,14 @@ type WorkerHealth = {
 type VersionInfo = { name: string; version: string } | null;
 type ResourceNameMap = Record<string, string>;
 type BadgeTone = "ok" | "warn" | "error" | "info";
+type SyncResourceRow = {
+  resource: string;
+  status?: string | null;
+  lastSuccessfulAt?: number | null;
+  lastErrorCode?: string | null;
+  updatedAt?: number | null;
+  retryAfterAt?: number | null;
+};
 
 function Badge({ label, tone }: { label: string; tone?: BadgeTone }) {
   const cls =
@@ -122,7 +130,7 @@ function parseRetryAfterMs(res: Response) {
 
 type StatusBoxProps = {
   embedded?: boolean;
-  mode?: "full" | "advanced-settings";
+  mode?: "full" | "basic-core";
 };
 
 export default function StatusBox({ embedded = false, mode = "full" }: StatusBoxProps) {
@@ -139,6 +147,7 @@ export default function StatusBox({ embedded = false, mode = "full" }: StatusBox
   const [resourceUpdateState, setResourceUpdateState] = useState<
     Record<string, { status: "idle" | "running" | "success" | "error"; at: number }>
   >({});
+  const [selectedSyncResource, setSelectedSyncResource] = useState<string>("");
   const [promptTemplate, setPromptTemplate] = useState("");
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [promptSaved, setPromptSaved] = useState<null | "saved" | "error">(null);
@@ -462,25 +471,181 @@ export default function StatusBox({ embedded = false, mode = "full" }: StatusBox
       : "Niet verbonden met Spotify.";
   const showConnectionPanel = mode === "full";
   const showActionPanel = mode === "full";
+  const showResourcePanel = true;
+  const showHeader = mode !== "basic-core";
+  const showStatusMeta = mode !== "basic-core";
   const statusPanelSpan = showConnectionPanel || showActionPanel ? "span-3" : "span-12";
   const promptPanelSpan = showConnectionPanel || showActionPanel ? "span-6" : "span-12";
-  const embeddedTitle =
-    mode === "advanced-settings" ? "Geavanceerde settings" : "Geavanceerde instellingen";
+  const embeddedTitle = "Instellingen";
+
+  const playlistSyncRows = useMemo(() => {
+    const rows = Array.isArray(syncStatus?.resources) ? syncStatus.resources : [];
+    const mapped = rows
+      .map((row) => {
+        const resource = String((row as SyncResourceRow)?.resource ?? "");
+        if (!resource.startsWith("playlist_items:")) return null;
+        const playlistId = resource.split(":")[1] ?? "";
+        if (!playlistId) return null;
+        const fallbackName = playlistMap[playlistId]?.name ?? `Playlist ${playlistId.slice(0, 6)}`;
+        const displayName =
+          resourceNameMap[resource] ||
+          playlistMap[playlistId]?.name ||
+          fallbackName;
+        return {
+          resource,
+          playlistId,
+          displayName,
+          status: String((row as SyncResourceRow)?.status ?? "").toUpperCase() || "UNKNOWN",
+          lastSuccessfulAt:
+            typeof (row as SyncResourceRow)?.lastSuccessfulAt === "number"
+              ? Number((row as SyncResourceRow).lastSuccessfulAt)
+              : null,
+          lastErrorCode:
+            typeof (row as SyncResourceRow)?.lastErrorCode === "string"
+              ? String((row as SyncResourceRow).lastErrorCode)
+              : null,
+          updatedAt:
+            typeof (row as SyncResourceRow)?.updatedAt === "number"
+              ? Number((row as SyncResourceRow).updatedAt)
+              : null,
+          retryAfterAt:
+            typeof (row as SyncResourceRow)?.retryAfterAt === "number"
+              ? Number((row as SyncResourceRow).retryAfterAt)
+              : null,
+        };
+      })
+      .filter(
+        (
+          row
+        ): row is {
+          resource: string;
+          playlistId: string;
+          displayName: string;
+          status: string;
+          lastSuccessfulAt: number | null;
+          lastErrorCode: string | null;
+          updatedAt: number | null;
+          retryAfterAt: number | null;
+        } => Boolean(row)
+      )
+      .sort((a, b) =>
+        a.displayName.localeCompare(b.displayName, "nl", { sensitivity: "base" })
+      );
+    return mapped;
+  }, [playlistMap, resourceNameMap, syncStatus?.resources]);
+
+  useEffect(() => {
+    if (!playlistSyncRows.length) {
+      if (selectedSyncResource) {
+        setSelectedSyncResource("");
+      }
+      return;
+    }
+    if (!playlistSyncRows.some((row) => row.resource === selectedSyncResource)) {
+      setSelectedSyncResource(playlistSyncRows[0].resource);
+    }
+  }, [playlistSyncRows, selectedSyncResource]);
+
+  const selectedSyncRow =
+    playlistSyncRows.find((row) => row.resource === selectedSyncResource) ?? null;
+  const selectedSyncPlaylistId = selectedSyncRow?.playlistId ?? null;
+  const selectedSyncUpdateState = selectedSyncPlaylistId
+    ? resourceUpdateState[selectedSyncPlaylistId]?.status
+    : null;
+  const selectedSyncStatus = selectedSyncUpdateState
+    ? selectedSyncUpdateState === "success"
+      ? "OK"
+      : selectedSyncUpdateState === "error"
+      ? "FAILED"
+      : selectedSyncUpdateState === "running"
+      ? "RUNNING"
+      : selectedSyncRow?.status ?? "UNKNOWN"
+    : selectedSyncRow?.status ?? "UNKNOWN";
+  const selectedSyncTone = toneFromStatus(selectedSyncStatus);
+  const selectedSyncStatusLabel =
+    selectedSyncUpdateState === "success"
+      ? "Afgerond"
+      : selectedSyncUpdateState === "error"
+      ? "Mislukt"
+      : selectedSyncUpdateState === "running"
+      ? "Bezig"
+      : formatResourceStatus(selectedSyncStatus);
+  const selectedSyncLastSuccessfulAt = selectedSyncRow?.lastSuccessfulAt ?? null;
+
+  const syncSelectedPlaylist = useCallback(
+    async (playlistId: string) => {
+      if (!playlistId) return;
+      setResourceUpdateState((prev) => ({
+        ...prev,
+        [playlistId]: { status: "running", at: Date.now() },
+      }));
+      try {
+        const res = await fetch("/api/spotify/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "playlist_items",
+            payload: {
+              playlistId,
+              offset: 0,
+              limit: 50,
+              maxPagesPerRun: 20,
+              runId: `manual-${Date.now()}`,
+            },
+          }),
+        });
+        if (!res.ok) {
+          throw new Error(`SYNC_FAILED_${res.status}`);
+        }
+        refresh();
+        setResourceUpdateState((prev) => ({
+          ...prev,
+          [playlistId]: { status: "success", at: Date.now() },
+        }));
+        setTimeout(() => {
+          setResourceUpdateState((prev) => {
+            const next = { ...prev };
+            if (next[playlistId]?.status === "success") {
+              delete next[playlistId];
+            }
+            return next;
+          });
+        }, 12000);
+      } catch {
+        setResourceUpdateState((prev) => ({
+          ...prev,
+          [playlistId]: { status: "error", at: Date.now() },
+        }));
+        setTimeout(() => {
+          setResourceUpdateState((prev) => {
+            const next = { ...prev };
+            if (next[playlistId]?.status === "error") {
+              delete next[playlistId];
+            }
+            return next;
+          });
+        }, 12000);
+      }
+    },
+    [refresh]
+  );
 
   return (
     <section
       className={embedded ? "account-page statusbox-embedded" : "card account-page"}
       style={embedded ? undefined : { marginTop: 24 }}
     >
-      <div className="account-header">
-        <div className="account-panel-title">
-          {embedded ? embeddedTitle : ""}
+      {showHeader ? (
+        <div className="account-header">
+          <div className="account-panel-title">
+            {embedded ? embeddedTitle : ""}
+          </div>
+          <div className="account-version">
+            <div className="account-panel-title">Versie</div>
+            <div className="account-version-value">{versionInfo?.version ?? "n/a"}</div>
+          </div>
         </div>
-        <div className="account-version">
-          <div className="account-panel-title">Versie</div>
-          <div className="account-version-value">{versionInfo?.version ?? "n/a"}</div>
-        </div>
-      </div>
+      ) : null}
 
       <div className="account-grid">
         {showConnectionPanel ? (
@@ -550,27 +715,33 @@ export default function StatusBox({ embedded = false, mode = "full" }: StatusBox
         ) : null}
 
         <div className={`panel account-panel ${statusPanelSpan}`}>
-          <div className="account-panel-title">Status</div>
-          <div className="status-badges">
-            {statusBadgeItems.map((item) => (
-              <Badge key={item.label} label={item.label} tone={item.tone} />
-            ))}
+          <div className="account-panel-title">
+            {mode === "basic-core" ? "Bibliotheekoverzicht" : "Status"}
           </div>
+          {showStatusMeta ? (
+            <div className="status-badges">
+              {statusBadgeItems.map((item) => (
+                <Badge key={item.label} label={item.label} tone={item.tone} />
+              ))}
+            </div>
+          ) : null}
 
-          <div className="text-body status-summary">
-            <div>
-              Laatst bijgewerkt:{" "}
-              <time dateTime={dbStatus?.sync?.lastSuccessfulAt?.toString()}>
-                {lastSync}
-              </time>
+          {showStatusMeta ? (
+            <div className="text-body status-summary">
+              <div>
+                Laatst bijgewerkt:{" "}
+                <time dateTime={dbStatus?.sync?.lastSuccessfulAt?.toString()}>
+                  {lastSync}
+                </time>
+              </div>
+              <div>
+                Worker controle:{" "}
+                <time dateTime={workerHealth?.lastHeartbeat?.toString()}>
+                  {workerLast}
+                </time>
+              </div>
             </div>
-            <div>
-              Worker controle:{" "}
-              <time dateTime={workerHealth?.lastHeartbeat?.toString()}>
-                {workerLast}
-              </time>
-            </div>
-          </div>
+          ) : null}
           <div className="sr-only" aria-live="polite">
             {runningInfo.label}
           </div>
@@ -671,138 +842,68 @@ export default function StatusBox({ embedded = false, mode = "full" }: StatusBox
         </details>
       </div>
 
-      <div className="account-divider span-12" />
+      {showResourcePanel ? <div className="account-divider span-12" /> : null}
 
-      <div className="panel account-panel span-12">
-        <div className="account-panel-title">Playlists bijwerken</div>
-        <div className="text-body" style={{ marginBottom: 16 }}>
-          Werk individuele playlists bij als er iets ontbreekt.
-        </div>
-
-        {syncStatus?.resources?.length ? (
-          <div className="account-resource-list">
-            {syncStatus.resources
-              .slice()
-              .sort((a: any, b: any) => {
-                const aName = String(
-                  resourceNameMap[String(a.resource)] ?? a.resource
-                );
-                const bName = String(
-                  resourceNameMap[String(b.resource)] ?? b.resource
-                );
-                return aName.localeCompare(bName, "nl", { sensitivity: "base" });
-              })
-              .map((row: any) => {
-                const isPlaylist = String(row.resource).startsWith("playlist_items:");
-                const playlistId = isPlaylist
-                  ? String(row.resource).split(":")[1]
-                  : null;
-                const displayName =
-                  resourceNameMap[String(row.resource)] ?? row.resource;
-                const rowStatus = String(row.status ?? "").toUpperCase();
-                return (
-                  <div
-                    key={row.resource}
-                    className="account-resource-row"
-                    data-status={
-                      rowStatus === "OK"
-                        ? "ok"
-                        : rowStatus === "RUNNING"
-                        ? "running"
-                        : rowStatus === "FAILED"
-                        ? "failed"
-                        : "info"
-                    }
-                  >
-                    <div className="account-resource-name">{displayName}</div>
-                    <div className="account-resource-meta">
-                      <span>
-                        {formatResourceStatus(row.status)}
-                        {row.lastErrorCode ? ` • foutcode ${row.lastErrorCode}` : ""}
-                      </span>
-                      {playlistId ? (
-                        <span className="text-subtle">
-                          {resourceUpdateState[playlistId]?.status === "running"
-                            ? "Bezig..."
-                            : resourceUpdateState[playlistId]?.status === "success"
-                            ? "Afgerond"
-                            : resourceUpdateState[playlistId]?.status === "error"
-                            ? "Mislukt"
-                            : ""}
-                        </span>
-                      ) : null}
-                      {resourceUpdateState[playlistId ?? ""]?.status === "running" ? (
-                        <span className="account-resource-spinner" aria-hidden="true" />
-                      ) : null}
-                      {playlistId ? (
-                        <button
-                          className="btn btn-secondary account-resource-cta"
-                          onClick={async () => {
-                            setResourceUpdateState((prev) => ({
-                              ...prev,
-                              [playlistId]: { status: "running", at: Date.now() },
-                            }));
-                            try {
-                              const res = await fetch("/api/spotify/sync", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                  type: "playlist_items",
-                                  payload: {
-                                    playlistId,
-                                    offset: 0,
-                                    limit: 50,
-                                    maxPagesPerRun: 20,
-                                    runId: `manual-${Date.now()}`,
-                                  },
-                                }),
-                              });
-                              if (!res.ok) {
-                                throw new Error(`SYNC_FAILED_${res.status}`);
-                              }
-                              refresh();
-                              setResourceUpdateState((prev) => ({
-                                ...prev,
-                                [playlistId]: { status: "success", at: Date.now() },
-                              }));
-                              setTimeout(() => {
-                                setResourceUpdateState((prev) => {
-                                  const next = { ...prev };
-                                  if (next[playlistId]?.status === "success") {
-                                    delete next[playlistId];
-                                  }
-                                  return next;
-                                });
-                              }, 12000);
-                            } catch {
-                              setResourceUpdateState((prev) => ({
-                                ...prev,
-                                [playlistId]: { status: "error", at: Date.now() },
-                              }));
-                              setTimeout(() => {
-                                setResourceUpdateState((prev) => {
-                                  const next = { ...prev };
-                                  if (next[playlistId]?.status === "error") {
-                                    delete next[playlistId];
-                                  }
-                                  return next;
-                                });
-                              }, 12000);
-                            }
-                          }}
-                        >
-                          Nu bijwerken
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
+      {showResourcePanel ? (
+        <div className="panel account-panel span-12">
+          <div className="account-panel-title">Lijst synchroniseren</div>
+          <div className="text-body" style={{ marginBottom: 16 }}>
+            Kies de lijst die je wilt synchroniseren en start direct.
           </div>
-        ) : (
-          <div className="text-subtle">Geen playlists gevonden.</div>
-        )}
-      </div>
+
+          {playlistSyncRows.length ? (
+            <div className="account-sync-picker">
+              <label className="account-sync-picker-field">
+                <span className="text-subtle">Lijst</span>
+                <select
+                  className="input account-sync-select"
+                  value={selectedSyncResource}
+                  onChange={(event) => setSelectedSyncResource(event.target.value)}
+                >
+                  {playlistSyncRows.map((row) => (
+                    <option key={row.resource} value={row.resource}>
+                      {row.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="account-sync-picker-status">
+                <Badge label={`Status: ${selectedSyncStatusLabel}`} tone={selectedSyncTone} />
+                <span className="text-subtle">
+                  Laatste sync:{" "}
+                  {selectedSyncLastSuccessfulAt
+                    ? new Date(selectedSyncLastSuccessfulAt).toLocaleString()
+                    : "n/a"}
+                </span>
+                {selectedSyncRow?.lastErrorCode ? (
+                  <span className="text-subtle">Foutcode: {selectedSyncRow.lastErrorCode}</span>
+                ) : null}
+                {selectedSyncUpdateState === "running" ? (
+                  <span className="account-resource-spinner" aria-hidden="true" />
+                ) : null}
+              </div>
+
+              <div className="account-sync-picker-actions">
+                <button
+                  className="btn btn-secondary account-resource-cta"
+                  disabled={!selectedSyncPlaylistId || selectedSyncUpdateState === "running"}
+                  onClick={async () => {
+                    if (!selectedSyncPlaylistId) return;
+                    await syncSelectedPlaylist(selectedSyncPlaylistId);
+                  }}
+                >
+                  {selectedSyncUpdateState === "running" ? "Bezig..." : "Nu bijwerken"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="text-subtle">
+              Nog geen synchroniseerbare lijsten gevonden. Start eerst een bibliotheek sync.
+            </div>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }

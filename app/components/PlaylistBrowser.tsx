@@ -646,16 +646,20 @@ function mergeTrackRows(existing: TrackRow, incoming: TrackRow): TrackRow {
 }
 
 function buildTrackRowDedupeKey(row: TrackRow, index: number) {
-  const trackId = String(row.trackId ?? "").trim();
-  // Prefer track identity to prevent duplicate rows from mixed sources
-  // (live fetch, cached sync rows, optimistic UI inserts) for the same track.
-  if (trackId) return `track:${trackId}`;
-  const itemId = String(row.itemId ?? "").trim();
-  if (itemId) return `item:${itemId}`;
   const playlistId = String(row.playlistId ?? "").trim();
   if (playlistId && typeof row.position === "number" && Number.isFinite(row.position)) {
-    return `playlist:${playlistId}:position:${row.position}`;
+    return `playlist:${playlistId}:position:${Math.floor(row.position)}`;
   }
+
+  const itemId = String(row.itemId ?? "").trim();
+  if (playlistId && itemId) return `playlist:${playlistId}:item:${itemId}`;
+
+  const trackId = String(row.trackId ?? "").trim();
+  // For non-playlist contexts, prefer track identity to prevent duplicate rows
+  // from mixed sources (live fetch, cached sync rows, optimistic UI inserts).
+  if (trackId) return `track:${trackId}`;
+  if (itemId) return `item:${itemId}`;
+
   const id = String(row.id ?? "").trim();
   if (id) return `id:${id}`;
   const fallback = [
@@ -2581,6 +2585,9 @@ export default function PlaylistBrowser() {
             : track.coverUrl ?? track.albumImageUrl ?? null;
         const link = toPlaylistLink(target);
         const row: TrackRow = {
+          itemId: `optimistic:${target.id}:${trackId}:${Date.now()}:${Math.random()
+            .toString(16)
+            .slice(2, 8)}`,
           trackId,
           playlistId: target.id,
           name: track.name ?? null,

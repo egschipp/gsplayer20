@@ -716,6 +716,38 @@ export default function MonitoringDashboard() {
             </div>
 
             <div className="monitoring-action-card">
+              <div className="account-panel-title">Error export</div>
+              <div className="text-subtle">
+                Exporteer Error mix en Recente errors met alle details.
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={actionBusy !== null}
+                onClick={async () => {
+                  const payload = await runAction(
+                    "Export errors",
+                    "/api/monitoring/errors/export",
+                    "GET",
+                    () => "Error export opgehaald"
+                  );
+                  if (!payload) return;
+                  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+                    type: "application/json",
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const anchor = document.createElement("a");
+                  anchor.href = url;
+                  anchor.download = `gsplayer-errors-${Date.now()}.json`;
+                  anchor.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                {actionBusy === "Export errors" ? "Bezig..." : "Export errors"}
+              </button>
+            </div>
+
+            <div className="monitoring-action-card">
               <div className="account-panel-title">Diagnostics export</div>
               <div className="text-subtle">Download JSON bundle met actuele status.</div>
               <button

@@ -151,8 +151,25 @@ export function topCounterByLabel(
     .slice(0, Math.max(1, limit));
 }
 
+export function counterEntries(
+  name: string,
+  filter: Labels = {}
+): Array<{ labels: Record<string, string>; value: number }> {
+  const normFilter = normalizeLabels(filter);
+  const rows: Array<{ labels: Record<string, string>; value: number }> = [];
+  for (const entry of counters.values()) {
+    if (entry.name !== name) continue;
+    if (!labelsMatch(entry.labels, normFilter)) continue;
+    rows.push({
+      labels: { ...entry.labels },
+      value: entry.value,
+    });
+  }
+  rows.sort((a, b) => b.value - a.value);
+  return rows;
+}
+
 export function clearMetrics(): void {
   counters.clear();
   histograms.clear();
 }
-

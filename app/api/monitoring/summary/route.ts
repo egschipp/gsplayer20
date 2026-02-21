@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db/client";
 import { oauthTokens } from "@/lib/db/schema";
 import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
 import {
+  counterEntries,
   counterTotal,
   histogramQuantiles,
   topCounterByLabel,
@@ -100,6 +101,19 @@ export async function GET() {
     });
   }
 
+  const requestCounters = counterEntries("spotify_api_requests_total");
+  const errorBreakdownMap = new Map<string, number>();
+  for (const row of requestCounters) {
+    const statusClass = String(row.labels.status_class || "").toLowerCase();
+    if (statusClass !== "4xx" && statusClass !== "5xx") continue;
+    const endpoint = String(row.labels.endpoint || "unknown").trim() || "unknown";
+    errorBreakdownMap.set(endpoint, (errorBreakdownMap.get(endpoint) || 0) + row.value);
+  }
+  const errorBreakdown = Array.from(errorBreakdownMap.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 8);
+
   return jsonNoStore({
     generatedAt: now,
     authStatus: {
@@ -126,14 +140,11 @@ export async function GET() {
     apiHealth: {
       successRate: apiTotal > 0 ? Number((apiSuccess / apiTotal).toFixed(4)) : 1,
       latencyMs: apiLatency,
-      errorBreakdown: topCounterByLabel("spotify_api_requests_total", "endpoint", 8),
+      errorBreakdown,
       upstream5xx: api5xx,
     },
     rateLimits: {
-      count429:
-        counterTotal("spotify_api_requests_total", {
-          status_class: "4xx",
-        }) || 0,
+      count429: counterTotal("spotify_api_requests_total", { status_code: "429" }) || 0,
       backoffState: "normal",
       retryAfterObservations: [],
     },
@@ -159,4 +170,3 @@ export async function GET() {
     },
   });
 }
-

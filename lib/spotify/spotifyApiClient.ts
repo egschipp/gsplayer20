@@ -115,6 +115,7 @@ export async function spotifyApiRequest<T>(params: {
         endpoint: group,
         method,
         status_class: `${Math.floor(res.status / 100)}xx`,
+        status_code: String(res.status),
       });
 
       if (res.ok) {
@@ -219,4 +220,3 @@ export async function spotifyApiRequest<T>(params: {
     retryable: false,
   });
 }
-

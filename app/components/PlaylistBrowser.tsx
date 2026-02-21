@@ -646,14 +646,16 @@ function mergeTrackRows(existing: TrackRow, incoming: TrackRow): TrackRow {
 }
 
 function buildTrackRowDedupeKey(row: TrackRow, index: number) {
+  const trackId = String(row.trackId ?? "").trim();
+  // Prefer track identity to prevent duplicate rows from mixed sources
+  // (live fetch, cached sync rows, optimistic UI inserts) for the same track.
+  if (trackId) return `track:${trackId}`;
   const itemId = String(row.itemId ?? "").trim();
   if (itemId) return `item:${itemId}`;
   const playlistId = String(row.playlistId ?? "").trim();
   if (playlistId && typeof row.position === "number" && Number.isFinite(row.position)) {
     return `playlist:${playlistId}:position:${row.position}`;
   }
-  const trackId = String(row.trackId ?? "").trim();
-  if (trackId) return `track:${trackId}`;
   const id = String(row.id ?? "").trim();
   if (id) return `id:${id}`;
   const fallback = [

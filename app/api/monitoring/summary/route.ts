@@ -9,6 +9,7 @@ import {
   topCounterByLabel,
 } from "@/lib/observability/metrics";
 import { getRecentErrors } from "@/lib/observability/logger";
+import { getSpotifyRateLimitSnapshot } from "@/lib/observability/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -56,6 +57,7 @@ export async function GET() {
   const apiTotal = apiSuccess + api4xx + api5xx;
   const apiLatency = histogramQuantiles("spotify_api_latency_ms");
   const refreshLockLatency = histogramQuantiles("spotify_refresh_lock_wait_ms");
+  const rateLimitSnapshot = getSpotifyRateLimitSnapshot(now);
 
   const expiresInSec =
     typeof tokenRow?.accessExpiresAt === "number" && tokenRow.accessExpiresAt > 0
@@ -107,6 +109,11 @@ export async function GET() {
     const statusClass = String(row.labels.status_class || "").toLowerCase();
     if (statusClass !== "4xx" && statusClass !== "5xx") continue;
     const endpoint = String(row.labels.endpoint || "unknown").trim() || "unknown";
+    const statusCode = String(row.labels.status_code || "").trim();
+    const isExpectedPlayer404 =
+      statusCode === "404" &&
+      (endpoint === "me_player" || endpoint === "me_player_devices");
+    if (isExpectedPlayer404) continue;
     errorBreakdownMap.set(endpoint, (errorBreakdownMap.get(endpoint) || 0) + row.value);
   }
   const errorBreakdown = Array.from(errorBreakdownMap.entries())
@@ -148,8 +155,12 @@ export async function GET() {
     },
     rateLimits: {
       count429: counterTotal("spotify_api_requests_total", { status_code: "429" }) || 0,
-      backoffState: "normal",
-      retryAfterObservations: [],
+      backoffState: rateLimitSnapshot.backoffState,
+      backoffRemainingMs: rateLimitSnapshot.backoffRemainingMs,
+      backoffUntilTs: rateLimitSnapshot.backoffUntilTs,
+      lastRetryAfterMs: rateLimitSnapshot.lastRetryAfterMs,
+      lastTriggeredAt: rateLimitSnapshot.lastTriggeredAt,
+      retryAfterObservationsSec: rateLimitSnapshot.retryAfterObservationsSec,
     },
     traffic: {
       requestsPerMin: apiTotal,

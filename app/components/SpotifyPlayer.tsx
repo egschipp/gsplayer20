@@ -133,6 +133,34 @@ function parseSpotifyPlayerApiUrl(input: string) {
   }
 }
 
+function normalizePlaybackTrackId(value: unknown) {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  if (raw.startsWith("spotify:track:")) {
+    const id = raw.split(":").pop();
+    return id ? id.trim() || null : null;
+  }
+  if (raw.includes("open.spotify.com/track/")) {
+    try {
+      const url = new URL(raw);
+      const segment = url.pathname.split("/").filter(Boolean).pop() ?? "";
+      return segment || null;
+    } catch {
+      return null;
+    }
+  }
+  return raw;
+}
+
+function resolvePlaybackTrackId(item: any) {
+  return (
+    normalizePlaybackTrackId(item?.id) ??
+    normalizePlaybackTrackId(item?.uri) ??
+    normalizePlaybackTrackId(item?.linked_from?.id)
+  );
+}
+
 function extractProxyPayload(body: RequestInit["body"]) {
   if (!body) return undefined;
   if (typeof body === "string") {
@@ -1011,6 +1039,21 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     return await verifyPlaying(260);
   }
 
+  async function ensurePlaybackStartedWithRetry(args: {
+    deviceId: string;
+    expectedTrackId?: string | null;
+    replay?: () => Promise<Response | null>;
+  }) {
+    const started = await ensurePlaybackStarted(args.deviceId, args.expectedTrackId);
+    if (started) return true;
+    if (!args.replay) return false;
+
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const retryRes = await args.replay();
+    if (!retryRes?.ok) return false;
+    return await ensurePlaybackStarted(args.deviceId, args.expectedTrackId);
+  }
+
   const getIndexFromTrackId = useCallback((uris: string[], trackId?: string | null) => {
     if (!trackId) return -1;
     const target = String(trackId);
@@ -1133,7 +1176,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (deviceId === sdkDeviceIdRef.current) {
       await playerRef.current?.activateElement?.();
     }
-    const ready = await ensureActiveDevice(deviceId, token, true);
+    const ready = await ensureActiveDevice(deviceId, token, false);
     if (!ready) {
       setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
       return;
@@ -1143,12 +1186,23 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       offset: { uri: offsetUri },
       position_ms: 0,
     };
-    const res = await spotifyApiFetch(
-      withDeviceId("https://api.spotify.com/v1/me/player/play", deviceId),
-      { method: "PUT", body: JSON.stringify(payload) }
-    );
+    const attemptPlay = () =>
+      spotifyApiFetch(withDeviceId("https://api.spotify.com/v1/me/player/play", deviceId), {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+    const res = await attemptPlay();
     if (res && res.ok) {
-      await ensurePlaybackStarted(deviceId, id);
+      const started = await ensurePlaybackStartedWithRetry({
+        deviceId,
+        expectedTrackId: id,
+        replay: attemptPlay,
+      });
+      if (!started) {
+        setError("Track startte niet direct. Probeer opnieuw.");
+      } else {
+        setError(null);
+      }
       applyProgressPosition(0);
       schedulePlaybackVerify(280, "api_verify", operationEpoch);
     }
@@ -1342,7 +1396,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
 
       const item = data.item;
-      const trackId = item.id ?? null;
+      const trackId = resolvePlaybackTrackId(item);
       const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
       if (isNewTrack) {
         lastTrackIdRef.current = trackId;
@@ -1733,7 +1787,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         setDeviceReady(true);
       }
       const current = state.track_window?.current_track;
-      const trackId = current?.id ?? null;
+      const trackId = resolvePlaybackTrackId(current);
       const rawPosition = state.position ?? 0;
       const nextDuration = current?.duration_ms ?? 0;
       const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
@@ -2340,8 +2394,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 applyProgressPosition(reconciledBootstrapPosition);
               }
               setDurationMs(item.duration_ms ?? 0);
-              setCurrentTrackIdState(item.id ?? null);
-              if (onTrackChange) onTrackChange(item.id ?? null);
+              const bootstrapTrackId = resolvePlaybackTrackId(item);
+              setCurrentTrackIdState(bootstrapTrackId);
+              if (onTrackChange) onTrackChange(bootstrapTrackId);
             }
             if (typeof data?.shuffle_state === "boolean") {
               if (!(queueModeRef.current === "queue" && queueUrisRef.current?.length)) {
@@ -2601,7 +2656,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           };
           const startIndex = Math.max(0, Math.min(resolvedIndex, uris.length - 1));
 
-          const ready = await ensureActiveDevice(currentDevice as string, token, true);
+          const ready = await ensureActiveDevice(currentDevice as string, token, false);
           if (!ready) {
             raisePlaybackCommandError(
               404,
@@ -2680,10 +2735,16 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
           if (playRes.ok) {
             const expectedTrackId = resolveTrackIdFromUri(resolvedUri);
-            await ensurePlaybackStarted(
-              currentDevice as string,
-              expectedTrackId
-            );
+            const started = await ensurePlaybackStartedWithRetry({
+              deviceId: currentDevice as string,
+              expectedTrackId,
+              replay: attemptPlay,
+            });
+            if (!started) {
+              setError("Track startte niet direct. Probeer opnieuw.");
+            } else {
+              setError(null);
+            }
             queueModeRef.current = "queue";
             queueUrisRef.current = uris;
             queueIndexRef.current = startIndex;
@@ -2744,7 +2805,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             await playerRef.current?.activateElement?.();
           }
 
-          const ready = await ensureActiveDevice(currentDevice as string, token, true);
+          const ready = await ensureActiveDevice(currentDevice as string, token, false);
           if (!ready) {
             raisePlaybackCommandError(
               404,
@@ -2764,13 +2825,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             position_ms: 0,
           };
 
-          const res = await spotifyApiFetch(
-            withDeviceId(
-              "https://api.spotify.com/v1/me/player/play",
-              currentDevice as string
-            ),
-            { method: "PUT", body: JSON.stringify(body) }
-          );
+          const attemptContextPlay = () =>
+            spotifyApiFetch(
+              withDeviceId(
+                "https://api.spotify.com/v1/me/player/play",
+                currentDevice as string
+              ),
+              { method: "PUT", body: JSON.stringify(body) }
+            );
+          const res = await attemptContextPlay();
           if (!res) {
             raisePlaybackCommandError(
               undefined,
@@ -2814,10 +2877,16 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
           if (contextRes.ok) {
             const expectedTrackId = resolveTrackIdFromUri(offsetUri ?? null);
-            await ensurePlaybackStarted(
-              currentDevice as string,
-              expectedTrackId
-            );
+            const started = await ensurePlaybackStartedWithRetry({
+              deviceId: currentDevice as string,
+              expectedTrackId,
+              replay: attemptContextPlay,
+            });
+            if (!started) {
+              setError("Track startte niet direct. Probeer opnieuw.");
+            } else {
+              setError(null);
+            }
             queueModeRef.current = "context";
             queueUrisRef.current = null;
             queueOrderRef.current = null;

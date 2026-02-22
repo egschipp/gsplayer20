@@ -10,6 +10,9 @@ export type QueueTrackInput = {
   trackId: string;
   name: string;
   artists: string;
+  primaryArtistId?: string | null;
+  albumId?: string | null;
+  albumName?: string | null;
   durationMs: number | null;
   explicit?: number | null;
   artworkUrl: string | null;

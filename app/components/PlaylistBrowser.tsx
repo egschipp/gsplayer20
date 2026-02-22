@@ -49,9 +49,68 @@ function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   return null;
 }
 
+function normalizeSpotifyTrackId(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (raw.startsWith("spotify:track:")) {
+    const id = raw.split(":").pop();
+    return id ? id.trim() || null : null;
+  }
+  return raw;
+}
+
+function isCurrentTrackMatch(
+  track: TrackRow | TrackItem | null | undefined,
+  currentTrackId: string | null
+) {
+  const activeId = normalizeSpotifyTrackId(currentTrackId);
+  if (!activeId || !track) return false;
+
+  const candidates = new Set<string>();
+  if ("trackId" in track) {
+    const trackId = normalizeSpotifyTrackId(track.trackId ?? null);
+    const rowId = normalizeSpotifyTrackId(track.id ?? null);
+    const linkedId = normalizeSpotifyTrackId(track.linkedFromTrackId ?? null);
+    if (trackId) candidates.add(trackId);
+    if (rowId) candidates.add(rowId);
+    if (linkedId) candidates.add(linkedId);
+  } else {
+    const itemId = normalizeSpotifyTrackId(track.id ?? null);
+    const trackId = normalizeSpotifyTrackId(track.trackId ?? null);
+    const linkedId = normalizeSpotifyTrackId(track.linkedFromTrackId ?? null);
+    if (itemId) candidates.add(itemId);
+    if (trackId) candidates.add(trackId);
+    if (linkedId) candidates.add(linkedId);
+  }
+
+  return candidates.has(activeId);
+}
+
 function buildQueueTrackInput(track: TrackRow | TrackItem) {
   const trackId = resolveTrackId(track);
   if (!trackId) return null;
+  const primaryArtistId =
+    "artists" in track
+      ? Array.isArray(track.artists)
+        ? track.artists.find((artist) => artist?.id && artist?.name)?.id ?? null
+        : null
+      : null;
+  const albumId =
+    "album" in track
+      ? typeof track.album?.id === "string" && track.album.id.trim()
+        ? track.album.id.trim()
+        : null
+      : typeof track.albumId === "string" && track.albumId.trim()
+      ? track.albumId.trim()
+      : null;
+  const albumName =
+    "album" in track
+      ? typeof track.album?.name === "string" && track.album.name.trim()
+        ? track.album.name.trim()
+        : null
+      : typeof track.albumName === "string" && track.albumName.trim()
+      ? track.albumName.trim()
+      : null;
   const artists =
     "artists" in track
       ? Array.isArray(track.artists)
@@ -93,6 +152,9 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
     trackId,
     name: track.name || "Onbekend",
     artists,
+    primaryArtistId,
+    albumId,
+    albumName,
     durationMs: track.durationMs ?? null,
     explicit:
       explicitValueRaw === null || explicitValueRaw === undefined
@@ -645,19 +707,39 @@ function mergeTrackRows(existing: TrackRow, incoming: TrackRow): TrackRow {
   };
 }
 
-function buildTrackRowDedupeKey(row: TrackRow, index: number) {
-  const playlistId = String(row.playlistId ?? "").trim();
-  if (playlistId && typeof row.position === "number" && Number.isFinite(row.position)) {
-    return `playlist:${playlistId}:position:${Math.floor(row.position)}`;
+function normalizeTrackIdentity(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (raw.startsWith("spotify:track:")) {
+    const id = raw.split(":").pop();
+    return id ? id.trim() || null : null;
   }
+  return raw;
+}
+
+function resolveTrackRowCanonicalId(row: TrackRow) {
+  return (
+    normalizeTrackIdentity(row.linkedFromTrackId) ??
+    normalizeTrackIdentity(row.trackId) ??
+    normalizeTrackIdentity(row.id) ??
+    null
+  );
+}
+
+function resolveTrackItemCanonicalId(item: TrackItem) {
+  return (
+    normalizeTrackIdentity(item.linkedFromTrackId) ??
+    normalizeTrackIdentity(item.trackId) ??
+    normalizeTrackIdentity(item.id) ??
+    null
+  );
+}
+
+function buildTrackRowDedupeKey(row: TrackRow, index: number) {
+  const canonicalTrackId = resolveTrackRowCanonicalId(row);
+  if (canonicalTrackId) return `track:${canonicalTrackId}`;
 
   const itemId = String(row.itemId ?? "").trim();
-  if (playlistId && itemId) return `playlist:${playlistId}:item:${itemId}`;
-
-  const trackId = String(row.trackId ?? "").trim();
-  // For non-playlist contexts, prefer track identity to prevent duplicate rows
-  // from mixed sources (live fetch, cached sync rows, optimistic UI inserts).
-  if (trackId) return `track:${trackId}`;
   if (itemId) return `item:${itemId}`;
 
   const id = String(row.id ?? "").trim();
@@ -690,6 +772,96 @@ function dedupeTrackRows(rows: TrackRow[]) {
       continue;
     }
     deduped[existingIndex] = mergeTrackRows(deduped[existingIndex], row);
+  }
+  return deduped;
+}
+
+function mergeTrackItemArtists(
+  primary?: Array<{ id: string; name: string }> | null,
+  secondary?: Array<{ id: string; name: string }> | null
+) {
+  const unique = new Map<string, { id: string; name: string }>();
+  for (const source of [primary, secondary]) {
+    for (const artist of source ?? []) {
+      const name = String(artist?.name ?? "").trim();
+      const id = String(artist?.id ?? "").trim();
+      if (!name && !id) continue;
+      const key = id || `name:${normalizeTrackName(name)}`;
+      if (unique.has(key)) continue;
+      unique.set(key, { id: id || key, name: name || "Onbekende artiest" });
+    }
+  }
+  return Array.from(unique.values());
+}
+
+function mergeTrackItems(existing: TrackItem, incoming: TrackItem): TrackItem {
+  const mergedPlaylists = mergeTrackPlaylists(existing.playlists, incoming.playlists);
+  const existingAlbumImages = Array.isArray(existing.album?.images) ? existing.album.images : [];
+  const incomingAlbumImages = Array.isArray(incoming.album?.images) ? incoming.album.images : [];
+  return {
+    ...existing,
+    id: pickPreferredText(existing.id, incoming.id) ?? existing.id,
+    trackId: pickPreferredText(existing.trackId, incoming.trackId),
+    name: pickPreferredText(existing.name, incoming.name) ?? existing.name,
+    artists: mergeTrackItemArtists(existing.artists, incoming.artists),
+    album: {
+      id: pickPreferredText(existing.album?.id, incoming.album?.id),
+      name: pickPreferredText(existing.album?.name, incoming.album?.name),
+      images: existingAlbumImages.length ? existingAlbumImages : incomingAlbumImages,
+      release_date: pickPreferredText(
+        existing.album?.release_date,
+        incoming.album?.release_date
+      ),
+    },
+    releaseYear: pickPreferredNumber(existing.releaseYear, incoming.releaseYear),
+    durationMs: pickPreferredNumber(existing.durationMs, incoming.durationMs),
+    explicit: pickPreferredNumber(existing.explicit, incoming.explicit),
+    isLocal: pickPreferredNumber(existing.isLocal, incoming.isLocal),
+    restrictionsReason: pickPreferredText(
+      existing.restrictionsReason,
+      incoming.restrictionsReason
+    ),
+    linkedFromTrackId: pickPreferredText(
+      existing.linkedFromTrackId,
+      incoming.linkedFromTrackId
+    ),
+    popularity: pickPreferredNumber(existing.popularity, incoming.popularity),
+    albumImageUrl: pickPreferredText(existing.albumImageUrl, incoming.albumImageUrl),
+    playlists: mergedPlaylists ?? [],
+  };
+}
+
+function buildTrackItemDedupeKey(item: TrackItem, index: number) {
+  const canonicalTrackId = resolveTrackItemCanonicalId(item);
+  if (canonicalTrackId) return `track:${canonicalTrackId}`;
+  const fallback = [
+    normalizeTrackName(item.name),
+    normalizeTrackName(resolveTrackItemArtistNames(item)),
+    normalizeTrackName(item.album?.name),
+    typeof item.durationMs === "number" ? String(item.durationMs) : "",
+  ]
+    .filter(Boolean)
+    .join("|");
+  return fallback ? `meta:${fallback}` : `track-item:${index}`;
+}
+
+function dedupeTrackItems(items: TrackItem[]) {
+  if (!items.length) return items;
+  const byKey = new Map<string, number>();
+  const deduped: TrackItem[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const key = buildTrackItemDedupeKey(item, index);
+    const existingIndex = byKey.get(key);
+    if (existingIndex === undefined) {
+      deduped.push({
+        ...item,
+        playlists: mergeTrackPlaylists(item.playlists) ?? [],
+      });
+      byKey.set(key, deduped.length - 1);
+      continue;
+    }
+    deduped[existingIndex] = mergeTrackItems(deduped[existingIndex], item);
   }
   return deduped;
 }
@@ -4048,10 +4220,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
       .map((value) => value.trim())
       .filter(Boolean)[0] ?? "";
   const albumLine = String(track.albumName ?? "").trim();
-  const isPlaying = Boolean(
-    data.currentTrackId &&
-      (track.trackId === data.currentTrackId || track.id === data.currentTrackId)
-  );
+  const isPlaying = isCurrentTrackMatch(track, data.currentTrackId);
   const rowColumnsStyle = {
     ["--track-row-height" as const]: `${TRACK_ROW_HEIGHT}px`,
     ["--track-row-columns" as const]: isGrid
@@ -4236,10 +4405,7 @@ function TrackItemRenderer({
   data,
 }: ListChildComponentProps<TrackItemData>) {
   const track = data.items[index];
-  const isPlaying = Boolean(
-    data.currentTrackId &&
-      (track.id === data.currentTrackId || track.trackId === data.currentTrackId)
-  );
+  const isPlaying = isCurrentTrackMatch(track, data.currentTrackId);
   const coverUrl = track.album?.images?.[0]?.url ?? null;
   const artistNames = track.artists
     .map((artist) => artist?.name)

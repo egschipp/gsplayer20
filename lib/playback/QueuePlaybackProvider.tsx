@@ -138,9 +138,9 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       pendingQueueIdRef.current = item.queueId;
       setStartingQueueId(item.queueId);
       setActiveQueueId(item.queueId);
-      await api.playQueue(uris, targetUri, offsetIndex);
       snapshot.setMode("queue");
       snapshot.setCurrentQueueId(item.queueId);
+      await api.playQueue(uris, targetUri, offsetIndex);
       setError(null);
     },
     [api, captureFallbackContext]
@@ -174,6 +174,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
   );
 
   const playNextFromQueue = useCallback(async () => {
+    if (startingQueueId || pendingQueueIdRef.current) return;
     await runCommand(async () => {
       const snapshot = queueRef.current;
       if (!snapshot.items.length) {
@@ -200,9 +201,10 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       setStartingQueueId(null);
       setError(mapPlaybackError(err));
     });
-  }, [currentTrackId, playQueueAtIndex, resumeFallbackContext, runCommand]);
+  }, [currentTrackId, playQueueAtIndex, resumeFallbackContext, runCommand, startingQueueId]);
 
   const playPreviousFromQueue = useCallback(async () => {
+    if (startingQueueId || pendingQueueIdRef.current) return;
     await runCommand(async () => {
       const snapshot = queueRef.current;
       if (!snapshot.items.length) return;
@@ -225,7 +227,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       setStartingQueueId(null);
       setError(mapPlaybackError(err));
     });
-  }, [currentTrackId, playQueueAtIndex, runCommand]);
+  }, [currentTrackId, playQueueAtIndex, runCommand, startingQueueId]);
 
   useEffect(() => {
     if (queue.mode !== "queue") {
@@ -264,6 +266,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
   useEffect(() => {
     if (!queue.hydrated) return;
     if (queue.mode !== "queue") return;
+    if (busy || startingQueueId || pendingQueueIdRef.current) return;
     if (queue.items.length === 0) {
       void resumeFallbackContext();
       return;
@@ -275,7 +278,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     if (!first) return;
     queue.setCurrentQueueId(first.queueId);
     void playFromQueue(first.queueId);
-  }, [playFromQueue, queue, resumeFallbackContext]);
+  }, [busy, playFromQueue, queue, resumeFallbackContext, startingQueueId]);
 
   const value = useMemo<QueuePlaybackContextValue>(
     () => ({

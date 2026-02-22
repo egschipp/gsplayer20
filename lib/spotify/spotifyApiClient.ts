@@ -1,6 +1,7 @@
 import { incCounter, observeHistogram } from "@/lib/observability/metrics";
 import { logEvent } from "@/lib/observability/logger";
 import { createCorrelationId } from "@/lib/observability/correlation";
+import { recordSpotifyRateLimitBackoff } from "@/lib/observability/rateLimit";
 
 export class SpotifyApiError extends Error {
   status: number;
@@ -37,17 +38,53 @@ function parseRetryAfterMs(res: Response): number | null {
   return Math.round(parsed * 1000);
 }
 
-function classifyCode(status: number, body: string): string {
+function classifyCode(
+  status: number,
+  body: string,
+  endpointGroup: string,
+  method: string
+): string {
   const lower = body.toLowerCase();
   if (status === 401) {
     if (lower.includes("invalid_grant")) return "INVALID_GRANT";
     return "UNAUTHENTICATED";
   }
   if (status === 403) return "FORBIDDEN";
-  if (status === 404) return "NOT_FOUND";
+  if (status === 404) {
+    if (endpointGroup === "me_player") {
+      return method === "GET" ? "NO_ACTIVE_DEVICE" : "PLAYER_NOT_FOUND";
+    }
+    if (endpointGroup === "me_player_devices") return "NO_CONNECT_DEVICE";
+    return "NOT_FOUND";
+  }
   if (status === 429) return "RATE_LIMIT";
   if (status >= 500) return "SPOTIFY_UPSTREAM";
   return "SPOTIFY_REQUEST_FAILED";
+}
+
+function isExpectedHttpCondition(args: {
+  status: number;
+  endpointGroup: string;
+  method: string;
+  errorCode: string;
+}): boolean {
+  const { status, endpointGroup, method, errorCode } = args;
+  if (
+    status === 404 &&
+    endpointGroup === "me_player" &&
+    method === "GET" &&
+    errorCode === "NO_ACTIVE_DEVICE"
+  ) {
+    return true;
+  }
+  if (
+    status === 404 &&
+    endpointGroup === "me_player_devices" &&
+    errorCode === "NO_CONNECT_DEVICE"
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function shouldRetryStatus(status: number): boolean {
@@ -134,11 +171,18 @@ export async function spotifyApiRequest<T>(params: {
 
       const text = await res.text();
       const retryAfterMs = parseRetryAfterMs(res);
-      const code = classifyCode(res.status, text);
+      const code = classifyCode(res.status, text, group, method);
       const retryable = shouldRetryStatus(res.status);
+      const retryWaitMs = retryAfterMs ?? Math.min(500 * attempt * attempt, 5_000);
+      const expected = isExpectedHttpCondition({
+        status: res.status,
+        endpointGroup: group,
+        method,
+        errorCode: code,
+      });
 
       logEvent({
-        level: retryable ? "warn" : "error",
+        level: retryable || expected ? "warn" : "error",
         event: "spotify_api_http_error",
         correlationId,
         endpointGroup: group,
@@ -150,13 +194,19 @@ export async function spotifyApiRequest<T>(params: {
       });
 
       if (retryable && attempt < maxAttempts) {
+        const waitMs = jitterMs(retryWaitMs);
+        if (res.status === 429) {
+          recordSpotifyRateLimitBackoff(waitMs);
+        }
         incCounter("spotify_api_retries_total", {
           endpoint: group,
           reason: code,
         });
-        const base = retryAfterMs ?? Math.min(500 * attempt * attempt, 5_000);
-        await new Promise((resolve) => setTimeout(resolve, jitterMs(base)));
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
         continue;
+      }
+      if (res.status === 429) {
+        recordSpotifyRateLimitBackoff(retryWaitMs);
       }
 
       throw new SpotifyApiError({
@@ -168,6 +218,9 @@ export async function spotifyApiRequest<T>(params: {
         correlationId,
       });
     } catch (error) {
+      if (error instanceof SpotifyApiError) {
+        throw error;
+      }
       const durationMs = Date.now() - started;
       const isAbort = error instanceof DOMException && error.name === "AbortError";
       const message = String((error as Error)?.message ?? error);
@@ -176,6 +229,11 @@ export async function spotifyApiRequest<T>(params: {
         message.toLowerCase().includes("fetch") ||
         message.toLowerCase().includes("network") ||
         message.toLowerCase().includes("timeout");
+      const networkCode = isAbort
+        ? "NETWORK_TIMEOUT"
+        : retryable
+        ? "NETWORK_TRANSIENT"
+        : "NETWORK_FATAL";
 
       logEvent({
         level: retryable ? "warn" : "error",
@@ -183,7 +241,7 @@ export async function spotifyApiRequest<T>(params: {
         correlationId,
         endpointGroup: group,
         durationMs,
-        errorCode: retryable ? "NETWORK_TRANSIENT" : "NETWORK_FATAL",
+        errorCode: networkCode,
         errorMessage: message.slice(0, 256),
         data: { attempt },
       });
@@ -198,12 +256,9 @@ export async function spotifyApiRequest<T>(params: {
         continue;
       }
 
-      if (error instanceof SpotifyApiError) {
-        throw error;
-      }
       throw new SpotifyApiError({
         status: 0,
-        code: "NETWORK_ERROR",
+        code: networkCode,
         body: message,
         retryable,
         correlationId,

@@ -58,6 +58,15 @@ function isQueueItem(value: unknown): value is QueueItem {
       typeof item.trackId === "string" &&
       typeof item.name === "string" &&
       typeof item.artists === "string" &&
+      (item.primaryArtistId === undefined ||
+        typeof item.primaryArtistId === "string" ||
+        item.primaryArtistId === null) &&
+      (item.albumId === undefined ||
+        typeof item.albumId === "string" ||
+        item.albumId === null) &&
+      (item.albumName === undefined ||
+        typeof item.albumName === "string" ||
+        item.albumName === null) &&
       (typeof item.durationMs === "number" || item.durationMs === null) &&
       (item.explicit === undefined ||
         typeof item.explicit === "number" ||
@@ -189,6 +198,9 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
         trackId: track.trackId,
         name: track.name,
         artists: track.artists,
+        primaryArtistId: track.primaryArtistId ?? null,
+        albumId: track.albumId ?? null,
+        albumName: track.albumName ?? null,
         durationMs: track.durationMs,
         explicit:
           track.explicit === undefined || track.explicit === null

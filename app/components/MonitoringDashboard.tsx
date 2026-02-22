@@ -33,6 +33,11 @@ type SummaryPayload = {
   rateLimits: {
     count429: number;
     backoffState: string;
+    backoffRemainingMs?: number;
+    backoffUntilTs?: number | null;
+    lastRetryAfterMs?: number | null;
+    lastTriggeredAt?: number | null;
+    retryAfterObservationsSec?: number[];
   };
   traffic: {
     requestsPerMin: number;
@@ -74,6 +79,16 @@ type UserStatusPayload = {
     product?: string | null;
   };
   correlationId?: string;
+};
+
+type DbStatusPayload = {
+  counts?: Record<string, number>;
+};
+
+type LibraryCounts = {
+  playlists: number;
+  tracks: number;
+  artists: number;
 };
 
 type Tone = "ok" | "warn" | "error";
@@ -159,6 +174,11 @@ function fmtDateTime(value: number | null) {
   });
 }
 
+function fmtCount(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return value.toLocaleString("nl-NL");
+}
+
 function toneClass(tone: Tone) {
   return `ops-tone-${tone}`;
 }
@@ -229,6 +249,122 @@ function describeEndpoint(endpoint: string) {
     raw,
     title: `${label} (${raw})`,
   };
+}
+
+function normalizeEndpointKey(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeRecentErrorMessage(raw: string): string {
+  const text = String(raw ?? "").trim();
+  if (!text) return "Geen detail beschikbaar.";
+  try {
+    const parsed = JSON.parse(text) as
+      | { error?: string | { status?: number; message?: string } }
+      | null;
+    if (parsed && typeof parsed === "object") {
+      if (typeof parsed.error === "string" && parsed.error.trim()) {
+        return parsed.error.trim();
+      }
+      if (parsed.error && typeof parsed.error === "object") {
+        const status =
+          typeof parsed.error.status === "number" ? parsed.error.status : null;
+        const message =
+          typeof parsed.error.message === "string"
+            ? parsed.error.message.trim()
+            : "";
+        if (message) return status ? `${message} (${status})` : message;
+      }
+    }
+  } catch {
+    // keep raw text when it is not valid JSON
+  }
+  return text;
+}
+
+function describeErrorCode(code: string): { label: string; tone: Tone; help: string } {
+  const normalized = String(code ?? "").trim().toUpperCase();
+  switch (normalized) {
+    case "NO_ACTIVE_DEVICE":
+      return {
+        label: "Geen actief device",
+        tone: "warn",
+        help: "Start playback op een Spotify Connect apparaat.",
+      };
+    case "NO_CONNECT_DEVICE":
+      return {
+        label: "Geen devices zichtbaar",
+        tone: "warn",
+        help: "Controleer of Spotify op je device actief is.",
+      };
+    case "NETWORK_TIMEOUT":
+      return {
+        label: "Netwerk timeout",
+        tone: "warn",
+        help: "Spotify reageerde te laat; app probeert automatisch opnieuw.",
+      };
+    case "NETWORK_TRANSIENT":
+      return {
+        label: "Tijdelijke netwerkfout",
+        tone: "warn",
+        help: "Kortstondige storing; meestal herstelt dit vanzelf.",
+      };
+    case "RATE_LIMIT":
+      return {
+        label: "Rate limit",
+        tone: "warn",
+        help: "Te veel requests tegelijk; backoff is actief.",
+      };
+    case "UNAUTHENTICATED":
+      return {
+        label: "Niet ingelogd",
+        tone: "error",
+        help: "Spotify sessie is verlopen; opnieuw koppelen nodig.",
+      };
+    case "SPOTIFY_UPSTREAM":
+      return {
+        label: "Spotify storing",
+        tone: "error",
+        help: "Spotify API gaf een serverfout terug.",
+      };
+    case "NOT_FOUND":
+    case "PLAYER_NOT_FOUND":
+      return {
+        label: "Niet gevonden",
+        tone: "warn",
+        help: "De gevraagde playback-context bestaat nu niet.",
+      };
+    case "NETWORK_FATAL":
+      return {
+        label: "Netwerkfout",
+        tone: "error",
+        help: "Harde netwerkfout; actie handmatig opnieuw proberen.",
+      };
+    default:
+      return {
+        label: normalized || "Onbekend",
+        tone: "error",
+        help: "Onbekende fout; bekijk diagnose-export voor details.",
+      };
+  }
+}
+
+function describeRecentErrorMessage(args: {
+  code: string;
+  endpointRaw: string;
+  message: string;
+}): string {
+  const code = String(args.code ?? "").trim().toUpperCase();
+  if (code === "NO_ACTIVE_DEVICE") {
+    return "Geen actieve speler gevonden. Start muziek op een device en probeer opnieuw.";
+  }
+  if (code === "NO_CONNECT_DEVICE") {
+    return "Er zijn geen Spotify Connect apparaten beschikbaar.";
+  }
+  if (code === "NOT_FOUND" && args.endpointRaw === "me_player") {
+    return "Geen actieve speler gevonden. Start muziek op een device en probeer opnieuw.";
+  }
+  return normalizeRecentErrorMessage(args.message);
 }
 
 function HelpTip({ label, text }: { label: string; text: string }) {
@@ -306,7 +442,9 @@ function downloadJson(prefix: string, payload: unknown) {
 
 export default function MonitoringDashboard() {
   const [summary, setSummary] = useState<SummaryPayload | null>(null);
+  const [summaryReceivedAtMs, setSummaryReceivedAtMs] = useState(0);
   const [userStatus, setUserStatus] = useState<UserStatusPayload | null>(null);
+  const [libraryCounts, setLibraryCounts] = useState<LibraryCounts | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<null | string>(null);
@@ -314,6 +452,8 @@ export default function MonitoringDashboard() {
   const [refreshIntervalSec, setRefreshIntervalSec] = useState(15);
   const [actionHistory, setActionHistory] = useState<ActionHistoryItem[]>([]);
   const [tokenRefreshCooldownUntil, setTokenRefreshCooldownUntil] = useState(0);
+  const [selectedErrorEndpoint, setSelectedErrorEndpoint] = useState<string | null>(null);
+  const [clockNowMs, setClockNowMs] = useState(() => Date.now());
 
   const preferenceKey = useMemo(
     () => `gs_settings_page_preferences:v2:${summary?.authStatus.appUserId ?? "anon"}`,
@@ -327,6 +467,7 @@ export default function MonitoringDashboard() {
     }
     const data = (await res.json()) as SummaryPayload;
     setSummary(data);
+    setSummaryReceivedAtMs(Date.now());
   }, []);
 
   const refreshUserStatus = useCallback(async () => {
@@ -339,20 +480,55 @@ export default function MonitoringDashboard() {
     setUserStatus(data);
   }, []);
 
+  const refreshLibraryCounts = useCallback(async () => {
+    try {
+      const res = await clientFetch("/api/spotify/db-status");
+      if (!res.ok) return;
+      const data = (await res.json()) as DbStatusPayload;
+      const counts = data?.counts ?? {};
+      const next: LibraryCounts = {
+        playlists:
+          typeof counts.playlists === "number" && Number.isFinite(counts.playlists)
+            ? counts.playlists
+            : 0,
+        tracks:
+          typeof counts.tracks === "number" && Number.isFinite(counts.tracks)
+            ? counts.tracks
+            : 0,
+        artists:
+          typeof counts.artists === "number" && Number.isFinite(counts.artists)
+            ? counts.artists
+            : 0,
+      };
+      setLibraryCounts(next);
+    } catch {
+      // keep existing counters when this call fails
+    }
+  }, []);
+
   const refreshAll = useCallback(async () => {
     try {
-      await Promise.all([refreshSummary(), refreshUserStatus()]);
+      await Promise.all([refreshSummary(), refreshUserStatus(), refreshLibraryCounts()]);
       setRefreshError(null);
     } catch (err) {
       setRefreshError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [refreshSummary, refreshUserStatus]);
+  }, [refreshLibraryCounts, refreshSummary, refreshUserStatus]);
 
   useEffect(() => {
     void refreshAll();
   }, [refreshAll]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setClockNowMs(Date.now());
+    }, 1000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -596,12 +772,27 @@ export default function MonitoringDashboard() {
       ? "warn"
       : "error";
 
-  const rateTone: Tone =
-    (summary?.rateLimits.count429 ?? 0) === 0
-      ? "ok"
-      : (summary?.rateLimits.count429 ?? 0) < 5
+  const elapsedSinceSummaryMs = Math.max(0, clockNowMs - summaryReceivedAtMs);
+  const backoffFromSnapshotMs = Math.max(
+    0,
+    (summary?.rateLimits.backoffRemainingMs ?? 0) - elapsedSinceSummaryMs
+  );
+  const backoffFromUntilMs = summary?.rateLimits.backoffUntilTs
+    ? Math.max(0, summary.rateLimits.backoffUntilTs - clockNowMs)
+    : 0;
+  const rateBackoffRemainingMs = Math.max(backoffFromSnapshotMs, backoffFromUntilMs);
+  const rateBackoffRemainingSec = Math.ceil(rateBackoffRemainingMs / 1000);
+  const hasActiveRateBackoff = rateBackoffRemainingSec > 0;
+
+  const rateTone: Tone = hasActiveRateBackoff
+    ? (summary?.rateLimits.count429 ?? 0) < 5
       ? "warn"
-      : "error";
+      : "error"
+    : (summary?.rateLimits.count429 ?? 0) === 0
+    ? "ok"
+    : (summary?.rateLimits.count429 ?? 0) < 5
+    ? "warn"
+    : "error";
 
   const topErrors = useMemo(() => {
     const rows = summary?.apiHealth.errorBreakdown ?? [];
@@ -613,21 +804,50 @@ export default function MonitoringDashboard() {
     [topErrors]
   );
 
+  useEffect(() => {
+    if (!selectedErrorEndpoint) return;
+    const selectedKey = normalizeEndpointKey(selectedErrorEndpoint);
+    const stillVisible = topErrors.some(
+      (row) => normalizeEndpointKey(row.label) === selectedKey
+    );
+    if (!stillVisible) {
+      setSelectedErrorEndpoint(null);
+    }
+  }, [selectedErrorEndpoint, topErrors]);
+
   const visibleRecentErrors = useMemo(() => {
     const rows = summary?.recentErrors ?? [];
-    return rows.slice(0, 8);
-  }, [summary?.recentErrors]);
+    if (!selectedErrorEndpoint) {
+      return rows.slice(0, 8);
+    }
+    const selectedKey = normalizeEndpointKey(selectedErrorEndpoint);
+    return rows
+      .filter((row) => normalizeEndpointKey(row.endpoint) === selectedKey)
+      .slice(0, 8);
+  }, [selectedErrorEndpoint, summary?.recentErrors]);
+
+  const selectedErrorEndpointMeta = selectedErrorEndpoint
+    ? describeEndpoint(selectedErrorEndpoint)
+    : null;
 
   const environmentLabel =
     summary?.meta?.environment && summary.meta.environment.trim()
       ? summary.meta.environment
       : "production";
 
-  const now = Date.now();
+  const now = clockNowMs;
   const tokenRefreshCooldownLeftSec = Math.max(
     0,
     Math.ceil((tokenRefreshCooldownUntil - now) / 1000)
   );
+  const rateBackoffSubtitle = hasActiveRateBackoff
+    ? `backoff actief · ${rateBackoffRemainingSec}s`
+    : summary?.rateLimits.lastRetryAfterMs
+    ? `laatste backoff ${Math.max(
+        1,
+        Math.round(summary.rateLimits.lastRetryAfterMs / 1000)
+      )}s`
+    : summary?.rateLimits.backoffState || "normal";
 
   const insights = useMemo<Insight[]>(() => {
     if (!summary) return [];
@@ -668,16 +888,20 @@ export default function MonitoringDashboard() {
     if (summary.rateLimits.count429 >= 5) {
       list.push({
         id: "rate-hard",
-        tone: "error",
+        tone: hasActiveRateBackoff ? "error" : "warn",
         title: "Spotify rate limit blokkeert requests",
-        text: `Er zijn ${summary.rateLimits.count429} blokkades gemeten; wacht kort en herhaal acties niet te snel.`,
+        text: hasActiveRateBackoff
+          ? `Er zijn ${summary.rateLimits.count429} blokkades gemeten; backoff loopt nog ${rateBackoffRemainingSec}s.`
+          : `Er zijn ${summary.rateLimits.count429} blokkades gemeten; verlaag korte piekacties.`,
       });
     } else if (summary.rateLimits.count429 > 0) {
       list.push({
         id: "rate-soft",
         tone: "warn",
         title: "Spotify rate limit actief",
-        text: `Er zijn ${summary.rateLimits.count429} tijdelijke blokkades gemeten; app vangt dit op met backoff.`,
+        text: hasActiveRateBackoff
+          ? `Er zijn ${summary.rateLimits.count429} tijdelijke blokkades; backoff telt af: ${rateBackoffRemainingSec}s.`
+          : `Er zijn ${summary.rateLimits.count429} tijdelijke blokkades gemeten; app vangt dit op met backoff.`,
       });
     }
 
@@ -711,7 +935,7 @@ export default function MonitoringDashboard() {
     }
 
     return list.slice(0, 5);
-  }, [authStatusTone, summary]);
+  }, [authStatusTone, hasActiveRateBackoff, rateBackoffRemainingSec, summary]);
 
   return (
     <main className="page settings-page ops-page">
@@ -719,9 +943,6 @@ export default function MonitoringDashboard() {
         <header className="ops-header">
           <div className="ops-header-copy">
             <h1 className="ops-title">Settings & Monitoring</h1>
-            <p className="text-subtle ops-subtitle">
-              Een gebruiksvriendelijke cockpit voor status, foutmeldingen en herstelacties.
-            </p>
           </div>
 
           <div className="ops-header-controls">
@@ -753,6 +974,50 @@ export default function MonitoringDashboard() {
 
         {summaryAvailable ? (
           <>
+            <section className="ops-library-grid" aria-label="Bibliotheekoverzicht">
+              <article className="ops-kpi ops-tone-ok ops-library-kpi">
+                <div className="ops-library-kpi-head">
+                  <span className="ops-library-kpi-icon" aria-hidden="true">
+                    📂
+                  </span>
+                  <span className="ops-library-kpi-label">Playlists</span>
+                </div>
+                <div className="ops-library-kpi-value">{fmtCount(libraryCounts?.playlists)}</div>
+                <div className="ops-library-kpi-subtitle">In bibliotheek</div>
+                <div className="ops-kpi-meter" aria-hidden="true">
+                  <span style={{ width: "100%" }} />
+                </div>
+              </article>
+
+              <article className="ops-kpi ops-tone-ok ops-library-kpi">
+                <div className="ops-library-kpi-head">
+                  <span className="ops-library-kpi-icon" aria-hidden="true">
+                    🎵
+                  </span>
+                  <span className="ops-library-kpi-label">Tracks</span>
+                </div>
+                <div className="ops-library-kpi-value">{fmtCount(libraryCounts?.tracks)}</div>
+                <div className="ops-library-kpi-subtitle">In bibliotheek</div>
+                <div className="ops-kpi-meter" aria-hidden="true">
+                  <span style={{ width: "100%" }} />
+                </div>
+              </article>
+
+              <article className="ops-kpi ops-tone-ok ops-library-kpi">
+                <div className="ops-library-kpi-head">
+                  <span className="ops-library-kpi-icon" aria-hidden="true">
+                    👤
+                  </span>
+                  <span className="ops-library-kpi-label">Artiesten</span>
+                </div>
+                <div className="ops-library-kpi-value">{fmtCount(libraryCounts?.artists)}</div>
+                <div className="ops-library-kpi-subtitle">In bibliotheek</div>
+                <div className="ops-kpi-meter" aria-hidden="true">
+                  <span style={{ width: "100%" }} />
+                </div>
+              </article>
+            </section>
+
             <section className="ops-kpi-grid">
               <KpiCard
                 title="Koppeling"
@@ -784,10 +1049,10 @@ export default function MonitoringDashboard() {
               <KpiCard
                 title="Rate limit"
                 value={`${summary?.rateLimits.count429 ?? 0}`}
-                subtitle={summary?.rateLimits.backoffState || "geen backoff"}
+                subtitle={rateBackoffSubtitle}
                 tone={rateTone}
                 meter={1 - clamp01((summary?.rateLimits.count429 ?? 0) / 20)}
-                hint="Aantal 429 responses van Spotify. Bij hogere waarden worden acties vertraagd."
+                hint="Aantal 429 responses van Spotify. Bij actief backoff telt deze kaart live af naar 0s."
               />
 
               <KpiCard
@@ -920,6 +1185,35 @@ export default function MonitoringDashboard() {
                 </div>
               </article>
 
+              <article className="panel ops-panel span-4 ops-history-panel">
+                <div className="ops-section-head">
+                  <h3 className="ops-section-title">Actiehistorie</h3>
+                  <HelpTip
+                    label="Actiehistorie"
+                    text="Laatste acties en resultaat, zodat je direct ziet wat wel of niet gelukt is."
+                  />
+                </div>
+
+                {actionHistory.length ? (
+                  <div className="ops-history-list">
+                    {actionHistory.map((entry) => (
+                      <div key={entry.id} className="ops-history-row">
+                        <div className="ops-history-top">
+                          <span className={entry.outcome === "success" ? "pill pill-success" : "pill pill-error"}>
+                            {entry.outcome === "success" ? "Gelukt" : "Mislukt"}
+                          </span>
+                          <span className="ops-recent-time">{fmtCompactTime(entry.at)}</span>
+                        </div>
+                        <strong>{entry.name}</strong>
+                        <div className="text-subtle">{entry.message}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-subtle">Nog geen acties uitgevoerd in deze sessie.</div>
+                )}
+              </article>
+
               <article className="panel ops-panel span-4">
                 <div className="ops-section-head">
                   <h3 className="ops-section-title">Koppeling details</h3>
@@ -966,15 +1260,28 @@ export default function MonitoringDashboard() {
                   <h3 className="ops-section-title">Foutmix</h3>
                   <HelpTip
                     label="Foutmix"
-                    text="Toont waar fouten ontstaan. Gebruik dit om gerichte herstelacties te kiezen."
+                    text="Klik op een categorie om alleen de meest recente fouten van die categorie te zien."
                   />
                 </div>
                 {topErrors.length ? (
                   <div className="ops-mix-list">
                     {topErrors.map((row) => {
                       const endpointMeta = describeEndpoint(row.label);
+                      const endpointKey = normalizeEndpointKey(row.label);
+                      const isActive =
+                        normalizeEndpointKey(selectedErrorEndpoint) === endpointKey;
                       return (
-                        <div key={row.label} className="ops-mix-row" title={endpointMeta.title}>
+                        <button
+                          key={row.label}
+                          type="button"
+                          className={`ops-mix-row ops-mix-row-btn${isActive ? " is-active" : ""}`}
+                          title={endpointMeta.title}
+                          onClick={() => {
+                            setSelectedErrorEndpoint((prev) =>
+                              normalizeEndpointKey(prev) === endpointKey ? null : row.label
+                            );
+                          }}
+                        >
                           <div className="ops-mix-label">
                             <span className="ops-mix-main">{endpointMeta.label}</span>
                             <span className="ops-mix-raw">{endpointMeta.raw}</span>
@@ -983,7 +1290,7 @@ export default function MonitoringDashboard() {
                             <span style={{ width: `${Math.max(4, (row.value / maxErrorCount) * 100)}%` }} />
                           </div>
                           <div className="ops-mix-value">{row.value}</div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -994,30 +1301,64 @@ export default function MonitoringDashboard() {
 
               <article className="panel ops-panel span-6">
                 <div className="ops-section-head">
-                  <h3 className="ops-section-title">Recente fouten</h3>
+                  <h3 className="ops-section-title">
+                    {selectedErrorEndpointMeta
+                      ? `Recente fouten · ${selectedErrorEndpointMeta.label}`
+                      : "Recente fouten"}
+                  </h3>
                   <HelpTip
                     label="Recente fouten"
-                    text="Laatste gebeurtenissen met basisuitleg."
+                    text="Toont de laatste fouten. Na klik op Foutmix zie je alleen die categorie."
                   />
                 </div>
+                {selectedErrorEndpointMeta ? (
+                  <div className="ops-recent-filter">
+                    <span className="text-subtle">
+                      Filter actief op <strong>{selectedErrorEndpointMeta.label}</strong>
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => setSelectedErrorEndpoint(null)}
+                    >
+                      Toon alles
+                    </button>
+                  </div>
+                ) : null}
                 {visibleRecentErrors.length ? (
                   <div className="ops-recent-list" role="status" aria-live="polite">
                     {visibleRecentErrors.map((item) => {
                       const endpoint = describeEndpoint(item.endpoint ?? "onbekend");
+                      const codeMeta = describeErrorCode(item.code);
+                      const message = describeRecentErrorMessage({
+                        code: item.code,
+                        endpointRaw: endpoint.raw.toLowerCase(),
+                        message: item.message,
+                      });
                       return (
                         <div key={item.id} className="ops-recent-row">
                           <div className="ops-recent-top">
                             <span className="ops-recent-time">{fmtCompactTime(item.at)}</span>
-                            <span className="ops-recent-code">{item.code}</span>
+                            <span
+                              className={`ops-recent-code ops-recent-code-${codeMeta.tone}`}
+                              title={item.code}
+                            >
+                              {codeMeta.label}
+                            </span>
                           </div>
                           <strong>{endpoint.label}</strong>
-                          <div className="text-subtle">{item.message}</div>
+                          <div className="text-subtle">{message}</div>
+                          <div className="ops-recent-extra">{codeMeta.help}</div>
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="text-subtle">Geen recente fouten.</div>
+                  <div className="text-subtle">
+                    {selectedErrorEndpointMeta
+                      ? `Geen recente fouten voor ${selectedErrorEndpointMeta.label}.`
+                      : "Geen recente fouten."}
+                  </div>
                 )}
               </article>
 
@@ -1072,37 +1413,8 @@ export default function MonitoringDashboard() {
                   />
                 </div>
                 <div className="ops-statusbox-basic">
-                  <StatusBox embedded mode="basic-core" />
+                  <StatusBox embedded mode="basic-core" showOverviewCounts={false} />
                 </div>
-              </article>
-
-              <article className="panel ops-panel span-12">
-                <div className="ops-section-head">
-                  <h3 className="ops-section-title">Actiehistorie</h3>
-                  <HelpTip
-                    label="Actiehistorie"
-                    text="Laatste uitgevoerde acties met resultaat. Handig voor snelle terugkoppeling na een fix."
-                  />
-                </div>
-
-                {actionHistory.length ? (
-                  <div className="ops-history-list">
-                    {actionHistory.map((entry) => (
-                      <div key={entry.id} className="ops-history-row">
-                        <div className="ops-history-top">
-                          <span className={entry.outcome === "success" ? "pill pill-success" : "pill pill-error"}>
-                            {entry.outcome === "success" ? "Gelukt" : "Mislukt"}
-                          </span>
-                          <span className="ops-recent-time">{fmtCompactTime(entry.at)}</span>
-                        </div>
-                        <strong>{entry.name}</strong>
-                        <div className="text-subtle">{entry.message}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-subtle">Nog geen acties uitgevoerd in deze sessie.</div>
-                )}
               </article>
             </section>
           </>

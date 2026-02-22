@@ -131,9 +131,14 @@ function parseRetryAfterMs(res: Response) {
 type StatusBoxProps = {
   embedded?: boolean;
   mode?: "full" | "basic-core";
+  showOverviewCounts?: boolean;
 };
 
-export default function StatusBox({ embedded = false, mode = "full" }: StatusBoxProps) {
+export default function StatusBox({
+  embedded = false,
+  mode = "full",
+  showOverviewCounts = true,
+}: StatusBoxProps) {
   const [appStatus, setAppStatus] = useState<AppStatus>(null);
   const [userStatus, setUserStatus] = useState<UserStatus>(null);
   const [dbStatus, setDbStatus] = useState<DbStatus>(null);
@@ -152,16 +157,24 @@ export default function StatusBox({ embedded = false, mode = "full" }: StatusBox
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [promptSaved, setPromptSaved] = useState<null | "saved" | "error">(null);
   const authRateLimitedUntilRef = useRef(0);
+  const showStatusPanel = mode === "full" || showOverviewCounts;
+  const shouldLoadDbStatus = showStatusPanel;
 
   const refresh = useCallback(async () => {
     try {
       const [dbRes, syncRes, workerRes] = await Promise.all([
-        fetch("/api/spotify/db-status", { cache: "no-store" }),
+        shouldLoadDbStatus
+          ? fetch("/api/spotify/db-status", { cache: "no-store" })
+          : Promise.resolve(null),
         fetch("/api/spotify/sync-status", { cache: "no-store" }),
         fetch("/api/spotify/worker-health", { cache: "no-store" }),
       ]);
 
-      if (dbRes.ok) setDbStatus(await dbRes.json());
+      if (dbRes?.ok) {
+        setDbStatus(await dbRes.json());
+      } else if (!shouldLoadDbStatus) {
+        setDbStatus(null);
+      }
       if (syncRes.ok) {
         const data = await syncRes.json();
         setSyncStatus(data);
@@ -226,7 +239,7 @@ export default function StatusBox({ embedded = false, mode = "full" }: StatusBox
     } catch {
       // ignore
     }
-  }, [loadingPlaylists, playlistMap]);
+  }, [loadingPlaylists, playlistMap, shouldLoadDbStatus]);
 
   const refreshAuthStatus = useCallback(async () => {
     if (Date.now() < authRateLimitedUntilRef.current) return;
@@ -714,6 +727,7 @@ export default function StatusBox({ embedded = false, mode = "full" }: StatusBox
           </div>
         ) : null}
 
+        {showStatusPanel ? (
         <div className={`panel account-panel ${statusPanelSpan}`}>
           <div className="account-panel-title">
             {mode === "basic-core" ? "Bibliotheekoverzicht" : "Status"}
@@ -746,19 +760,22 @@ export default function StatusBox({ embedded = false, mode = "full" }: StatusBox
             {runningInfo.label}
           </div>
 
-          <div className="status-grid compact">
-            {importantCounts.length
-              ? importantCounts.map((row) => (
-                  <div key={row.key} className="panel">
-                    <span className="count-icon" aria-hidden="true">
-                      {row.icon}
-                    </span>
-                    <strong>{row.label}</strong>: {row.value}
-                  </div>
-                ))
-              : "Geen statusdata beschikbaar."}
-          </div>
+          {showOverviewCounts ? (
+            <div className="status-grid compact">
+              {importantCounts.length
+                ? importantCounts.map((row) => (
+                    <div key={row.key} className="panel">
+                      <span className="count-icon" aria-hidden="true">
+                        {row.icon}
+                      </span>
+                      <strong>{row.label}</strong>: {row.value}
+                    </div>
+                  ))
+                : "Geen statusdata beschikbaar."}
+            </div>
+          ) : null}
         </div>
+        ) : null}
 
         {showActionPanel ? (
           <div className="panel account-panel span-3">

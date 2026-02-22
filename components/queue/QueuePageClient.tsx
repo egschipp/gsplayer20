@@ -1,9 +1,11 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { type DragEvent, useEffect, useMemo, useState } from "react";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
+import { type QueueItem } from "@/lib/queue/types";
 import styles from "./QueuePageClient.module.css";
 
 function formatDuration(ms: number | null) {
@@ -30,7 +32,114 @@ function readSelectedPlaylistId() {
   }
 }
 
+function normalizeTrackName(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("nl");
+}
+
+function parsePrimaryArtistName(value: string | null | undefined) {
+  return (
+    String(value ?? "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)[0] ?? ""
+  );
+}
+
+function createAlbumSelectionId(item: QueueItem) {
+  const albumId = String(item.albumId ?? "").trim();
+  if (albumId) return `id:${albumId}`;
+  const albumName = String(item.albumName ?? "").trim();
+  const artists = String(item.artists ?? "").trim();
+  if (!albumName || !artists) return null;
+  return `meta:${normalizeTrackName(albumName)}::${normalizeTrackName(artists)}`;
+}
+
+function writeMyMusicSelection(payload: {
+  mode: "artists" | "albums";
+  artistId?: string | null;
+  albumId?: string | null;
+}) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      "gs_playlist_selection",
+      JSON.stringify({
+        mode: payload.mode,
+        playlistId: "",
+        artistId: payload.artistId ?? "",
+        trackId: "",
+        albumId: payload.albumId ?? "",
+      })
+    );
+  } catch {
+    // ignore storage write failures
+  }
+}
+
+async function resolveArtistSelection(item: QueueItem) {
+  const primaryArtistName = parsePrimaryArtistName(item.artists);
+  const storedArtistId = String(item.primaryArtistId ?? "").trim();
+  if (storedArtistId) {
+    return {
+      artistId: storedArtistId,
+      artistName: primaryArtistName,
+    };
+  }
+  if (!item.trackId) {
+    return {
+      artistId: null,
+      artistName: primaryArtistName,
+    };
+  }
+  try {
+    const res = await fetch(`/api/spotify/tracks/${encodeURIComponent(item.trackId)}/artists`, {
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return {
+        artistId: null,
+        artistName: primaryArtistName,
+      };
+    }
+    const data = await res.json().catch(() => null);
+    const items = (Array.isArray(data?.items) ? data.items : []) as {
+      artistId?: string;
+      id?: string;
+      name?: string;
+    }[];
+    const artists = items
+      .map((entry) => ({
+        id: String(entry?.artistId ?? entry?.id ?? "").trim(),
+        name: String(entry?.name ?? "").trim(),
+      }))
+      .filter((artist) => artist.id && artist.name);
+    if (!artists.length) {
+      return {
+        artistId: null,
+        artistName: primaryArtistName,
+      };
+    }
+    const matched =
+      artists.find(
+        (artist) => normalizeTrackName(artist.name) === normalizeTrackName(primaryArtistName)
+      ) ?? artists[0];
+    return {
+      artistId: matched?.id ?? null,
+      artistName: matched?.name ?? primaryArtistName,
+    };
+  } catch {
+    return {
+      artistId: null,
+      artistName: primaryArtistName,
+    };
+  }
+}
+
 export default function QueuePageClient() {
+  const router = useRouter();
   const queue = useQueueStore();
   const playback = useQueuePlayback();
   const [draggingQueueId, setDraggingQueueId] = useState<string | null>(null);
@@ -114,6 +223,26 @@ export default function QueuePageClient() {
       if (!approved) return;
     }
     queue.clearQueue();
+  }
+
+  async function handleSelectArtist(item: QueueItem) {
+    const selection = await resolveArtistSelection(item);
+    if (!selection.artistId) return;
+    writeMyMusicSelection({
+      mode: "artists",
+      artistId: selection.artistId,
+    });
+    router.push("/");
+  }
+
+  function handleSelectAlbum(item: QueueItem) {
+    const albumSelectionId = createAlbumSelectionId(item);
+    if (!albumSelectionId) return;
+    writeMyMusicSelection({
+      mode: "albums",
+      albumId: albumSelectionId,
+    });
+    router.push("/");
   }
 
   return (
@@ -248,29 +377,43 @@ export default function QueuePageClient() {
                           </span>
                         ) : null}
                       </div>
-                      <div
-                        className="text-body track-artist-line"
+                      <button
+                        type="button"
+                        className="track-meta-link text-body track-artist-line"
                         title={item.artists || "Onbekende artiest"}
+                        onClick={() => void handleSelectArtist(item)}
                       >
                         {item.artists || "Onbekende artiest"}
-                      </div>
-                      <div className={`text-subtle ${styles.trackMetaUri}`} title={item.uri}>
-                        {item.uri || `spotify:track:${item.trackId}`}
-                      </div>
+                      </button>
+                      <button
+                        type="button"
+                        className={`track-meta-link text-subtle track-album-line ${styles.trackMetaUri}`}
+                        title={item.albumName || "Onbekend album"}
+                        onClick={() => handleSelectAlbum(item)}
+                        disabled={!createAlbumSelectionId(item)}
+                      >
+                        {item.albumName || "Onbekend album"}
+                      </button>
                     </div>
 
-	                    <div className={`track-col-playlists ${styles.statusCell}`}>
-	                      <span
-	                        className={`${styles.statusPill} ${
-	                          isCurrent
-	                            ? styles.statusNow
-	                            : isNext
-	                            ? styles.statusNext
-	                            : styles.statusQueued
-	                        } ${isStarting ? styles.statusStarting : ""}`}
-	                      >
-	                        {isCurrent ? (isStarting ? "Starten..." : "Nu spelend") : isNext ? "Volgende" : "Queue"}
-	                      </span>
+                    <div className={`track-col-playlists ${styles.statusCell}`}>
+                      <span
+                        className={`${styles.statusPill} ${
+                          isCurrent
+                            ? styles.statusNow
+                            : isNext
+                            ? styles.statusNext
+                            : styles.statusQueued
+                        } ${isStarting ? styles.statusStarting : ""}`}
+                      >
+                        {isCurrent
+                          ? isStarting
+                            ? "Starten..."
+                            : "Nu spelend"
+                          : isNext
+                          ? "Volgende"
+                          : "Queue"}
+                      </span>
                       {typeof selectedPlaylistMembership === "boolean" ? (
                         <span
                           className={`${styles.statusPlaylist} ${

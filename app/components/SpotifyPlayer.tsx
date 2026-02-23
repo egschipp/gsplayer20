@@ -285,6 +285,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     album: string;
     coverUrl: string | null;
   } | null>(null);
+  const [playPauseOptimisticPaused, setPlayPauseOptimisticPaused] = useState<
+    boolean | null
+  >(null);
   const playerRef = useRef<any>(null);
   const deviceIdRef = useRef<string | null>(null);
   const accessTokenRef = useRef<string | undefined>(accessToken);
@@ -312,6 +315,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const likedCacheRef = useRef<Map<string, boolean>>(new Map());
   const likedRequestIdRef = useRef(0);
   const lastSdkStateRef = useRef<any>(null);
+  const playPauseOptimisticTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastIsPlayingRef = useRef(false);
   const playerStateRef = useRef<typeof playerState>(null);
   const shuffleOnRef = useRef(shuffleOn);
@@ -402,6 +406,25 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       return performance.now();
     }
     return Date.now();
+  }, []);
+
+  const clearPlayPauseOptimisticState = useCallback(() => {
+    if (playPauseOptimisticTimerRef.current) {
+      clearTimeout(playPauseOptimisticTimerRef.current);
+      playPauseOptimisticTimerRef.current = null;
+    }
+    setPlayPauseOptimisticPaused(null);
+  }, []);
+
+  const setPlayPauseOptimisticState = useCallback((paused: boolean) => {
+    if (playPauseOptimisticTimerRef.current) {
+      clearTimeout(playPauseOptimisticTimerRef.current);
+    }
+    setPlayPauseOptimisticPaused(paused);
+    playPauseOptimisticTimerRef.current = setTimeout(() => {
+      playPauseOptimisticTimerRef.current = null;
+      setPlayPauseOptimisticPaused(null);
+    }, 1800);
   }, []);
 
   const postCrossTabEvent = useCallback((payload: Record<string, unknown>) => {
@@ -3114,7 +3137,30 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     };
   }
 
-  const isPlaybackPaused = playerState?.paused ?? true;
+  const playbackPausedUi =
+    playPauseOptimisticPaused ?? (playerState?.paused ?? true);
+  const isPlaybackPaused = playbackPausedUi;
+
+  useEffect(() => {
+    if (playPauseOptimisticPaused === null) return;
+    if (typeof playerState?.paused !== "boolean") return;
+    if (playerState.paused === playPauseOptimisticPaused) {
+      clearPlayPauseOptimisticState();
+    }
+  }, [
+    clearPlayPauseOptimisticState,
+    playPauseOptimisticPaused,
+    playerState?.paused,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (playPauseOptimisticTimerRef.current) {
+        clearTimeout(playPauseOptimisticTimerRef.current);
+        playPauseOptimisticTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -3454,38 +3500,57 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         return;
       }
     }
+    const currentPausedSnapshot =
+      playPauseOptimisticPaused ?? (playerStateRef.current?.paused ?? true);
+    const nextPaused = !currentPausedSnapshot;
+    const endpoint = nextPaused ? "pause" : "play";
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
+    if (token && currentDevice && Date.now() < rateLimitRef.current.until) return;
+    setPlayPauseOptimisticState(nextPaused);
     if (!token || !currentDevice) {
-      await playerRef.current?.togglePlay?.();
+      try {
+        await playerRef.current?.togglePlay?.();
+      } catch {
+        setPlayPauseOptimisticState(currentPausedSnapshot);
+      }
       return;
     }
-    if (Date.now() < rateLimitRef.current.until) return;
     const operationEpoch = beginOperationEpoch();
     await enqueuePlaybackCommand(async () => {
       if (currentDevice === sdkDeviceIdRef.current) {
-        await playerRef.current?.activateElement?.();
-        await playerRef.current?.togglePlay?.();
+        try {
+          await playerRef.current?.activateElement?.();
+          await playerRef.current?.togglePlay?.();
+        } catch {
+          setPlayPauseOptimisticState(currentPausedSnapshot);
+          setError("Lokale webplayer kon play/pause niet uitvoeren.");
+          return;
+        }
         schedulePlaybackVerify(220, "api_verify", operationEpoch);
         return;
       }
       const ready = await ensureActiveDevice(
         currentDevice,
         token,
-        !playerState?.paused
+        endpoint === "play"
       );
       if (!ready) {
         setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
+        setPlayPauseOptimisticState(currentPausedSnapshot);
         return;
       }
-      const endpoint = playerState?.paused ? "play" : "pause";
-      await spotifyApiFetch(
+      const res = await spotifyApiFetch(
         withDeviceId(
           `https://api.spotify.com/v1/me/player/${endpoint}`,
           currentDevice
         ),
         { method: "PUT" }
       );
+      if (!res || (!res.ok && res.status !== 204)) {
+        setPlayPauseOptimisticState(currentPausedSnapshot);
+        return;
+      }
       schedulePlaybackVerify(220, "api_verify", operationEpoch);
     });
   }
@@ -3919,7 +3984,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const disallowPrevious = Boolean(playbackDisallows.skipping_prev);
   const disallowNext = Boolean(playbackDisallows.skipping_next);
   const disallowShuffle = Boolean(playbackDisallows.toggling_shuffle);
-  const disallowPlayPause = playerState?.paused
+  const disallowPlayPause = playbackPausedUi
     ? Boolean(playbackDisallows.resuming)
     : Boolean(playbackDisallows.pausing);
 
@@ -4054,12 +4119,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           <button
             type="button"
             className="player-control player-control-play player-control-grad"
-            aria-label={playerState?.paused ? "Play" : "Pause"}
-            title={playerState?.paused ? "Play" : "Pause"}
-            disabled={commandBusy || disallowPlayPause}
+            aria-label={playbackPausedUi ? "Play" : "Pause"}
+            aria-busy={playPauseOptimisticPaused !== null || commandBusy}
+            title={playbackPausedUi ? "Play" : "Pause"}
+            disabled={disallowPlayPause}
             onClick={handleTogglePlay}
           >
-            {playerState?.paused ? (
+            {playbackPausedUi ? (
               <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
                 <path d="M4.5 3.5v9l8-4.5-8-4.5z" />
               </svg>

@@ -3,10 +3,10 @@ import { getDb } from "@/lib/db/client";
 import { oauthTokens } from "@/lib/db/schema";
 import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
 import {
-  counterEntries,
-  counterTotal,
-  histogramQuantiles,
-  topCounterByLabel,
+  counterEntriesWindow,
+  counterTotalWindow,
+  histogramQuantilesWindow,
+  topCounterByLabelWindow,
 } from "@/lib/observability/metrics";
 import { getRecentErrors } from "@/lib/observability/logger";
 import { getSpotifyRateLimitSnapshot } from "@/lib/observability/rateLimit";
@@ -14,12 +14,21 @@ import { getAppAccessToken, getAppTokenStatus } from "@/lib/spotify/tokens";
 
 export const runtime = "nodejs";
 
+const METRICS_WINDOW_MS = Number(process.env.MONITORING_METRICS_WINDOW_MS || "600000");
+
+function normalizeMetricsWindowMs() {
+  if (!Number.isFinite(METRICS_WINDOW_MS)) return 600000;
+  return Math.max(60000, Math.min(3600000, Math.floor(METRICS_WINDOW_MS)));
+}
+
 export async function GET() {
   const { session, response } = await requireAppUser();
   if (response) return response;
 
   const db = getDb();
   const now = Date.now();
+  const metricsWindowMs = normalizeMetricsWindowMs();
+  const metricsWindowSec = Math.floor(metricsWindowMs / 1000);
   let appTokenFetchError: string | null = null;
   try {
     await getAppAccessToken();
@@ -38,33 +47,92 @@ export async function GET() {
     .where(eq(oauthTokens.userId, session.appUserId as string))
     .get();
 
-  const refreshSuccess = counterTotal("spotify_token_refresh_total", {
-    outcome: "success",
-  });
-  const refreshInvalidGrant = counterTotal("spotify_token_refresh_total", {
-    outcome: "invalid_grant",
-  });
-  const refreshFailed = counterTotal("spotify_token_refresh_total", {
-    outcome: "refresh_failed",
-  });
-  const refreshLockTimeout = counterTotal("spotify_token_refresh_total", {
-    outcome: "lock_timeout",
-  });
+  const refreshSuccess = counterTotalWindow(
+    "spotify_token_refresh_total",
+    {
+      outcome: "success",
+    },
+    metricsWindowMs,
+    now
+  );
+  const refreshInvalidGrant = counterTotalWindow(
+    "spotify_token_refresh_total",
+    {
+      outcome: "invalid_grant",
+    },
+    metricsWindowMs,
+    now
+  );
+  const refreshFailed = counterTotalWindow(
+    "spotify_token_refresh_total",
+    {
+      outcome: "refresh_failed",
+    },
+    metricsWindowMs,
+    now
+  );
+  const refreshLockTimeout = counterTotalWindow(
+    "spotify_token_refresh_total",
+    {
+      outcome: "lock_timeout",
+    },
+    metricsWindowMs,
+    now
+  );
   const refreshAttempts =
     refreshSuccess + refreshInvalidGrant + refreshFailed + refreshLockTimeout;
 
-  const apiSuccess = counterTotal("spotify_api_requests_total", {
-    status_class: "2xx",
-  });
-  const api4xx = counterTotal("spotify_api_requests_total", {
-    status_class: "4xx",
-  });
-  const api5xx = counterTotal("spotify_api_requests_total", {
-    status_class: "5xx",
-  });
+  const requestCounters = counterEntriesWindow(
+    "spotify_api_requests_total",
+    {},
+    metricsWindowMs,
+    now
+  );
+  let apiSuccess = 0;
+  let api4xx = 0;
+  let api5xx = 0;
+  const errorBreakdownMap = new Map<string, number>();
+  let count429 = 0;
+
+  for (const row of requestCounters) {
+    const statusClass = String(row.labels.status_class || "").toLowerCase();
+    const endpoint = String(row.labels.endpoint || "unknown").trim() || "unknown";
+    const statusCode = String(row.labels.status_code || "").trim();
+    const isExpectedPlayer404 =
+      statusCode === "404" &&
+      (endpoint === "me_player" || endpoint === "me_player_devices");
+
+    if (statusCode === "429") {
+      count429 += row.value;
+    }
+
+    if (statusClass === "2xx" || isExpectedPlayer404) {
+      apiSuccess += row.value;
+      continue;
+    }
+    if (statusClass === "4xx") {
+      api4xx += row.value;
+      errorBreakdownMap.set(endpoint, (errorBreakdownMap.get(endpoint) || 0) + row.value);
+      continue;
+    }
+    if (statusClass === "5xx") {
+      api5xx += row.value;
+      errorBreakdownMap.set(endpoint, (errorBreakdownMap.get(endpoint) || 0) + row.value);
+    }
+  }
   const apiTotal = apiSuccess + api4xx + api5xx;
-  const apiLatency = histogramQuantiles("spotify_api_latency_ms");
-  const refreshLockLatency = histogramQuantiles("spotify_refresh_lock_wait_ms");
+  const apiLatency = histogramQuantilesWindow(
+    "spotify_api_latency_ms",
+    {},
+    metricsWindowMs,
+    now
+  );
+  const refreshLockLatency = histogramQuantilesWindow(
+    "spotify_refresh_lock_wait_ms",
+    {},
+    metricsWindowMs,
+    now
+  );
   const rateLimitSnapshot = getSpotifyRateLimitSnapshot(now);
 
   const expiresInSec =
@@ -123,19 +191,6 @@ export async function GET() {
     });
   }
 
-  const requestCounters = counterEntries("spotify_api_requests_total");
-  const errorBreakdownMap = new Map<string, number>();
-  for (const row of requestCounters) {
-    const statusClass = String(row.labels.status_class || "").toLowerCase();
-    if (statusClass !== "4xx" && statusClass !== "5xx") continue;
-    const endpoint = String(row.labels.endpoint || "unknown").trim() || "unknown";
-    const statusCode = String(row.labels.status_code || "").trim();
-    const isExpectedPlayer404 =
-      statusCode === "404" &&
-      (endpoint === "me_player" || endpoint === "me_player_devices");
-    if (isExpectedPlayer404) continue;
-    errorBreakdownMap.set(endpoint, (errorBreakdownMap.get(endpoint) || 0) + row.value);
-  }
   const errorBreakdown = Array.from(errorBreakdownMap.entries())
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => b.value - a.value)
@@ -145,6 +200,7 @@ export async function GET() {
     generatedAt: now,
     meta: {
       environment: process.env.NODE_ENV || "unknown",
+      metricsWindowSec,
     },
     authStatus: {
       status:
@@ -182,12 +238,14 @@ export async function GET() {
     },
     apiHealth: {
       successRate: apiTotal > 0 ? Number((apiSuccess / apiTotal).toFixed(4)) : 1,
+      sampleCount: apiTotal,
       latencyMs: apiLatency,
       errorBreakdown,
       upstream5xx: api5xx,
     },
     rateLimits: {
-      count429: counterTotal("spotify_api_requests_total", { status_code: "429" }) || 0,
+      count429: count429 || 0,
+      sampleWindowSec: metricsWindowSec,
       backoffState: rateLimitSnapshot.backoffState,
       backoffRemainingMs: rateLimitSnapshot.backoffRemainingMs,
       backoffUntilTs: rateLimitSnapshot.backoffUntilTs,
@@ -196,11 +254,25 @@ export async function GET() {
       retryAfterObservationsSec: rateLimitSnapshot.retryAfterObservationsSec,
     },
     traffic: {
-      requestsPerMin: apiTotal,
-      topEndpoints: topCounterByLabel("spotify_api_requests_total", "endpoint", 8).map(
+      requestsPerMin:
+        apiTotal > 0
+          ? Number((apiTotal / Math.max(1, metricsWindowMs / 60000)).toFixed(1))
+          : 0,
+      requestsInWindow: apiTotal,
+      topEndpoints: topCounterByLabelWindow(
+        "spotify_api_requests_total",
+        "endpoint",
+        8,
+        metricsWindowMs,
+        now
+      ).map(
         (row) => ({
           endpoint: row.label,
-          rpm: row.value,
+          rpm: Number(
+            (
+              row.value / Math.max(1, metricsWindowMs / 60000)
+            ).toFixed(1)
+          ),
         })
       ),
       activeUsers: null,

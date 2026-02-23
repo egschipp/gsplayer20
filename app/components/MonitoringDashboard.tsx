@@ -8,6 +8,7 @@ type SummaryPayload = {
   generatedAt: number;
   meta?: {
     environment?: string | null;
+    metricsWindowSec?: number | null;
   };
   authStatus: {
     status: string;
@@ -39,6 +40,7 @@ type SummaryPayload = {
   };
   apiHealth: {
     successRate: number;
+    sampleCount: number;
     latencyMs: { p50: number; p95: number; p99: number };
     errorBreakdown: Array<{ label: string; value: number }>;
     upstream5xx: number;
@@ -46,6 +48,7 @@ type SummaryPayload = {
   rateLimits: {
     count429: number;
     backoffState: string;
+    sampleWindowSec?: number;
     backoffRemainingMs?: number;
     backoffUntilTs?: number | null;
     lastRetryAfterMs?: number | null;
@@ -54,6 +57,7 @@ type SummaryPayload = {
   };
   traffic: {
     requestsPerMin: number;
+    requestsInWindow?: number;
     topEndpoints: Array<{ endpoint: string; rpm: number }>;
     activeUsers: number | null;
   };
@@ -190,6 +194,17 @@ function fmtDateTime(value: number | null) {
 function fmtCount(value: number | null | undefined) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "—";
   return value.toLocaleString("nl-NL");
+}
+
+function fmtWindow(seconds: number | null | undefined) {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) {
+    return "recent";
+  }
+  if (seconds % 60 === 0) {
+    return `${Math.max(1, Math.floor(seconds / 60))}m`;
+  }
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.round(seconds / 60)}m`;
 }
 
 function toneClass(tone: Tone) {
@@ -818,12 +833,19 @@ export default function MonitoringDashboard() {
     return "ok";
   })();
 
-  const apiTone: Tone =
-    (summary?.apiHealth.successRate ?? 0) >= 0.97
-      ? "ok"
-      : (summary?.apiHealth.successRate ?? 0) >= 0.9
-      ? "warn"
-      : "error";
+  const metricsWindowSec =
+    summary?.meta?.metricsWindowSec ?? summary?.rateLimits.sampleWindowSec ?? null;
+  const metricsWindowLabel = fmtWindow(metricsWindowSec);
+  const apiSampleCount = summary?.apiHealth.sampleCount ?? 0;
+  const apiWarmup = apiSampleCount < 20;
+
+  const apiTone: Tone = apiWarmup
+    ? "warn"
+    : (summary?.apiHealth.successRate ?? 0) >= 0.97
+    ? "ok"
+    : (summary?.apiHealth.successRate ?? 0) >= 0.9
+    ? "warn"
+    : "error";
 
   const latencyTone: Tone =
     (summary?.apiHealth.latencyMs.p95 ?? 0) <= 450
@@ -908,6 +930,7 @@ export default function MonitoringDashboard() {
         Math.round(summary.rateLimits.lastRetryAfterMs / 1000)
       )}s`
     : summary?.rateLimits.backoffState || "normal";
+  const rateBackoffSubtitleWithWindow = `${rateBackoffSubtitle} · ${metricsWindowLabel}`;
 
   const insights = useMemo<Insight[]>(() => {
     if (!summary) return [];
@@ -951,8 +974,8 @@ export default function MonitoringDashboard() {
         tone: hasActiveRateBackoff ? "error" : "warn",
         title: "Spotify rate limit blokkeert requests",
         text: hasActiveRateBackoff
-          ? `Er zijn ${summary.rateLimits.count429} blokkades gemeten; backoff loopt nog ${rateBackoffRemainingSec}s.`
-          : `Er zijn ${summary.rateLimits.count429} blokkades gemeten; verlaag korte piekacties.`,
+          ? `Er zijn ${summary.rateLimits.count429} blokkades in de laatste ${metricsWindowLabel}; backoff loopt nog ${rateBackoffRemainingSec}s.`
+          : `Er zijn ${summary.rateLimits.count429} blokkades in de laatste ${metricsWindowLabel}; verlaag korte piekacties.`,
       });
     } else if (summary.rateLimits.count429 > 0) {
       list.push({
@@ -960,17 +983,24 @@ export default function MonitoringDashboard() {
         tone: "warn",
         title: "Spotify rate limit actief",
         text: hasActiveRateBackoff
-          ? `Er zijn ${summary.rateLimits.count429} tijdelijke blokkades; backoff telt af: ${rateBackoffRemainingSec}s.`
-          : `Er zijn ${summary.rateLimits.count429} tijdelijke blokkades gemeten; app vangt dit op met backoff.`,
+          ? `Er zijn ${summary.rateLimits.count429} tijdelijke blokkades in de laatste ${metricsWindowLabel}; backoff telt af: ${rateBackoffRemainingSec}s.`
+          : `Er zijn ${summary.rateLimits.count429} tijdelijke blokkades in de laatste ${metricsWindowLabel}; app vangt dit op met backoff.`,
       });
     }
 
-    if (summary.apiHealth.successRate < 0.9 || summary.apiHealth.upstream5xx > 0) {
+    if (apiWarmup) {
+      list.push({
+        id: "api-warmup",
+        tone: "warn",
+        title: "Monitoring warmt nog op",
+        text: `Er zijn nog maar ${apiSampleCount} requests gemeten in ${metricsWindowLabel}; score stabiliseert automatisch.`,
+      });
+    } else if (summary.apiHealth.successRate < 0.9 || summary.apiHealth.upstream5xx > 0) {
       list.push({
         id: "api-health",
         tone: summary.apiHealth.successRate < 0.85 ? "error" : "warn",
         title: "Spotify API is niet volledig stabiel",
-        text: `Succesratio is ${fmtPercent(summary.apiHealth.successRate)} met ${summary.apiHealth.upstream5xx} serverfouten.`,
+        text: `Succesratio is ${fmtPercent(summary.apiHealth.successRate)} in ${metricsWindowLabel} met ${summary.apiHealth.upstream5xx} serverfouten.`,
       });
     }
 
@@ -995,7 +1025,15 @@ export default function MonitoringDashboard() {
     }
 
     return list.slice(0, 5);
-  }, [authStatusTone, hasActiveRateBackoff, rateBackoffRemainingSec, summary]);
+  }, [
+    apiSampleCount,
+    apiWarmup,
+    authStatusTone,
+    hasActiveRateBackoff,
+    metricsWindowLabel,
+    rateBackoffRemainingSec,
+    summary,
+  ]);
 
   return (
     <main className="page settings-page ops-page">
@@ -1091,10 +1129,10 @@ export default function MonitoringDashboard() {
               <KpiCard
                 title="API betrouwbaarheid"
                 value={fmtPercent(summary?.apiHealth.successRate ?? 0)}
-                subtitle={`${summary?.apiHealth.upstream5xx ?? 0} Spotify serverfouten`}
+                subtitle={`${apiSampleCount} req in ${metricsWindowLabel} · ${summary?.apiHealth.upstream5xx ?? 0} serverfouten`}
                 tone={apiTone}
                 meter={summary?.apiHealth.successRate ?? 0}
-                hint="Percentage succesvolle Spotify-requests in de actuele meting."
+                hint="Percentage succesvolle Spotify-requests in een recent tijdvenster. Verwachte 'geen actieve player' 404 telt niet als fout."
               />
 
               <KpiCard
@@ -1109,10 +1147,10 @@ export default function MonitoringDashboard() {
               <KpiCard
                 title="Rate limit"
                 value={`${summary?.rateLimits.count429 ?? 0}`}
-                subtitle={rateBackoffSubtitle}
+                subtitle={rateBackoffSubtitleWithWindow}
                 tone={rateTone}
                 meter={1 - clamp01((summary?.rateLimits.count429 ?? 0) / 20)}
-                hint="Aantal 429 responses van Spotify. Bij actief backoff telt deze kaart live af naar 0s."
+                hint="Aantal 429 responses in het recente meetvenster. Bij actief backoff telt deze kaart live af naar 0s."
               />
 
               <KpiCard

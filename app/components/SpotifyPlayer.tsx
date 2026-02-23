@@ -38,6 +38,7 @@ const PROGRESS_DEADBAND_MS = 120;
 const PROGRESS_MAX_STEP_MS = 250;
 const REMOTE_TAKEOVER_CONFIRM_MS = 1200;
 const REMOTE_TAKEOVER_MIN_SAMPLES = 2;
+const PLAYBACK_RESTRICTION_COOLDOWN_MS = 4_000;
 
 type PlaybackSource =
   | "sdk"
@@ -301,6 +302,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const rateLimitRef = useRef({ until: 0, backoffMs: 5000 });
   const lastRequestAtRef = useRef(0);
   const lastDevicesRefreshRef = useRef(0);
+  const playbackRestrictionUntilRef = useRef(0);
   const lastSdkEventAtRef = useRef(0);
   const sdkReadyRef = useRef(false);
   const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -831,6 +833,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         method !== "GET" && Boolean(playerApiUrl);
       const chaosLevel = Number(process.env.NEXT_PUBLIC_PLAYBACK_CHAOS ?? "0");
       if (!token && !playerCommandProxyPayload && !playerProxyUrl) return null;
+      if (isPlaybackCommand && Date.now() < playbackRestrictionUntilRef.current) {
+        const retryInSec = Math.max(
+          1,
+          Math.ceil((playbackRestrictionUntilRef.current - Date.now()) / 1000)
+        );
+        setError(`Spotify blokkeert dit commando tijdelijk. Probeer opnieuw over ${retryInSec}s.`);
+        return null;
+      }
 
       for (let attempt = 1; attempt <= PLAYER_FETCH_MAX_ATTEMPTS; attempt += 1) {
         if (Date.now() < rateLimitRef.current.until) return null;
@@ -895,6 +905,24 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
 
           if (res.status === 403 && isPlaybackCommand) {
+            const details = await readJsonSafely<{ error?: string; message?: string }>(
+              res.clone()
+            );
+            const errorCode = String(details?.error ?? "").trim().toUpperCase();
+            const restrictionViolation =
+              errorCode === "RESTRICTION_VIOLATED" ||
+              String(details?.message ?? "").toLowerCase().includes("restriction violated");
+
+            if (restrictionViolation) {
+              playbackRestrictionUntilRef.current =
+                Date.now() + PLAYBACK_RESTRICTION_COOLDOWN_MS;
+              setActiveDeviceRestricted(true);
+              setError(
+                "Spotify blokkeert bediening op dit moment (restriction). Wissel device of wacht even."
+              );
+              return res;
+            }
+
             setError("Ontbrekende Spotify‑rechten. Koppel opnieuw.");
             return res;
           }
@@ -1558,6 +1586,17 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             )
           : {};
       setPlaybackDisallows(disallows);
+      const hasBlockingRestriction = Boolean(
+        disallows.resuming ||
+          disallows.pausing ||
+          disallows.skipping_prev ||
+          disallows.skipping_next ||
+          disallows.seeking ||
+          disallows.toggling_shuffle
+      );
+      if (!hasBlockingRestriction) {
+        playbackRestrictionUntilRef.current = 0;
+      }
 
       const isPlaying = Boolean(data?.is_playing);
       if (!data?.item) {
@@ -1980,6 +2019,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       }
       if (current?.name) {
         setError(null);
+        if (!state.paused) {
+          playbackRestrictionUntilRef.current = 0;
+        }
       }
       const allowProgressUpdate = Date.now() >= trackChangeLockUntilRef.current;
       const projectedPosition = isNewTrack || !allowProgressUpdate ? 0 : rawPosition;

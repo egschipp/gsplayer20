@@ -41,6 +41,7 @@ type SummaryPayload = {
   apiHealth: {
     successRate: number;
     sampleCount: number;
+    restrictionViolatedCount?: number;
     latencyMs: { p50: number; p95: number; p99: number };
     errorBreakdown: Array<{ label: string; value: number }>;
     upstream5xx: number;
@@ -837,6 +838,7 @@ export default function MonitoringDashboard() {
     summary?.meta?.metricsWindowSec ?? summary?.rateLimits.sampleWindowSec ?? null;
   const metricsWindowLabel = fmtWindow(metricsWindowSec);
   const apiSampleCount = summary?.apiHealth.sampleCount ?? 0;
+  const restrictionViolatedCount = summary?.apiHealth.restrictionViolatedCount ?? 0;
   const apiWarmup = apiSampleCount < 20;
 
   const apiTone: Tone = apiWarmup
@@ -995,6 +997,13 @@ export default function MonitoringDashboard() {
         title: "Monitoring warmt nog op",
         text: `Er zijn nog maar ${apiSampleCount} requests gemeten in ${metricsWindowLabel}; score stabiliseert automatisch.`,
       });
+    } else if (restrictionViolatedCount > 0) {
+      list.push({
+        id: "api-restriction",
+        tone: "warn",
+        title: "Spotify blokkeert player-commando's",
+        text: `${restrictionViolatedCount} commando's geweigerd door device/context restrictie in ${metricsWindowLabel}.`,
+      });
     } else if (summary.apiHealth.successRate < 0.9 || summary.apiHealth.upstream5xx > 0) {
       list.push({
         id: "api-health",
@@ -1031,6 +1040,7 @@ export default function MonitoringDashboard() {
     authStatusTone,
     hasActiveRateBackoff,
     metricsWindowLabel,
+    restrictionViolatedCount,
     rateBackoffRemainingSec,
     summary,
   ]);
@@ -1129,7 +1139,7 @@ export default function MonitoringDashboard() {
               <KpiCard
                 title="API betrouwbaarheid"
                 value={fmtPercent(summary?.apiHealth.successRate ?? 0)}
-                subtitle={`${apiSampleCount} req in ${metricsWindowLabel} · ${summary?.apiHealth.upstream5xx ?? 0} serverfouten`}
+                subtitle={`${apiSampleCount} req in ${metricsWindowLabel} · ${summary?.apiHealth.upstream5xx ?? 0} serverfouten · ${restrictionViolatedCount} restricties`}
                 tone={apiTone}
                 meter={summary?.apiHealth.successRate ?? 0}
                 hint="Percentage succesvolle Spotify-requests in een recent tijdvenster. Verwachte 'geen actieve player' 404 telt niet als fout."

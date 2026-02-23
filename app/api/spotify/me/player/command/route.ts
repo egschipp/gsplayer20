@@ -47,7 +47,18 @@ function parseSearch(input: unknown) {
 function mapSpotifyError(error: unknown) {
   if (error instanceof SpotifyFetchError) {
     if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
-    if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
+    if (error.status === 403) {
+      if (error.code === "RESTRICTION_VIOLATED") {
+        return jsonNoStore(
+          {
+            error: "RESTRICTION_VIOLATED",
+            message: "Player command failed: Restriction violated",
+          },
+          403
+        );
+      }
+      return jsonNoStore({ error: "FORBIDDEN" }, 403);
+    }
     if (error.status === 404) return jsonNoStore({ error: "NOT_FOUND" }, 404);
     if (error.status === 429) {
       const retryAfter =

@@ -631,7 +631,7 @@ a:focus-visible {
   position: static;
   top: auto;
   z-index: 40;
-  padding: 16px var(--content-inline-space);
+  padding: 16px 0;
   border-radius: 18px;
   border: 1px solid rgba(29, 185, 84, 0.12);
   background: linear-gradient(
@@ -1751,6 +1751,7 @@ details[open] > .details-summary::after {
 .player-card {
   position: relative;
   display: grid;
+  width: 100%;
   grid-template-columns: 3fr 2fr;
   gap: 16px;
   align-items: center;

@@ -120,6 +120,20 @@ export async function GET() {
       errorBreakdownMap.set(endpoint, (errorBreakdownMap.get(endpoint) || 0) + row.value);
     }
   }
+  const restrictionViolatedCount = counterTotalWindow(
+    "spotify_api_errors_total",
+    {
+      endpoint: "me_player",
+      code: "RESTRICTION_VIOLATED",
+    },
+    metricsWindowMs,
+    now
+  );
+  if (restrictionViolatedCount > 0 && api4xx > 0) {
+    const expectedCount = Math.min(api4xx, restrictionViolatedCount);
+    api4xx -= expectedCount;
+    apiSuccess += expectedCount;
+  }
   const apiTotal = apiSuccess + api4xx + api5xx;
   const apiLatency = histogramQuantilesWindow(
     "spotify_api_latency_ms",
@@ -239,6 +253,7 @@ export async function GET() {
     apiHealth: {
       successRate: apiTotal > 0 ? Number((apiSuccess / apiTotal).toFixed(4)) : 1,
       sampleCount: apiTotal,
+      restrictionViolatedCount,
       latencyMs: apiLatency,
       errorBreakdown,
       upstream5xx: api5xx,

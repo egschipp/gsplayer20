@@ -71,7 +71,15 @@ function classifyCode(
     if (lower.includes("invalid_grant")) return "INVALID_GRANT";
     return "UNAUTHENTICATED";
   }
-  if (status === 403) return "FORBIDDEN";
+  if (status === 403) {
+    if (
+      endpointGroup === "me_player" &&
+      /restriction\s+violated/i.test(body)
+    ) {
+      return "RESTRICTION_VIOLATED";
+    }
+    return "FORBIDDEN";
+  }
   if (status === 404) {
     if (endpointGroup === "me_player") {
       return method === "GET" ? "NO_ACTIVE_DEVICE" : "PLAYER_NOT_FOUND";
@@ -103,6 +111,13 @@ function isExpectedHttpCondition(args: {
     status === 404 &&
     endpointGroup === "me_player_devices" &&
     errorCode === "NO_CONNECT_DEVICE"
+  ) {
+    return true;
+  }
+  if (
+    status === 403 &&
+    endpointGroup === "me_player" &&
+    errorCode === "RESTRICTION_VIOLATED"
   ) {
     return true;
   }
@@ -205,6 +220,12 @@ export async function spotifyApiRequest<T>(params: {
       const retryWaitMs =
         normalizeRetryAfterMs(retryAfterMs) ??
         Math.min(500 * attempt * attempt, 5_000);
+      incCounter("spotify_api_errors_total", {
+        endpoint: group,
+        method,
+        status_code: String(res.status),
+        code,
+      });
       const expected = isExpectedHttpCondition({
         status: res.status,
         endpointGroup: group,

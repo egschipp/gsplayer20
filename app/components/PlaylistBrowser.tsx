@@ -736,11 +736,16 @@ function resolveTrackItemCanonicalId(item: TrackItem) {
 }
 
 function buildTrackRowDedupeKey(row: TrackRow, index: number) {
+  const itemId = String(row.itemId ?? "").trim();
+  if (itemId) return `item:${itemId}`;
+
   const canonicalTrackId = resolveTrackRowCanonicalId(row);
   if (canonicalTrackId) return `track:${canonicalTrackId}`;
 
-  const itemId = String(row.itemId ?? "").trim();
-  if (itemId) return `item:${itemId}`;
+  const playlistId = String(row.playlistId ?? "").trim();
+  if (playlistId && typeof row.position === "number" && Number.isFinite(row.position)) {
+    return `playlist-pos:${playlistId}:${Math.max(0, Math.floor(row.position))}`;
+  }
 
   const id = String(row.id ?? "").trim();
   if (id) return `id:${id}`;
@@ -1004,6 +1009,23 @@ export default function PlaylistBrowser() {
   const applyLikedTracksTotal = useCallback((nextTotal: number | null) => {
     setLikedTracksTotal(nextTotal);
   }, []);
+
+  const applyPlaylistTracksTotal = useCallback(
+    (playlistId: string, nextTotal: number | null) => {
+      if (!playlistId) return;
+      setPlaylistOptions((prev) => {
+        let changed = false;
+        const next = prev.map((option) => {
+          if (option.type !== "playlist" || option.id !== playlistId) return option;
+          if (option.tracksTotal === nextTotal) return option;
+          changed = true;
+          return { ...option, tracksTotal: nextTotal };
+        });
+        return changed ? next : prev;
+      });
+    },
+    []
+  );
 
   const bumpLikedTracksTotal = useCallback((delta: number) => {
     setLikedTracksTotal((prev) => {
@@ -2512,6 +2534,18 @@ export default function PlaylistBrowser() {
                 : null;
             applyLikedTracksTotal(nextTotal);
           }
+          if (
+            mode === "playlists" &&
+            selectedPlaylist?.type === "playlist" &&
+            selectedPlaylist.id &&
+            typeof data.totalCount === "number" &&
+            Number.isFinite(data.totalCount)
+          ) {
+            applyPlaylistTracksTotal(
+              selectedPlaylist.id,
+              Math.max(0, Math.floor(data.totalCount))
+            );
+          }
           if (nextContextKey) setTracksContextKey(nextContextKey);
           setPendingTracksContextKey(null);
         }
@@ -2578,6 +2612,7 @@ export default function PlaylistBrowser() {
   }, [
     applyAllMyMusicTotal,
     applyLikedTracksTotal,
+    applyPlaylistTracksTotal,
     mode,
     selectedPlaylist?.id,
     selectedPlaylist?.type,
@@ -2618,6 +2653,25 @@ export default function PlaylistBrowser() {
       if (requestVersion !== tracksLoadVersionRef.current) return;
       setTracks((prev) => dedupeTrackRows(prev.concat(items)));
       setNextCursor(data.nextCursor ?? null);
+      if (mode === "playlists" && selectedPlaylist?.type === "liked") {
+        const nextTotal =
+          typeof data.totalCount === "number" && Number.isFinite(data.totalCount)
+            ? Math.max(0, Math.floor(data.totalCount))
+            : null;
+        applyLikedTracksTotal(nextTotal);
+      }
+      if (
+        mode === "playlists" &&
+        selectedPlaylist?.type === "playlist" &&
+        selectedPlaylist.id &&
+        typeof data.totalCount === "number" &&
+        Number.isFinite(data.totalCount)
+      ) {
+        applyPlaylistTracksTotal(
+          selectedPlaylist.id,
+          Math.max(0, Math.floor(data.totalCount))
+        );
+      }
     } finally {
       loadingMoreTracksRef.current = false;
       setLoadingMoreTracks(false);

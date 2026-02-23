@@ -183,6 +183,7 @@ export async function GET(
             artists?: Array<{ name?: string }>;
           };
         }>;
+        total?: number;
         next?: string | null;
       }>({
         url: `https://api.spotify.com/v1/playlists/${encodeURIComponent(
@@ -243,7 +244,7 @@ export async function GET(
               : null,
             addedAt: Number.isFinite(addedAtValue) ? addedAtValue : null,
             addedBySpotifyUserId: item?.added_by?.id ?? null,
-            position: index,
+            position: offset + index,
             snapshotIdAtSync: null,
             syncRunId: null,
             playlists: [
@@ -260,6 +261,10 @@ export async function GET(
       return jsonNoStore({
         items: mapped,
         nextCursor: liveResponse?.next ? String(offset + mapped.length) : null,
+        totalCount:
+          typeof liveResponse?.total === "number" && Number.isFinite(liveResponse.total)
+            ? Math.max(0, Math.floor(liveResponse.total))
+            : null,
         asOf: now,
         sync: {
           status: "live",
@@ -318,6 +323,21 @@ export async function GET(
   const nextCursor = last
     ? encodeCursor(last.position ?? 0, last.itemId)
     : null;
+  const totalRow = await db
+    .select({
+      count: sql<number>`count(*)`,
+    })
+    .from(playlistItems)
+    .innerJoin(
+      userPlaylists,
+      eq(userPlaylists.playlistId, playlistItems.playlistId)
+    )
+    .where(baseWhere)
+    .get();
+  const totalCount =
+    typeof totalRow?.count === "number" && Number.isFinite(totalRow.count)
+      ? Math.max(0, Math.floor(totalRow.count))
+      : null;
 
   const sync = await db
     .select()
@@ -351,13 +371,14 @@ export async function GET(
           : []),
         ...((row.trackId ? playlistsByTrack.get(row.trackId) : null) ?? []).map(
           (pl) => ({
-          ...pl,
-          spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
+            ...pl,
+            spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
           })
         ),
       ],
     })),
     nextCursor,
+    totalCount,
     asOf: Date.now(),
     sync: {
       status: sync?.status ?? "idle",

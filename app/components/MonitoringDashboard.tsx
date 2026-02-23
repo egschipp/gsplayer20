@@ -17,12 +17,25 @@ type SummaryPayload = {
     lastAuthAt: number | null;
   };
   tokenHealth: {
+    status: string;
     expiresInSec: number | null;
     refreshSuccessRate: number;
     refreshAttempts: number;
+    refreshSuccessCount: number;
+    refreshFailureCount: number;
     invalidGrantCount: number;
     lockWaitP95Ms: number;
     lastRefreshAt: number | null;
+  };
+  appTokenHealth: {
+    status: string;
+    expiresInSec: number | null;
+    expiresAt: number | null;
+    refreshSuccessCount: number;
+    refreshFailureCount: number;
+    lastRefreshAt: number | null;
+    lastAttemptAt: number | null;
+    lastError: string | null;
   };
   apiHealth: {
     successRate: number;
@@ -216,6 +229,40 @@ function formatAuthStatus(status: string) {
   if (normalized === "REAUTH_REQUIRED") return "Herlogin nodig";
   if (normalized === "DISCONNECTED") return "Niet verbonden";
   if (normalized === "CHECKING") return "Controleren";
+  return status;
+}
+
+function tokenStatusTone(status: string): Tone {
+  const normalized = String(status ?? "").trim().toUpperCase();
+  if (
+    normalized === "VALID" ||
+    normalized === "CONNECTED" ||
+    normalized === "OK" ||
+    normalized === "REFRESHING"
+  ) {
+    return "ok";
+  }
+  if (
+    normalized === "EXPIRING" ||
+    normalized === "MISSING_ACCESS" ||
+    normalized === "MISSING" ||
+    normalized === "CHECKING" ||
+    normalized === "UNKNOWN"
+  ) {
+    return "warn";
+  }
+  return "error";
+}
+
+function formatTokenStatus(status: string) {
+  const normalized = String(status ?? "").trim().toUpperCase();
+  if (normalized === "VALID" || normalized === "OK") return "Geldig";
+  if (normalized === "REFRESHING") return "Vernieuwen";
+  if (normalized === "EXPIRING") return "Verloopt bijna";
+  if (normalized === "EXPIRED") return "Verlopen";
+  if (normalized === "REAUTH_REQUIRED") return "Herlogin nodig";
+  if (normalized === "MISSING" || normalized === "MISSING_ACCESS") return "Ontbreekt";
+  if (normalized === "ERROR") return "Fout";
   return status;
 }
 
@@ -748,15 +795,28 @@ export default function MonitoringDashboard() {
   const authStatusLabel = formatAuthStatus(authStatus);
   const authStatusTone = authTone(authStatus);
 
-  const tokenExpirySec = summary?.tokenHealth.expiresInSec ?? null;
-  const tokenTone: Tone =
-    tokenExpirySec == null
-      ? "warn"
-      : tokenExpirySec > 900
-      ? "ok"
-      : tokenExpirySec > 240
-      ? "warn"
-      : "error";
+  const userTokenExpirySec = summary?.tokenHealth.expiresInSec ?? null;
+  const userTokenStatus = summary?.tokenHealth.status ?? "UNKNOWN";
+  const userTokenStatusLabel = formatTokenStatus(userTokenStatus);
+  const userTokenTone: Tone = (() => {
+    const fromStatus = tokenStatusTone(userTokenStatus);
+    if (fromStatus !== "ok") return fromStatus;
+    if (userTokenExpirySec == null) return "warn";
+    if (userTokenExpirySec <= 240) return "warn";
+    return "ok";
+  })();
+
+  const appTokenExpirySec = summary?.appTokenHealth.expiresInSec ?? null;
+  const appTokenStatus = summary?.appTokenHealth.status ?? "UNKNOWN";
+  const appTokenStatusLabel = formatTokenStatus(appTokenStatus);
+  const appTokenTone: Tone = (() => {
+    if (summary?.appTokenHealth.lastError) return "error";
+    const fromStatus = tokenStatusTone(appTokenStatus);
+    if (fromStatus !== "ok") return fromStatus;
+    if (appTokenExpirySec == null) return "warn";
+    if (appTokenExpirySec <= 240) return "warn";
+    return "ok";
+  })();
 
   const apiTone: Tone =
     (summary?.apiHealth.successRate ?? 0) >= 0.97
@@ -1056,20 +1116,33 @@ export default function MonitoringDashboard() {
               />
 
               <KpiCard
-                title="Token gezondheid"
+                title="User token"
                 value={
-                  summary?.tokenHealth.expiresInSec == null
-                    ? "n/a"
-                    : `${summary.tokenHealth.expiresInSec}s`
+                  userTokenExpirySec == null
+                    ? `${userTokenStatusLabel} · n/a`
+                    : `${userTokenStatusLabel} · ${userTokenExpirySec}s`
                 }
-                subtitle={`Refresh ${fmtPercent(summary?.tokenHealth.refreshSuccessRate ?? 0)}`}
-                tone={tokenTone}
+                subtitle={`Refresh ok ${fmtCount(summary?.tokenHealth.refreshSuccessCount ?? 0)}`}
+                tone={userTokenTone}
                 meter={
-                  summary?.tokenHealth.expiresInSec == null
+                  userTokenExpirySec == null
                     ? 0.4
-                    : summary.tokenHealth.expiresInSec / 3600
+                    : userTokenExpirySec / 3600
                 }
                 hint="Toont resterende tokenduur en hoe stabiel automatische refresh werkt."
+              />
+
+              <KpiCard
+                title="App token"
+                value={
+                  appTokenExpirySec == null
+                    ? `${appTokenStatusLabel} · n/a`
+                    : `${appTokenStatusLabel} · ${appTokenExpirySec}s`
+                }
+                subtitle={`Refresh ok ${fmtCount(summary?.appTokenHealth.refreshSuccessCount ?? 0)}`}
+                tone={appTokenTone}
+                meter={appTokenExpirySec == null ? 0.4 : appTokenExpirySec / 3600}
+                hint="Client-credentials token voor app-level Spotify calls."
               />
             </section>
 
@@ -1247,6 +1320,38 @@ export default function MonitoringDashboard() {
                   <div className="ops-keyvalue-row">
                     <span className="text-subtle">Actieve scopes</span>
                     <strong>{summary?.authStatus.scopes.length ?? 0}</strong>
+                  </div>
+                  <div className="ops-keyvalue-row">
+                    <span className="text-subtle">User token status</span>
+                    <span className={pillClass(userTokenTone)}>{userTokenStatusLabel}</span>
+                  </div>
+                  <div className="ops-keyvalue-row">
+                    <span className="text-subtle">User token geldig</span>
+                    <strong>
+                      {userTokenExpirySec == null ? "n/a" : `${userTokenExpirySec}s`}
+                    </strong>
+                  </div>
+                  <div className="ops-keyvalue-row">
+                    <span className="text-subtle">User refresh ok</span>
+                    <strong>{fmtCount(summary?.tokenHealth.refreshSuccessCount)}</strong>
+                  </div>
+                  <div className="ops-keyvalue-row">
+                    <span className="text-subtle">App token status</span>
+                    <span className={pillClass(appTokenTone)}>{appTokenStatusLabel}</span>
+                  </div>
+                  <div className="ops-keyvalue-row">
+                    <span className="text-subtle">App token geldig</span>
+                    <strong>{appTokenExpirySec == null ? "n/a" : `${appTokenExpirySec}s`}</strong>
+                  </div>
+                  {summary?.appTokenHealth.lastError ? (
+                    <div className="ops-keyvalue-row">
+                      <span className="text-subtle">App token fout</span>
+                      <strong>{summary.appTokenHealth.lastError}</strong>
+                    </div>
+                  ) : null}
+                  <div className="ops-keyvalue-row">
+                    <span className="text-subtle">App refresh ok</span>
+                    <strong>{fmtCount(summary?.appTokenHealth.refreshSuccessCount)}</strong>
                   </div>
                   <div className="ops-keyvalue-row">
                     <span className="text-subtle">Verkeer/min</span>

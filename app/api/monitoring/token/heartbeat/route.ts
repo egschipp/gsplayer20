@@ -8,26 +8,32 @@ import {
 
 export const runtime = "nodejs";
 
+function mapUserTokenStatus(expiresInSec: number | null) {
+  if (expiresInSec == null) return "MISSING_ACCESS";
+  if (expiresInSec <= 0) return "EXPIRED";
+  if (expiresInSec <= 120) return "EXPIRING";
+  return "VALID";
+}
+
 export async function POST(req: Request) {
   const { session, response } = await requireAppUser();
   if (response) return response;
 
   const correlationId = readCorrelationId(req.headers) || createCorrelationId();
-  const refreshed = await getValidAccessTokenForUser({
+  const userResult = await getValidAccessTokenForUser({
     userId: session.appUserId as string,
     correlationId,
-    forceRefresh: true,
   });
 
-  if (!refreshed.ok) {
+  if (!userResult.ok) {
     const status =
-      refreshed.code === "MISSING_REFRESH_TOKEN" || refreshed.code === "INVALID_GRANT"
+      userResult.code === "MISSING_REFRESH_TOKEN" || userResult.code === "INVALID_GRANT"
         ? 401
         : 503;
     return jsonNoStore(
       {
         ok: false,
-        error: refreshed.code,
+        error: userResult.code,
         correlationId,
       },
       status,
@@ -35,30 +41,34 @@ export async function POST(req: Request) {
     );
   }
 
-  let appTokenError: string | null = null;
+  let appTokenFetchError: string | null = null;
   try {
     await getAppAccessToken();
   } catch (error) {
-    appTokenError = String(error).slice(0, 256);
+    appTokenFetchError = String(error).slice(0, 256);
   }
+
   const now = Date.now();
-  const appTokenStatus = getAppTokenStatus(now);
-  const userExpiresInSec =
-    typeof refreshed.accessExpiresAt === "number" && refreshed.accessExpiresAt > 0
-      ? Math.max(0, Math.floor((refreshed.accessExpiresAt - now) / 1000))
+  const expiresInSec =
+    typeof userResult.accessExpiresAt === "number" && userResult.accessExpiresAt > 0
+      ? Math.max(0, Math.floor((userResult.accessExpiresAt - now) / 1000))
       : null;
+  const appTokenStatus = getAppTokenStatus(now);
 
   return jsonNoStore(
     {
-      ok: !appTokenError,
-      expiresAt: refreshed.accessExpiresAt,
-      expiresInSec: userExpiresInSec,
-      scope: refreshed.scope,
+      ok: !appTokenFetchError,
+      correlationId,
+      userToken: {
+        status: mapUserTokenStatus(expiresInSec),
+        expiresAt: userResult.accessExpiresAt,
+        expiresInSec,
+        scope: userResult.scope,
+      },
       appToken: {
         ...appTokenStatus,
-        lastError: appTokenError ?? appTokenStatus.lastError,
+        lastError: appTokenFetchError ?? appTokenStatus.lastError,
       },
-      correlationId,
     },
     200,
     { "x-correlation-id": correlationId }

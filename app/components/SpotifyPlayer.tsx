@@ -27,6 +27,9 @@ declare global {
 
 const PLAYER_FETCH_TIMEOUT_MS = 12000;
 const PLAYER_FETCH_MAX_ATTEMPTS = 3;
+const PLAYER_RETRY_AFTER_MAX_MS = 120_000;
+const DEVICE_SWITCH_RESUME_VERIFY_DELAY_MS = 220;
+const DEVICE_SWITCH_RESUME_TOLERANCE_MS = 2_500;
 const LOCAL_WEBPLAYER_NAME = "Georgies Webplayer";
 const DEVICE_SELECTION_HOLD_MS = 8_000;
 const SEEK_CONFIRM_TOLERANCE_MS = 900;
@@ -50,6 +53,14 @@ type PendingSeekState = {
   previousMs: number;
   startedMonoMs: number;
   epoch: number;
+};
+
+type DeviceSwitchContext = {
+  wasPlaying: boolean;
+  trackId: string | null;
+  progressMs: number | null;
+  durationMs: number | null;
+  sampledAt: number;
 };
 
 function detectWebplayerPlatform() {
@@ -192,6 +203,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const customQueue = useQueueStore();
   const customQueuePlayback = useQueuePlayback();
   const accessToken = session?.accessToken as string | undefined;
+  const accessTokenExpiresAt = session?.expiresAt as number | undefined;
   const scope = session?.scope as string | undefined;
   const playbackAllowed = hasPlaybackScopes(scope);
   const [deviceId, setDeviceId] = useState<string | null>(null);
@@ -276,6 +288,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const playerRef = useRef<any>(null);
   const deviceIdRef = useRef<string | null>(null);
   const accessTokenRef = useRef<string | undefined>(accessToken);
+  const accessTokenExpiresAtRef = useRef<number | null>(
+    typeof accessTokenExpiresAt === "number" ? accessTokenExpiresAt : null
+  );
   const sdkDeviceIdRef = useRef<string | null>(null);
   const activeDeviceIdRef = useRef<string | null>(null);
   const activeDeviceNameRef = useRef<string | null>(null);
@@ -685,7 +700,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const parsedRetryMs = retry ? Number(retry) * 1000 : NaN;
     const retryMs =
       Number.isFinite(parsedRetryMs) && parsedRetryMs > 0
-        ? parsedRetryMs
+        ? Math.min(parsedRetryMs, PLAYER_RETRY_AFTER_MAX_MS)
         : rateLimitRef.current.backoffMs;
     rateLimitRef.current.until = Date.now() + retryMs;
     rateLimitRef.current.backoffMs = Math.min(
@@ -696,12 +711,40 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     return true;
   }, []);
 
-  const refreshClientAccessToken = useCallback(async () => {
+  const refreshClientAccessToken = useCallback(async (force = false) => {
+    try {
+      const tokenRes = await fetch(
+        force ? "/api/spotify/user-token?force=1" : "/api/spotify/user-token",
+        {
+          method: "GET",
+          cache: "no-store",
+          credentials: "include",
+        }
+      );
+      if (tokenRes.ok) {
+        const payload = (await tokenRes.json().catch(() => null)) as
+          | { accessToken?: string | null; expiresAt?: number | null }
+          | null;
+        const token =
+          typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
+        if (token) {
+          accessTokenRef.current = token;
+          accessTokenExpiresAtRef.current =
+            typeof payload?.expiresAt === "number" ? payload.expiresAt : null;
+          return token;
+        }
+      }
+    } catch {
+      // fall through to session fallback
+    }
+
     try {
       const next = await getSession();
       const nextToken = next?.accessToken as string | undefined;
       if (!nextToken) return null;
       accessTokenRef.current = nextToken;
+      accessTokenExpiresAtRef.current =
+        typeof next?.expiresAt === "number" ? next.expiresAt : null;
       return nextToken;
     } catch {
       return null;
@@ -817,7 +860,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
 
           if (res.status === 401) {
-            const refreshed = await refreshClientAccessToken();
+            const refreshed = await refreshClientAccessToken(true);
             if (refreshed) {
               token = refreshed;
               if (attempt < PLAYER_FETCH_MAX_ATTEMPTS) {
@@ -854,7 +897,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : NaN;
             const waitMs =
               Number.isFinite(retryAfterMs) && retryAfterMs > 0
-                ? retryAfterMs
+                ? Math.min(retryAfterMs, PLAYER_RETRY_AFTER_MAX_MS)
                 : Math.min(250 * attempt * attempt, 1500);
             await new Promise((resolve) => setTimeout(resolve, waitMs));
             continue;
@@ -976,6 +1019,119 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
     if (!res?.ok) return null;
     return await readJsonSafely<any>(res);
+  }
+
+  async function captureDeviceSwitchContext(): Promise<DeviceSwitchContext> {
+    const now = Date.now();
+    const fallbackProgress =
+      Number.isFinite(lastKnownPositionRef.current) && lastKnownPositionRef.current >= 0
+        ? Math.floor(lastKnownPositionRef.current)
+        : typeof playerStateRef.current?.positionMs === "number"
+        ? Math.max(0, Math.floor(playerStateRef.current.positionMs))
+        : null;
+    const fallbackDuration =
+      typeof playerStateRef.current?.durationMs === "number"
+        ? Math.max(0, Math.floor(playerStateRef.current.durationMs))
+        : null;
+    const fallbackTrackId = lastTrackIdRef.current || pendingTrackIdRef.current || null;
+    const fallback: DeviceSwitchContext = {
+      wasPlaying: Boolean(lastIsPlayingRef.current),
+      trackId: fallbackTrackId,
+      progressMs: fallbackProgress,
+      durationMs: fallbackDuration,
+      sampledAt: now,
+    };
+
+    try {
+      const live = await readCurrentPlayback();
+      if (!live) return fallback;
+      const liveProgress =
+        typeof live.progress_ms === "number" ? Math.max(0, Math.floor(live.progress_ms)) : null;
+      const liveDuration =
+        typeof live?.item?.duration_ms === "number"
+          ? Math.max(0, Math.floor(live.item.duration_ms))
+          : fallback.durationMs;
+      const liveTrackId =
+        typeof live?.item?.id === "string" && live.item.id.trim()
+          ? live.item.id
+          : fallback.trackId;
+      return {
+        wasPlaying: Boolean(live?.is_playing),
+        trackId: liveTrackId,
+        progressMs: liveProgress ?? fallback.progressMs,
+        durationMs: liveDuration ?? fallback.durationMs,
+        sampledAt: Date.now(),
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  function estimateResumePositionMs(context: DeviceSwitchContext): number | null {
+    if (typeof context.progressMs !== "number" || !Number.isFinite(context.progressMs)) {
+      return null;
+    }
+    const elapsedMs = context.wasPlaying ? Math.max(0, Date.now() - context.sampledAt) : 0;
+    let target = Math.max(0, Math.floor(context.progressMs + elapsedMs));
+    if (typeof context.durationMs === "number" && Number.isFinite(context.durationMs)) {
+      target = Math.min(target, Math.max(0, Math.floor(context.durationMs - 700)));
+    }
+    return target;
+  }
+
+  async function resumeAfterDeviceSwitch(
+    deviceId: string,
+    context: DeviceSwitchContext
+  ): Promise<boolean> {
+    if (!context.wasPlaying) return true;
+
+    const estimatedPosMs = estimateResumePositionMs(context);
+    if (estimatedPosMs != null) {
+      await spotifyApiFetch(
+        withDeviceId(
+          `https://api.spotify.com/v1/me/player/seek?position_ms=${estimatedPosMs}`,
+          deviceId
+        ),
+        { method: "PUT" }
+      ).catch(() => undefined);
+    }
+
+    const resumeRes = await spotifyApiFetch(
+      withDeviceId("https://api.spotify.com/v1/me/player/play", deviceId),
+      { method: "PUT" }
+    );
+    if (!resumeRes?.ok) return false;
+
+    if (estimatedPosMs == null) return true;
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, DEVICE_SWITCH_RESUME_VERIFY_DELAY_MS)
+    );
+    const verify = await readCurrentPlayback();
+    if (!verify) return true;
+
+    const verifyTrackId =
+      typeof verify?.item?.id === "string" ? verify.item.id : null;
+    if (context.trackId && verifyTrackId && verifyTrackId !== context.trackId) {
+      return true;
+    }
+
+    const verifyProgress =
+      typeof verify?.progress_ms === "number" ? Math.max(0, verify.progress_ms) : null;
+    if (
+      verifyProgress == null ||
+      Math.abs(verifyProgress - estimatedPosMs) > DEVICE_SWITCH_RESUME_TOLERANCE_MS
+    ) {
+      await spotifyApiFetch(
+        withDeviceId(
+          `https://api.spotify.com/v1/me/player/seek?position_ms=${estimatedPosMs}`,
+          deviceId
+        ),
+        { method: "PUT" }
+      ).catch(() => undefined);
+    }
+
+    return true;
   }
 
   function playbackMatchesExpectedTrack(
@@ -1873,7 +2029,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   useEffect(() => {
     accessTokenRef.current = accessToken;
-  }, [accessToken]);
+    accessTokenExpiresAtRef.current =
+      typeof accessTokenExpiresAt === "number" ? accessTokenExpiresAt : null;
+  }, [accessToken, accessTokenExpiresAt]);
 
   useEffect(() => {
     if (!accessToken) {
@@ -1930,7 +2088,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   const refreshDevices = useCallback(async (force = false) => {
     if (force || !accessTokenRef.current) {
-      await refreshClientAccessToken();
+      await refreshClientAccessToken(force);
     }
     const now = Date.now();
     if (!force && now - lastDevicesRefreshRef.current < 3000) return;
@@ -2296,7 +2454,20 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       name: localWebplayerName,
       getOAuthToken: (cb: (token: string) => void) => {
         const token = accessTokenRef.current ?? initialToken;
-        if (token) cb(token);
+        const expiresSoon =
+          typeof accessTokenExpiresAtRef.current === "number" &&
+          accessTokenExpiresAtRef.current - Date.now() <= 120_000;
+        if (token && !expiresSoon) {
+          cb(token);
+          return;
+        }
+        void refreshClientAccessToken(expiresSoon).then((fresh) => {
+          if (fresh) {
+            cb(fresh);
+            return;
+          }
+          if (token) cb(token);
+        });
       },
       volume: 0.5,
     });
@@ -2503,7 +2674,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     };
     const onAuthError = async ({ message }: { message: string }) => {
       setSdkLastError(message);
-      const refreshed = await refreshClientAccessToken();
+      const refreshed = await refreshClientAccessToken(true);
       if (!refreshed) {
         setSdkReadyState(false);
         setSdkLifecycle("error");
@@ -2719,12 +2890,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               );
             }
             if (playRes.status === 429) {
-              const retryAfter = Number(playRes.headers.get("Retry-After") ?? "1");
+              const retryAfterRaw = Number(playRes.headers.get("Retry-After") ?? "1");
+              const retryAfter = Number.isFinite(retryAfterRaw)
+                ? Math.min(retryAfterRaw, PLAYER_RETRY_AFTER_MAX_MS / 1000)
+                : 1;
               raisePlaybackCommandError(
                 429,
                 "RATE_LIMITED",
                 `Spotify is druk. Probeer opnieuw over ${Math.max(1, Math.round(retryAfter))}s.`,
-                Number.isFinite(retryAfter) ? retryAfter : 1
+                retryAfter
               );
             }
             raisePlaybackCommandError(
@@ -2861,12 +3035,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               );
             }
             if (contextRes.status === 429) {
-              const retryAfter = Number(contextRes.headers.get("Retry-After") ?? "1");
+              const retryAfterRaw = Number(contextRes.headers.get("Retry-After") ?? "1");
+              const retryAfter = Number.isFinite(retryAfterRaw)
+                ? Math.min(retryAfterRaw, PLAYER_RETRY_AFTER_MAX_MS / 1000)
+                : 1;
               raisePlaybackCommandError(
                 429,
                 "RATE_LIMITED",
                 `Spotify is druk. Probeer opnieuw over ${Math.max(1, Math.round(retryAfter))}s.`,
-                Number.isFinite(retryAfter) ? retryAfter : 1
+                retryAfter
               );
             }
             raisePlaybackCommandError(
@@ -2975,7 +3152,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (sessionStatus !== "authenticated") return;
     let cancelled = false;
     const bootstrap = async () => {
-      await refreshClientAccessToken();
+      await refreshClientAccessToken(true);
       if (cancelled) return;
       await refreshDevices(true);
       if (cancelled) return;
@@ -3017,31 +3194,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       lastDeviceSelectRef.current = Date.now();
 
       try {
-        let ok = false;
-        try {
-          const proxyRes = await fetch("/api/spotify/me/player", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ device_ids: [candidate.id], play: true }),
-          });
-          ok = proxyRes.ok;
-          if (!ok && proxyRes.status !== 401 && proxyRes.status !== 403) {
-            const directRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player", {
-              method: "PUT",
-              body: JSON.stringify({ device_ids: [candidate.id], play: true }),
-            });
-            ok = Boolean(directRes?.ok);
-          }
-        } catch {
-          const directRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player", {
-            method: "PUT",
-            body: JSON.stringify({ device_ids: [candidate.id], play: true }),
-          });
-          ok = Boolean(directRes?.ok);
-        }
+        const handoffContext = await captureDeviceSwitchContext();
+        const ok = await transferPlayback(candidate.id, false, activeDevice);
 
         if (ok) {
+          if (handoffContext.wasPlaying) {
+            await resumeAfterDeviceSwitch(candidate.id, handoffContext);
+          }
           setActiveDevice(candidate.id, candidate.name ?? null);
           setActiveDeviceRestricted(Boolean(candidate.isRestricted));
           setActiveDevicePrivateSession(Boolean(candidate.isPrivateSession));
@@ -3091,7 +3250,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     refreshClientAccessToken,
     refreshDevices,
     setActiveDevice,
-    spotifyApiFetch,
     syncPlaybackState,
   ]);
 
@@ -3245,12 +3403,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     setDeviceReady(false);
     setDeviceId(targetId);
     deviceIdRef.current = targetId;
-    const shouldPlay = lastIsPlayingRef.current;
+    const switchContext = await captureDeviceSwitchContext();
+    const shouldResume = switchContext.wasPlaying;
     await enqueuePlaybackCommand(async () => {
       const ready = await ensureActiveDevice(
         targetId,
         token,
-        shouldPlay,
+        false,
         previousActiveDeviceId
       );
       if (ready) {
@@ -3267,6 +3426,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         );
         if (!shuffleReady) {
           setError("Shuffle status kon niet worden toegepast op dit apparaat.");
+        }
+      }
+      if (ready && shouldResume) {
+        const resumed = await resumeAfterDeviceSwitch(targetId, switchContext);
+        if (!resumed) {
+          setError("Afspelen hervatten op dit apparaat lukte niet direct.");
+        } else {
+          setError(null);
         }
       }
       refreshDevices(true);

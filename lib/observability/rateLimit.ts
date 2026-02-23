@@ -6,6 +6,9 @@ type SpotifyRateLimitState = {
 };
 
 const RETRY_AFTER_SAMPLE_LIMIT = 12;
+const MAX_RECORDED_BACKOFF_MS = Number(
+  process.env.SPOTIFY_RETRY_AFTER_MAX_MS || "120000"
+);
 
 const state: SpotifyRateLimitState = {
   backoffUntilTs: 0,
@@ -16,7 +19,7 @@ const state: SpotifyRateLimitState = {
 
 function normalizeBackoffMs(value: number): number {
   if (!Number.isFinite(value)) return 1000;
-  return Math.max(1000, Math.floor(value));
+  return Math.max(1000, Math.min(MAX_RECORDED_BACKOFF_MS, Math.floor(value)));
 }
 
 export function recordSpotifyRateLimitBackoff(retryAfterMs: number, now = Date.now()): void {
@@ -33,6 +36,9 @@ export function recordSpotifyRateLimitBackoff(retryAfterMs: number, now = Date.n
 }
 
 export function getSpotifyRateLimitSnapshot(now = Date.now()) {
+  if (state.backoffUntilTs > now + MAX_RECORDED_BACKOFF_MS) {
+    state.backoffUntilTs = now + MAX_RECORDED_BACKOFF_MS;
+  }
   const backoffRemainingMs = Math.max(0, state.backoffUntilTs - now);
   const backoffState =
     backoffRemainingMs > 0 ? "backoff_active" : state.lastTriggeredAt > 0 ? "cooldown" : "normal";
@@ -48,4 +54,3 @@ export function getSpotifyRateLimitSnapshot(now = Date.now()) {
     ),
   };
 }
-

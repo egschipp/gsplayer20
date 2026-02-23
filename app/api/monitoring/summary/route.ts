@@ -10,6 +10,7 @@ import {
 } from "@/lib/observability/metrics";
 import { getRecentErrors } from "@/lib/observability/logger";
 import { getSpotifyRateLimitSnapshot } from "@/lib/observability/rateLimit";
+import { getAppAccessToken, getAppTokenStatus } from "@/lib/spotify/tokens";
 
 export const runtime = "nodejs";
 
@@ -19,6 +20,13 @@ export async function GET() {
 
   const db = getDb();
   const now = Date.now();
+  let appTokenFetchError: string | null = null;
+  try {
+    await getAppAccessToken();
+  } catch (error) {
+    appTokenFetchError = String(error).slice(0, 256);
+  }
+  const appTokenStatus = getAppTokenStatus(now);
 
   const tokenRow = await db
     .select({
@@ -63,6 +71,18 @@ export async function GET() {
     typeof tokenRow?.accessExpiresAt === "number" && tokenRow.accessExpiresAt > 0
       ? Math.max(0, Math.floor((tokenRow.accessExpiresAt - now) / 1000))
       : null;
+  const userTokenStatus =
+    !tokenRow
+      ? "MISSING"
+      : expiresInSec == null
+      ? "MISSING_ACCESS"
+      : expiresInSec <= 0
+      ? "EXPIRED"
+      : expiresInSec <= 120
+      ? "EXPIRING"
+      : refreshInvalidGrant > 0
+      ? "REAUTH_REQUIRED"
+      : "VALID";
 
   const scopes =
     typeof tokenRow?.scope === "string"
@@ -139,13 +159,26 @@ export async function GET() {
       lastAuthAt: tokenRow?.updatedAt ?? null,
     },
     tokenHealth: {
+      status: userTokenStatus,
       expiresInSec,
       refreshSuccessRate:
         refreshAttempts > 0 ? Number((refreshSuccess / refreshAttempts).toFixed(4)) : 1,
       refreshAttempts,
+      refreshSuccessCount: refreshSuccess,
+      refreshFailureCount: refreshInvalidGrant + refreshFailed + refreshLockTimeout,
       invalidGrantCount: refreshInvalidGrant,
       lockWaitP95Ms: refreshLockLatency.p95,
       lastRefreshAt: tokenRow?.updatedAt ?? null,
+    },
+    appTokenHealth: {
+      status: appTokenStatus.status,
+      expiresInSec: appTokenStatus.expiresInSec,
+      expiresAt: appTokenStatus.expiresAt,
+      refreshSuccessCount: appTokenStatus.refreshSuccessCount,
+      refreshFailureCount: appTokenStatus.refreshFailureCount,
+      lastRefreshAt: appTokenStatus.lastRefreshAt,
+      lastAttemptAt: appTokenStatus.lastAttemptAt,
+      lastError: appTokenFetchError ?? appTokenStatus.lastError,
     },
     apiHealth: {
       successRate: apiTotal > 0 ? Number((apiSuccess / apiTotal).toFixed(4)) : 1,

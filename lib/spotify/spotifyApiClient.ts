@@ -3,6 +3,11 @@ import { logEvent } from "@/lib/observability/logger";
 import { createCorrelationId } from "@/lib/observability/correlation";
 import { recordSpotifyRateLimitBackoff } from "@/lib/observability/rateLimit";
 
+const RETRY_AFTER_MIN_MS = 1_000;
+const RETRY_AFTER_MAX_MS = Number(
+  process.env.SPOTIFY_RETRY_AFTER_MAX_MS || "120000"
+);
+
 export class SpotifyApiError extends Error {
   status: number;
   code: string;
@@ -30,12 +35,29 @@ export class SpotifyApiError extends Error {
   }
 }
 
+function normalizeRetryAfterMs(valueMs: number | null): number | null {
+  if (valueMs == null || !Number.isFinite(valueMs)) return null;
+  return Math.max(
+    RETRY_AFTER_MIN_MS,
+    Math.min(RETRY_AFTER_MAX_MS, Math.floor(valueMs))
+  );
+}
+
 function parseRetryAfterMs(res: Response): number | null {
   const raw = res.headers.get("retry-after") || res.headers.get("Retry-After");
   if (!raw) return null;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return Math.round(parsed * 1000);
+  const asSeconds = Number(raw);
+  if (Number.isFinite(asSeconds) && asSeconds > 0) {
+    return normalizeRetryAfterMs(asSeconds * 1000);
+  }
+  const parsedDate = Date.parse(raw);
+  if (Number.isFinite(parsedDate)) {
+    const fromNow = parsedDate - Date.now();
+    if (fromNow > 0) {
+      return normalizeRetryAfterMs(fromNow);
+    }
+  }
+  return null;
 }
 
 function classifyCode(
@@ -99,6 +121,13 @@ function shouldRetryStatus(status: number): boolean {
 
 function jitterMs(baseMs: number): number {
   return Math.max(10, Math.round(baseMs * (0.5 + Math.random() * 0.5)));
+}
+
+function waitWithRetryAfterJitter(baseMs: number): number {
+  return Math.min(
+    RETRY_AFTER_MAX_MS,
+    Math.max(baseMs, Math.round(baseMs * (1 + Math.random() * 0.15)))
+  );
 }
 
 function endpointGroup(url: string): string {
@@ -173,7 +202,9 @@ export async function spotifyApiRequest<T>(params: {
       const retryAfterMs = parseRetryAfterMs(res);
       const code = classifyCode(res.status, text, group, method);
       const retryable = shouldRetryStatus(res.status);
-      const retryWaitMs = retryAfterMs ?? Math.min(500 * attempt * attempt, 5_000);
+      const retryWaitMs =
+        normalizeRetryAfterMs(retryAfterMs) ??
+        Math.min(500 * attempt * attempt, 5_000);
       const expected = isExpectedHttpCondition({
         status: res.status,
         endpointGroup: group,
@@ -194,7 +225,10 @@ export async function spotifyApiRequest<T>(params: {
       });
 
       if (retryable && attempt < maxAttempts) {
-        const waitMs = jitterMs(retryWaitMs);
+        const waitMs =
+          retryAfterMs != null
+            ? waitWithRetryAfterJitter(retryWaitMs)
+            : jitterMs(retryWaitMs);
         if (res.status === 429) {
           recordSpotifyRateLimitBackoff(waitMs);
         }

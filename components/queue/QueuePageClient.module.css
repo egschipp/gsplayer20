@@ -1,6 +1,6 @@
 .page {
   display: grid;
-  gap: 16px;
+  gap: 18px;
 }
 
 .header {
@@ -57,10 +57,11 @@
 }
 
 .tableWrap {
+  --queue-columns: 132px minmax(0, 1fr) minmax(124px, 0.62fr) 72px 118px;
   display: grid;
-  gap: 8px;
+  gap: 10px;
   overflow-x: auto;
-  padding-bottom: 2px;
+  padding-bottom: 4px;
 }
 
 .tableWrap::-webkit-scrollbar {
@@ -74,8 +75,9 @@
 
 .queueHeader,
 .queueRowInner {
-  min-width: 760px;
-  grid-template-columns: 136px minmax(0, 1fr) minmax(120px, 0.6fr) 72px 124px;
+  width: 100%;
+  min-width: 700px;
+  grid-template-columns: var(--queue-columns);
 }
 
 .statusHeader {
@@ -279,10 +281,13 @@
 }
 
 @media (max-width: 900px) {
+  .tableWrap {
+    --queue-columns: 124px minmax(0, 1fr) 72px 108px;
+  }
+
   .queueHeader,
   .queueRowInner {
-    min-width: 620px;
-    grid-template-columns: 136px minmax(0, 1fr) 72px 124px;
+    min-width: 540px;
   }
 
   .statusHeader,

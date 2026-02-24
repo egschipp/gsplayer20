@@ -45,8 +45,9 @@ export function resolveCanonicalTrackId(candidate: {
   trackId: string | null;
   linkedFromTrackId: string | null;
 }) {
+  // For recommendation seeds we prefer the concrete playable track id from the playlist item.
   return (
-    normalizeTrackId(candidate.linkedFromTrackId) ?? normalizeTrackId(candidate.trackId) ?? null
+    normalizeTrackId(candidate.trackId) ?? normalizeTrackId(candidate.linkedFromTrackId) ?? null
   );
 }
 
@@ -74,6 +75,7 @@ export function selectDeterministicPlaylistSeedPool(args: {
       itemId: string;
     }
   >();
+  const blockedTrackIds = new Set<string>();
 
   for (const candidate of candidates) {
     if (candidate.isLocal === 1) continue;
@@ -83,6 +85,10 @@ export function selectDeterministicPlaylistSeedPool(args: {
     ) {
       continue;
     }
+    const sourceTrackId = normalizeTrackId(candidate.trackId);
+    const linkedTrackId = normalizeTrackId(candidate.linkedFromTrackId);
+    if (sourceTrackId) blockedTrackIds.add(sourceTrackId);
+    if (linkedTrackId) blockedTrackIds.add(linkedTrackId);
     const canonicalId = resolveCanonicalTrackId(candidate);
     if (!canonicalId) continue;
     const position =
@@ -129,7 +135,6 @@ export function selectDeterministicPlaylistSeedPool(args: {
     .slice(0, Math.max(1, Math.floor(maxSeedPoolSize)))
     .map((entry) => entry.canonicalId);
 
-  const blockedTrackIds = new Set<string>(allCanonicalIds);
   const result: SeedSelectorResult = {
     seedTrackPool,
     blockedTrackIds,

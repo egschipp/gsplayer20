@@ -172,7 +172,13 @@ function isRejectedSeedError(error: SpotifyFetchError) {
   if (error.status !== 400 && error.status !== 404) return false;
   const text = normalizeSpotifyErrorText(error.body);
   if (!text) return false;
-  return text.includes("seed") || text.includes("invalid id") || text.includes("invalid base62");
+  return (
+    text.includes("seed") ||
+    text.includes("invalid id") ||
+    text.includes("invalid base62") ||
+    text.includes("no recommendations available") ||
+    text.includes("provided seeds")
+  );
 }
 
 function isRecommendationsUnavailableError(error: SpotifyFetchError) {
@@ -253,8 +259,16 @@ function mapRecommendationTracks(
   for (const track of tracks) {
     const trackId = normalizeTrackId(track?.id ?? null);
     if (!trackId) continue;
-    const canonicalTrackId = normalizeTrackId(track?.linked_from?.id ?? null) ?? trackId;
-    if (seen.has(canonicalTrackId) || blockedTrackIds.has(canonicalTrackId)) continue;
+    const linkedTrackId = normalizeTrackId(track?.linked_from?.id ?? null);
+    const canonicalTrackId = linkedTrackId ?? trackId;
+    if (seen.has(canonicalTrackId)) continue;
+    if (
+      blockedTrackIds.has(canonicalTrackId) ||
+      blockedTrackIds.has(trackId) ||
+      (linkedTrackId ? blockedTrackIds.has(linkedTrackId) : false)
+    ) {
+      continue;
+    }
     if (track?.is_playable === false) continue;
     if (typeof track?.restrictions?.reason === "string") continue;
     seen.add(canonicalTrackId);
@@ -461,10 +475,6 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
             message: "Geen toegang tot Spotify recommendations voor deze playlist.",
             correlationId: error.correlationId,
           });
-        }
-        if (error.status === 404) {
-          hadRejectedSeedAttempt = true;
-          continue;
         }
         if (isTransientUpstreamError(error)) {
           lastUpstreamError = error;

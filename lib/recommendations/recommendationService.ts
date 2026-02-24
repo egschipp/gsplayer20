@@ -79,8 +79,8 @@ const RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS = clampInt(
 );
 
 const RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS = clampInt(
-  Number(process.env.SPOTIFY_RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS ?? "2"),
-  2,
+  Number(process.env.SPOTIFY_RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS ?? "3"),
+  3,
   1,
   3
 );
@@ -98,6 +98,20 @@ const RECOMMENDATIONS_CACHE_STALE_MS = clampInt(
   RECOMMENDATIONS_CACHE_TTL_MS,
   3_600_000
 );
+
+const RECOMMENDATIONS_LAST_SUCCESS_TTL_MS = clampInt(
+  Number(process.env.SPOTIFY_RECOMMENDATIONS_LAST_SUCCESS_TTL_MS ?? "1800000"),
+  1_800_000,
+  60_000,
+  7_200_000
+);
+
+type LastSuccessEntry = {
+  payload: CachedRecommendationsPayload;
+  expiresAt: number;
+};
+
+const lastSuccessByPlaylist = new Map<string, LastSuccessEntry>();
 
 const recommendationsCapabilityState = {
   unsupportedUntil: 0,
@@ -203,6 +217,48 @@ function isRecommendationsUnavailableError(error: SpotifyFetchError) {
 
 function isTransientUpstreamError(error: SpotifyFetchError) {
   return error.status === 0 || error.status >= 500;
+}
+
+function cleanupLastSuccessCache(now = Date.now()) {
+  for (const [key, entry] of lastSuccessByPlaylist.entries()) {
+    if (entry.expiresAt <= now) {
+      lastSuccessByPlaylist.delete(key);
+    }
+  }
+}
+
+function lastSuccessKey(args: { userId: string; playlistId: string; limit: number }) {
+  return `playlist-recommendations:last:v1:${args.userId}:${args.playlistId}:limit:${args.limit}|mode:${RECOMMENDATIONS_MODE}`;
+}
+
+function setLastSuccess(args: {
+  userId: string;
+  playlistId: string;
+  limit: number;
+  payload: CachedRecommendationsPayload;
+}) {
+  cleanupLastSuccessCache();
+  const key = lastSuccessKey({
+    userId: args.userId,
+    playlistId: args.playlistId,
+    limit: args.limit,
+  });
+  lastSuccessByPlaylist.set(key, {
+    payload: args.payload,
+    expiresAt: Date.now() + RECOMMENDATIONS_LAST_SUCCESS_TTL_MS,
+  });
+}
+
+function getLastSuccess(args: { userId: string; playlistId: string; limit: number }) {
+  cleanupLastSuccessCache();
+  const key = lastSuccessKey(args);
+  const entry = lastSuccessByPlaylist.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    lastSuccessByPlaylist.delete(key);
+    return null;
+  }
+  return entry.payload;
 }
 
 function markRecommendationsUnavailable(reason: string) {
@@ -556,20 +612,52 @@ export async function getPlaylistRecommendations(args: {
     limit,
   });
   const cacheKey = `playlist-recommendations:v2:${args.userId}:${playlistId}:${context.snapshotToken}|limit:${limit}|mode:${RECOMMENDATIONS_MODE}`;
-  const cached = await getCachedValue<CachedRecommendationsPayload>({
-    key: cacheKey,
-    ttlMs: RECOMMENDATIONS_CACHE_TTL_MS,
-    staleMs: RECOMMENDATIONS_CACHE_STALE_MS,
-    forceRefresh: Boolean(args.forceRefresh),
-    loader: async () => {
-      return await loadRecommendationsFromSpotify(context);
-    },
-  });
+  let cached: { value: CachedRecommendationsPayload; cacheState: "hit" | "miss" | "coalesced" | "stale" };
+  try {
+    cached = await getCachedValue<CachedRecommendationsPayload>({
+      key: cacheKey,
+      ttlMs: RECOMMENDATIONS_CACHE_TTL_MS,
+      staleMs: RECOMMENDATIONS_CACHE_STALE_MS,
+      forceRefresh: Boolean(args.forceRefresh),
+      loader: async () => {
+        return await loadRecommendationsFromSpotify(context);
+      },
+    });
+  } catch (error) {
+    if (
+      error instanceof RecommendationsServiceError &&
+      (error.code === "SPOTIFY_UPSTREAM" ||
+        error.code === "RATE_LIMIT" ||
+        error.code === "RECOMMENDATIONS_UNAVAILABLE")
+    ) {
+      const fallback = getLastSuccess({
+        userId: args.userId,
+        playlistId,
+        limit,
+      });
+      if (fallback) {
+        return {
+          ...fallback,
+          asOf: Date.now(),
+          cacheState: "stale",
+        };
+      }
+    }
+    throw error;
+  }
 
   const payload: PlaylistRecommendationsPayload = {
     ...cached.value,
     cacheState: cached.cacheState,
   };
+  if (payload.items.length > 0) {
+    setLastSuccess({
+      userId: args.userId,
+      playlistId,
+      limit,
+      payload: cached.value,
+    });
+  }
   return payload;
 }
 

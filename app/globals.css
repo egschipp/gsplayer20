@@ -680,6 +680,63 @@ a:focus-visible {
   gap: 8px;
 }
 
+.track-list-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 0.9rem;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.track-list-section-toggle:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.track-list-section-toggle:focus-visible {
+  outline: 2px solid var(--tide);
+  outline-offset: 2px;
+}
+
+.track-list-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 2px;
+}
+
+.track-list-section-title {
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.track-list-section-meta {
+  margin-left: auto;
+  font-size: 0.82rem;
+  color: var(--text-subtle);
+}
+
+.track-list-section-chevron {
+  font-size: 0.95rem;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 160ms ease;
+}
+
+.track-list-section-toggle.open .track-list-section-chevron {
+  transform: rotate(180deg);
+}
+
+.track-list-collapsed-note {
+  padding: 10px 6px 4px;
+}
+
 .track-header {
   display: grid;
   grid-template-columns: 98px 1fr auto;

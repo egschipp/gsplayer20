@@ -781,6 +781,35 @@ function dedupeTrackRows(rows: TrackRow[]) {
   return deduped;
 }
 
+function resolveTrackRowSeedId(row: TrackRow) {
+  return (
+    normalizeTrackIdentity(row.trackId) ??
+    normalizeTrackIdentity(row.linkedFromTrackId) ??
+    normalizeTrackIdentity(row.id) ??
+    null
+  );
+}
+
+function pickRandomRecommendationSeedTrackIds(rows: TrackRow[], count = 5) {
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const id = resolveTrackRowSeedId(row);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(id);
+  }
+  if (unique.length < count) return [] as string[];
+  const shuffled = [...unique];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    const temp = shuffled[index];
+    shuffled[index] = shuffled[swapIndex];
+    shuffled[swapIndex] = temp;
+  }
+  return shuffled.slice(0, count);
+}
+
 function mergeTrackItemArtists(
   primary?: Array<{ id: string; name: string }> | null,
   secondary?: Array<{ id: string; name: string }> | null
@@ -933,6 +962,10 @@ export default function PlaylistBrowser() {
   const [loadingArtists, setLoadingArtists] = useState(false);
   const [loadingTracksList, setLoadingTracksList] = useState(false);
   const [loadingTracks, setLoadingTracks] = useState(false);
+  const [tracksListCollapsed, setTracksListCollapsed] = useState(false);
+  const [recommendations, setRecommendations] = useState<TrackRow[]>([]);
+  const [recommendationsLoading, setRecommendationsLoading] = useState(false);
+  const [recommendationsError, setRecommendationsError] = useState<string | null>(null);
   const [selectedTrackDetail, setSelectedTrackDetail] = useState<TrackDetail | null>(
     null
   );
@@ -978,6 +1011,7 @@ export default function PlaylistBrowser() {
   const artistDetailDialogRef = useRef<HTMLDivElement | null>(null);
   const artistDetailRestoreFocusRef = useRef<HTMLElement | null>(null);
   const hydratingPlaylistTargetsRef = useRef(false);
+  const recommendationsRequestKeyRef = useRef<string | null>(null);
   const comboMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setOpen(false),
   });
@@ -1852,6 +1886,10 @@ export default function PlaylistBrowser() {
   }, [mode]);
 
   useEffect(() => {
+    setTracksListCollapsed(false);
+  }, [mode, selectedPlaylist?.id, selectedArtist?.id, selectedTrackId, selectedAlbumId]);
+
+  useEffect(() => {
     const handle = setTimeout(() => {
       setDebouncedQuery(query);
     }, 250);
@@ -2624,6 +2662,112 @@ export default function PlaylistBrowser() {
     likedTracksTotal,
   ]);
 
+  useEffect(() => {
+    recommendationsRequestKeyRef.current = null;
+    if (mode === "playlists" && selectedPlaylist?.id) return;
+    setRecommendations([]);
+    setRecommendationsError(null);
+    setRecommendationsLoading(false);
+  }, [mode, selectedPlaylist?.id, selectedPlaylist?.type, tracksRefreshToken]);
+
+  useEffect(() => {
+    if (mode !== "playlists" || !selectedPlaylist?.id) return;
+    const isSwitchingContext = Boolean(
+      loadingTracks &&
+        pendingTracksContextKey &&
+        pendingTracksContextKey !== tracksContextKey
+    );
+    if (loadingTracks || isSwitchingContext) return;
+
+    const seedTrackIds = pickRandomRecommendationSeedTrackIds(tracks, 5);
+    if (seedTrackIds.length < 5) {
+      setRecommendations([]);
+      setRecommendationsError("Minimaal 5 unieke tracks nodig voor Recommendations.");
+      setRecommendationsLoading(false);
+      recommendationsRequestKeyRef.current = null;
+      return;
+    }
+
+    const requestKey = `recommendations:${selectedPlaylist.type}:${selectedPlaylist.id}:${
+      tracksContextKey ?? "no-context"
+    }`;
+    if (recommendationsRequestKeyRef.current === requestKey) return;
+    recommendationsRequestKeyRef.current = requestKey;
+
+    let cancelled = false;
+    const controller = new AbortController();
+    const sourceTrackIds = new Set<string>();
+    for (const row of tracks) {
+      const canonicalId = resolveTrackRowCanonicalId(row);
+      if (canonicalId) sourceTrackIds.add(canonicalId);
+    }
+
+    async function loadRecommendations() {
+      setRecommendationsLoading(true);
+      setRecommendationsError(null);
+      try {
+        const res = await fetch(
+          buildApiUrl("/api/spotify/me/recommendations", {
+            seed_tracks: seedTrackIds.join(","),
+            limit: "25",
+          }),
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          }
+        );
+        if (!res.ok) {
+          const mapped = mapSpotifyApiError(
+            res.status,
+            "Recommendations laden lukt nu niet."
+          );
+          if (!cancelled) {
+            setAuthRequired(Boolean(mapped.authRequired));
+            setRecommendationsError(mapped.message);
+            setRecommendations([]);
+            recommendationsRequestKeyRef.current = null;
+          }
+          return;
+        }
+        const data = (await res.json()) as CursorResponse<TrackRow>;
+        const items = Array.isArray(data.items) ? data.items : [];
+        const filtered = dedupeTrackRows(items).filter((row) => {
+          const canonicalId = resolveTrackRowCanonicalId(row);
+          if (!canonicalId || sourceTrackIds.has(canonicalId)) return false;
+          return !row.restrictionsReason;
+        });
+        if (!cancelled) {
+          setRecommendations(filtered);
+          setRecommendationsError(null);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        if (String(error).includes("AbortError")) return;
+        setRecommendationsError("Recommendations laden lukt nu niet.");
+        setRecommendations([]);
+        recommendationsRequestKeyRef.current = null;
+      } finally {
+        if (!cancelled) {
+          setRecommendationsLoading(false);
+        }
+      }
+    }
+
+    void loadRecommendations();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    loadingTracks,
+    mode,
+    pendingTracksContextKey,
+    selectedPlaylist?.id,
+    selectedPlaylist?.type,
+    tracks,
+    tracksContextKey,
+  ]);
+
   async function loadMore() {
     if (!nextCursor || loadingMoreTracksRef.current) return;
     if (mode === "playlists" && !selectedPlaylist?.id) return;
@@ -3123,6 +3267,50 @@ export default function PlaylistBrowser() {
     }
   }
 
+  const handlePlayRecommendedTrack = useCallback(
+    async (track: TrackRow | TrackItem | null | undefined) => {
+      if (!track) return;
+      if (!playerApi) {
+        setError("Spotify player is nog niet klaar. Probeer het over een paar seconden opnieuw.");
+        return;
+      }
+      playerApi.primePlaybackGesture?.();
+      try {
+        if (queue.mode === "queue") {
+          queue.setMode("idle");
+        }
+        const trackId = resolveTrackId(track);
+        if (!trackId) return;
+        const targetUri = `spotify:track:${trackId}`;
+        const recommendationUris = dedupeTrackRows(recommendations)
+          .map((row) => row.trackId)
+          .filter((id): id is string => Boolean(id))
+          .map((id) => `spotify:track:${id}`);
+        if (recommendationUris.length && recommendationUris.includes(targetUri)) {
+          await playerApi.playQueue(recommendationUris, targetUri);
+          return;
+        }
+        await playerApi.playQueue([targetUri], targetUri, 0);
+      } catch (error) {
+        const message = String(error).toLowerCase();
+        if (
+          message.includes("_403_") ||
+          message.includes("forbidden") ||
+          message.includes("insufficient_scope")
+        ) {
+          setError("Ontbrekende Spotify-rechten. Koppel Spotify opnieuw.");
+        } else if (message.includes("_401_") || message.includes("unauthenticated")) {
+          setError("Spotify-sessie verlopen. Koppel Spotify opnieuw.");
+        } else if (message.includes("quotaexceeded")) {
+          setError("Browser-opslag is vol. Ververs de pagina en probeer opnieuw.");
+        } else {
+          setError("Track afspelen lukt nu niet.");
+        }
+      }
+    },
+    [playerApi, queue, recommendations]
+  );
+
   const hasTrackContext =
     mode === "tracks"
       ? Boolean(selectedTrackId)
@@ -3167,6 +3355,12 @@ export default function PlaylistBrowser() {
           .filter(Boolean)
           .join(" • ")
       : "";
+  const showRecommendations =
+    mode === "playlists" && Boolean(selectedPlaylist?.id);
+  const isMainListCollapsed = mode === "playlists" && tracksListCollapsed;
+  const recommendationsCountLabel = `${recommendations.length} ${
+    recommendations.length === 1 ? "track" : "tracks"
+  }`;
 
 
   const selectorDock = (
@@ -3553,68 +3747,172 @@ export default function PlaylistBrowser() {
         </div>
       ) : null}
       {mode === "playlists" || mode === "artists" ? (
-        <div className="track-list" style={{ marginTop: 16 }}>
-          {!isContextSwitchLoading &&
-          !loadingTracks &&
-          !tracks.length &&
-          ((mode === "playlists" && selectedPlaylist?.id) ||
-            (mode === "artists" && selectedArtist?.id)) ? (
-            <div className="empty-state">
-              <div style={{ fontWeight: 600 }}>Geen tracks gevonden</div>
-              <div className="text-body">
-                Werk de bibliotheek bij via Settings als dit onverwacht is.
-              </div>
-            </div>
-          ) : null}
-          {tracks.length ? (
-            <div className="track-header columns-6">
-              <div />
-              <div>Track</div>
-              <div className="track-col-year">Jaar</div>
-              <div className="track-col-playlists">Playlists</div>
-              <div className="track-col-duration">Duur</div>
-              <div className="track-col-actions">Acties</div>
-            </div>
-          ) : null}
-          {tracks.length ? (
-            <List
-              height={listHeight}
-              itemCount={tracks.length}
-              itemSize={TRACK_ROW_HEIGHT}
-              width="100%"
-              overscanCount={6}
-              onItemsRendered={({ visibleStopIndex }) => {
-                if (nextCursor && visibleStopIndex >= tracks.length - 4) {
-                  loadMore();
+        <>
+          <div className="track-list" style={{ marginTop: 16 }}>
+            {mode === "playlists" && selectedPlaylist?.id ? (
+              <button
+                type="button"
+                className={`track-list-section-toggle${
+                  isMainListCollapsed ? "" : " open"
+                }`}
+                aria-expanded={!isMainListCollapsed}
+                aria-label={
+                  isMainListCollapsed
+                    ? "Klap huidige lijst uit"
+                    : "Klap huidige lijst in"
                 }
-              }}
-              itemKey={(index: number, data: TrackRowData) => {
-                const item = data.items[index];
-                return item.itemId || item.trackId || index;
-              }}
-              itemData={{
-                items: tracks,
-                mode,
-                currentTrackId,
-                openDetailFromRow,
-                handlePlayTrack,
-                addTrackToQueue: handleAddTrackToQueue,
-                addTrackToPlaylist: handleAddTrackToPlaylist,
-                selectPlaylistInMyMusic,
-                addTargetOptions,
-                addingTargetKey,
-                ensureAllPlaylistOptionsLoaded,
-                allPlaylistNames,
-                MAX_PLAYLIST_CHIPS,
-                selectArtistInMyMusic,
-                selectAlbumInMyMusic,
-              }}
-              className="track-virtual-list"
-            >
-              {TrackRowRenderer}
-            </List>
+                onClick={() => setTracksListCollapsed((prev) => !prev)}
+              >
+                <span className="track-list-section-title">Huidige lijst</span>
+                <span className="track-list-section-meta">
+                  {tracks.length} {tracks.length === 1 ? "track" : "tracks"}
+                </span>
+                <span className="track-list-section-chevron" aria-hidden="true">
+                  ⌄
+                </span>
+              </button>
+            ) : null}
+            {!isMainListCollapsed ? (
+              <>
+                {!isContextSwitchLoading &&
+                !loadingTracks &&
+                !tracks.length &&
+                ((mode === "playlists" && selectedPlaylist?.id) ||
+                  (mode === "artists" && selectedArtist?.id)) ? (
+                  <div className="empty-state">
+                    <div style={{ fontWeight: 600 }}>Geen tracks gevonden</div>
+                    <div className="text-body">
+                      Werk de bibliotheek bij via Settings als dit onverwacht is.
+                    </div>
+                  </div>
+                ) : null}
+                {tracks.length ? (
+                  <div className="track-header columns-6">
+                    <div />
+                    <div>Track</div>
+                    <div className="track-col-year">Jaar</div>
+                    <div className="track-col-playlists">Playlists</div>
+                    <div className="track-col-duration">Duur</div>
+                    <div className="track-col-actions">Acties</div>
+                  </div>
+                ) : null}
+                {tracks.length ? (
+                  <List
+                    height={listHeight}
+                    itemCount={tracks.length}
+                    itemSize={TRACK_ROW_HEIGHT}
+                    width="100%"
+                    overscanCount={6}
+                    onItemsRendered={({ visibleStopIndex }) => {
+                      if (nextCursor && visibleStopIndex >= tracks.length - 4) {
+                        loadMore();
+                      }
+                    }}
+                    itemKey={(index: number, data: TrackRowData) => {
+                      const item = data.items[index];
+                      return item.itemId || item.trackId || index;
+                    }}
+                    itemData={{
+                      items: tracks,
+                      mode,
+                      currentTrackId,
+                      openDetailFromRow,
+                      handlePlayTrack,
+                      addTrackToQueue: handleAddTrackToQueue,
+                      addTrackToPlaylist: handleAddTrackToPlaylist,
+                      selectPlaylistInMyMusic,
+                      addTargetOptions,
+                      addingTargetKey,
+                      ensureAllPlaylistOptionsLoaded,
+                      allPlaylistNames,
+                      MAX_PLAYLIST_CHIPS,
+                      selectArtistInMyMusic,
+                      selectAlbumInMyMusic,
+                    }}
+                    className="track-virtual-list"
+                  >
+                    {TrackRowRenderer}
+                  </List>
+                ) : null}
+              </>
+            ) : (
+              <div className="track-list-collapsed-note text-subtle">
+                Huidige lijst is ingeklapt.
+              </div>
+            )}
+          </div>
+          {showRecommendations ? (
+            <div className="track-list track-list-recommendations" style={{ marginTop: 16 }}>
+              <div className="track-list-section-heading">
+                <span className="track-list-section-title">Recommendations</span>
+                <span className="track-list-section-meta">{recommendationsCountLabel}</span>
+              </div>
+              {recommendationsLoading ? (
+                <p className="text-body" role="status">
+                  Recommendations laden...
+                </p>
+              ) : null}
+              {!recommendationsLoading && recommendationsError ? (
+                <div style={{ color: "#fca5a5" }} role="alert">
+                  <p>{recommendationsError}</p>
+                </div>
+              ) : null}
+              {!recommendationsLoading &&
+              !recommendationsError &&
+              !recommendations.length ? (
+                <div className="empty-state">
+                  <div style={{ fontWeight: 600 }}>Nog geen recommendations</div>
+                  <div className="text-body">
+                    Kies een playlist met minimaal 5 tracks om recommendations te tonen.
+                  </div>
+                </div>
+              ) : null}
+              {recommendations.length ? (
+                <div className="track-header columns-6">
+                  <div />
+                  <div>Track</div>
+                  <div className="track-col-year">Jaar</div>
+                  <div className="track-col-playlists">Playlists</div>
+                  <div className="track-col-duration">Duur</div>
+                  <div className="track-col-actions">Acties</div>
+                </div>
+              ) : null}
+              {recommendations.length ? (
+                <List
+                  height={listHeight}
+                  itemCount={recommendations.length}
+                  itemSize={TRACK_ROW_HEIGHT}
+                  width="100%"
+                  overscanCount={6}
+                  itemKey={(index: number, data: TrackRowData) => {
+                    const item = data.items[index];
+                    return item.itemId || item.trackId || index;
+                  }}
+                  itemData={{
+                    items: recommendations,
+                    mode: "playlists",
+                    currentTrackId,
+                    openDetailFromRow,
+                    handlePlayTrack: handlePlayRecommendedTrack,
+                    addTrackToQueue: handleAddTrackToQueue,
+                    addTrackToPlaylist: handleAddTrackToPlaylist,
+                    selectPlaylistInMyMusic,
+                    addTargetOptions,
+                    addingTargetKey,
+                    ensureAllPlaylistOptionsLoaded,
+                    allPlaylistNames,
+                    MAX_PLAYLIST_CHIPS,
+                    selectArtistInMyMusic,
+                    selectAlbumInMyMusic,
+                  }}
+                  className="track-virtual-list"
+                >
+                  {TrackRowRenderer}
+                </List>
+              ) : null}
+            </div>
           ) : null}
-        </div>
+        </>
       ) : (
         <div className="track-list" style={{ marginTop: 16 }}>
           {!loadingTracksList &&
@@ -3679,8 +3977,12 @@ export default function PlaylistBrowser() {
           !(mode === "tracks" ? selectedTrackId : selectedAlbumId) && loadingTracksList ? (
             <span className="text-body">Tracks laden...</span>
           ) : null
-        ) : loadingTracks || loadingMoreTracks ? (
-          <span className="text-body">Tracks laden...</span>
+        ) : loadingTracks || loadingMoreTracks || recommendationsLoading ? (
+          <span className="text-body">
+            {recommendationsLoading && !(loadingTracks || loadingMoreTracks)
+              ? "Recommendations laden..."
+              : "Tracks laden..."}
+          </span>
         ) : null}
       </div>
 

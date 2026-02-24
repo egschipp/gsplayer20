@@ -2866,6 +2866,11 @@ export default function PlaylistBrowser() {
     return () => {
       cancelled = true;
       controller.abort();
+      clearRecommendationsRetryTimer();
+      if (recommendationsRequestKeyRef.current === requestKey) {
+        recommendationsRequestKeyRef.current = null;
+      }
+      setRecommendationsLoading(false);
     };
   }, [
     loadingTracks,

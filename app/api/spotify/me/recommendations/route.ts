@@ -562,6 +562,19 @@ async function buildLocalFallbackRecommendations(args: {
   return deduped;
 }
 
+async function buildLocalFallbackRecommendationsSafe(args: {
+  userId: string;
+  limit: number;
+  blockedTrackIds: Set<string>;
+  seedArtists: string[];
+}) {
+  try {
+    return await buildLocalFallbackRecommendations(args);
+  } catch {
+    return [] as RecommendationItem[];
+  }
+}
+
 export async function GET(req: Request) {
   const { session, response } = await requireAppUser();
   if (response) return response;
@@ -583,7 +596,7 @@ export async function GET(req: Request) {
   const blockedTrackIds = new Set(seedTracks);
 
   if (RECOMMENDATIONS_MODE === "off") {
-    const localFallback = await buildLocalFallbackRecommendations({
+    const localFallback = await buildLocalFallbackRecommendationsSafe({
       userId: session.appUserId as string,
       limit,
       blockedTrackIds,
@@ -605,7 +618,7 @@ export async function GET(req: Request) {
     RECOMMENDATIONS_MODE === "auto" &&
     recommendationsCapabilityState.unsupportedUntil > Date.now()
   ) {
-    const localFallback = await buildLocalFallbackRecommendations({
+    const localFallback = await buildLocalFallbackRecommendationsSafe({
       userId: session.appUserId as string,
       limit,
       blockedTrackIds,
@@ -689,7 +702,7 @@ export async function GET(req: Request) {
       });
     }
 
-    const localFallback = await buildLocalFallbackRecommendations({
+    const localFallback = await buildLocalFallbackRecommendationsSafe({
       userId: session.appUserId as string,
       limit,
       blockedTrackIds,
@@ -732,7 +745,7 @@ export async function GET(req: Request) {
       if (isRecommendationsUnavailableError(error)) {
         const reason = extractSpotifyErrorMessage(error.body) || "upstream_unavailable";
         markRecommendationsUnavailable(reason);
-        const localFallback = await buildLocalFallbackRecommendations({
+        const localFallback = await buildLocalFallbackRecommendationsSafe({
           userId: session.appUserId as string,
           limit,
           blockedTrackIds,
@@ -767,11 +780,51 @@ export async function GET(req: Request) {
           retryAfter ? { "Retry-After": String(retryAfter) } : undefined
         );
       }
-      return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
+      const localFallback = await buildLocalFallbackRecommendationsSafe({
+        userId: session.appUserId as string,
+        limit,
+        blockedTrackIds,
+        seedArtists: seedArtistsFromRequest,
+      });
+      if (localFallback.length > 0) {
+        return jsonNoStore({
+          items: localFallback,
+          totalCount: localFallback.length,
+          asOf: Date.now(),
+          source: "local_fallback",
+          reason: "spotify_upstream",
+        });
+      }
+      return jsonNoStore({
+        items: [],
+        totalCount: 0,
+        asOf: Date.now(),
+        reason: "spotify_upstream",
+      });
     }
     if (String(error).includes("UserNotAuthenticated")) {
       return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
     }
-    return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
+    const localFallback = await buildLocalFallbackRecommendationsSafe({
+      userId: session.appUserId as string,
+      limit,
+      blockedTrackIds,
+      seedArtists: seedArtistsFromRequest,
+    });
+    if (localFallback.length > 0) {
+      return jsonNoStore({
+        items: localFallback,
+        totalCount: localFallback.length,
+        asOf: Date.now(),
+        source: "local_fallback",
+        reason: "internal_recovery",
+      });
+    }
+    return jsonNoStore({
+      items: [],
+      totalCount: 0,
+      asOf: Date.now(),
+      reason: "internal_recovery",
+    });
   }
 }

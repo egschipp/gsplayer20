@@ -794,12 +794,16 @@ function pickRandomRecommendationSeedTrackIds(rows: TrackRow[], count = 5) {
   const unique: string[] = [];
   const seen = new Set<string>();
   for (const row of rows) {
+    if (typeof row.restrictionsReason === "string" && row.restrictionsReason.trim()) {
+      continue;
+    }
+    if (row.isLocal === 1) continue;
     const id = resolveTrackRowSeedId(row);
     if (!id || seen.has(id)) continue;
     seen.add(id);
     unique.push(id);
   }
-  if (unique.length < count) return [] as string[];
+  if (!unique.length) return [] as string[];
   const shuffled = [...unique];
   for (let index = shuffled.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(Math.random() * (index + 1));
@@ -807,7 +811,7 @@ function pickRandomRecommendationSeedTrackIds(rows: TrackRow[], count = 5) {
     shuffled[index] = shuffled[swapIndex];
     shuffled[swapIndex] = temp;
   }
-  return shuffled.slice(0, count);
+  return shuffled.slice(0, Math.min(count, shuffled.length));
 }
 
 function mergeTrackItemArtists(
@@ -2679,7 +2683,7 @@ export default function PlaylistBrowser() {
     );
     if (loadingTracks || isSwitchingContext) return;
 
-    const seedTrackIds = pickRandomRecommendationSeedTrackIds(tracks, 5);
+    const seedTrackIds = pickRandomRecommendationSeedTrackIds(tracks, 25);
     if (seedTrackIds.length < 5) {
       setRecommendations([]);
       setRecommendationsError("Minimaal 5 unieke tracks nodig voor Recommendations.");
@@ -2717,6 +2721,16 @@ export default function PlaylistBrowser() {
           }
         );
         if (!res.ok) {
+          if (res.status === 422) {
+            if (!cancelled) {
+              setRecommendations([]);
+              setRecommendationsError(
+                "Voor deze playlist kon Spotify geen recommendations genereren."
+              );
+              recommendationsRequestKeyRef.current = null;
+            }
+            return;
+          }
           const mapped = mapSpotifyApiError(
             res.status,
             "Recommendations laden lukt nu niet."

@@ -27,7 +27,7 @@ function parseSeedTracks(value: string | null) {
     if (!id || seen.has(id)) continue;
     seen.add(id);
     seeds.push(id);
-    if (seeds.length >= 5) break;
+    if (seeds.length >= 50) break;
   }
   return seeds;
 }
@@ -59,6 +59,92 @@ type RecommendationsResponse = {
   }>;
 };
 
+function pickRandomSubset(values: string[], count: number) {
+  const shuffled = [...values];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    const temp = shuffled[index];
+    shuffled[index] = shuffled[swapIndex];
+    shuffled[swapIndex] = temp;
+  }
+  return shuffled.slice(0, Math.max(1, count));
+}
+
+function buildSeedAttempts(seedPool: string[]) {
+  if (!seedPool.length) return [] as string[][];
+  const size = Math.min(5, seedPool.length);
+  const attemptsLimit = seedPool.length >= 12 ? 10 : 6;
+  const attempts: string[][] = [];
+  const seen = new Set<string>();
+  while (attempts.length < attemptsLimit) {
+    const candidate = pickRandomSubset(seedPool, size);
+    const key = [...candidate].sort().join(",");
+    if (!key || seen.has(key)) {
+      if (seedPool.length <= size) break;
+      continue;
+    }
+    seen.add(key);
+    attempts.push(candidate);
+    if (seedPool.length <= size) break;
+  }
+  return attempts;
+}
+
+function mapRecommendationTracks(
+  data: RecommendationsResponse | undefined,
+  blockedTrackIds: Set<string>
+) {
+  const seen = new Set<string>();
+  return (Array.isArray(data?.tracks) ? data.tracks : [])
+    .map((track) => {
+      const trackId = normalizeTrackId(track?.id ?? null);
+      if (!trackId) return null;
+      const canonicalTrackId =
+        normalizeTrackId(track?.linked_from?.id ?? null) ?? trackId;
+      if (seen.has(canonicalTrackId) || blockedTrackIds.has(canonicalTrackId)) return null;
+      if (track?.is_playable === false) return null;
+      if (typeof track?.restrictions?.reason === "string") return null;
+      seen.add(canonicalTrackId);
+      const releaseDate = track?.album?.release_date ?? null;
+      const releaseYear =
+        releaseDate && /^\d{4}/.test(releaseDate)
+          ? Number(releaseDate.slice(0, 4))
+          : null;
+      const imageUrl =
+        track?.album?.images?.find((image) => typeof image?.url === "string")?.url ??
+        null;
+      return {
+        trackId,
+        name: track?.name ?? "Onbekend nummer",
+        albumId: track?.album?.id ?? null,
+        albumName: track?.album?.name ?? null,
+        albumReleaseDate: releaseDate,
+        releaseYear,
+        albumImageUrl: imageUrl,
+        coverUrl: imageUrl,
+        durationMs: typeof track?.duration_ms === "number" ? track.duration_ms : null,
+        explicit:
+          typeof track?.explicit === "boolean" ? (track.explicit ? 1 : 0) : null,
+        isLocal:
+          typeof track?.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
+        linkedFromTrackId: normalizeTrackId(track?.linked_from?.id ?? null),
+        restrictionsReason:
+          typeof track?.restrictions?.reason === "string"
+            ? track.restrictions.reason
+            : null,
+        popularity: typeof track?.popularity === "number" ? track.popularity : null,
+        artists: Array.isArray(track?.artists)
+          ? track.artists
+              .map((artist) => artist?.name)
+              .filter(Boolean)
+              .join(", ")
+          : null,
+        playlists: [] as Array<{ id: string; name: string; spotifyUrl: string }>,
+      };
+    })
+    .filter(Boolean);
+}
+
 export async function GET(req: Request) {
   const { session, response } = await requireAppUser();
   if (response) return response;
@@ -78,74 +164,51 @@ export async function GET(req: Request) {
   const limit = parseLimit(searchParams.get("limit"));
 
   try {
-    const params = new URLSearchParams();
-    params.set("seed_tracks", seedTracks.join(","));
-    params.set("limit", String(limit));
-    const data = await spotifyFetch<RecommendationsResponse>({
-      url: `https://api.spotify.com/v1/recommendations?${params.toString()}`,
-      userLevel: true,
-    });
+    const seedAttempts = buildSeedAttempts(seedTracks);
+    const blockedTrackIds = new Set(seedTracks);
+    let lastBadRequest = false;
+    for (const seedAttempt of seedAttempts) {
+      try {
+        const params = new URLSearchParams();
+        params.set("seed_tracks", seedAttempt.join(","));
+        params.set("limit", String(limit));
+        const data = await spotifyFetch<RecommendationsResponse>({
+          url: `https://api.spotify.com/v1/recommendations?${params.toString()}`,
+          userLevel: true,
+        });
+        const items = mapRecommendationTracks(data, blockedTrackIds);
+        return jsonNoStore({
+          items,
+          totalCount: items.length,
+          asOf: Date.now(),
+        });
+      } catch (error) {
+        if (error instanceof SpotifyFetchError && error.status === 400) {
+          lastBadRequest = true;
+          continue;
+        }
+        throw error;
+      }
+    }
 
-    const seen = new Set<string>();
-    const blocked = new Set(seedTracks);
-    const items = (Array.isArray(data?.tracks) ? data.tracks : [])
-      .map((track) => {
-        const trackId = normalizeTrackId(track?.id ?? null);
-        if (!trackId) return null;
-        const canonicalTrackId =
-          normalizeTrackId(track?.linked_from?.id ?? null) ?? trackId;
-        if (seen.has(canonicalTrackId) || blocked.has(canonicalTrackId)) return null;
-        if (track?.is_playable === false) return null;
-        if (typeof track?.restrictions?.reason === "string") return null;
-        seen.add(canonicalTrackId);
-        const releaseDate = track?.album?.release_date ?? null;
-        const releaseYear =
-          releaseDate && /^\d{4}/.test(releaseDate)
-            ? Number(releaseDate.slice(0, 4))
-            : null;
-        const imageUrl =
-          track?.album?.images?.find((image) => typeof image?.url === "string")?.url ??
-          null;
-        return {
-          trackId,
-          name: track?.name ?? "Onbekend nummer",
-          albumId: track?.album?.id ?? null,
-          albumName: track?.album?.name ?? null,
-          albumReleaseDate: releaseDate,
-          releaseYear,
-          albumImageUrl: imageUrl,
-          coverUrl: imageUrl,
-          durationMs: typeof track?.duration_ms === "number" ? track.duration_ms : null,
-          explicit:
-            typeof track?.explicit === "boolean" ? (track.explicit ? 1 : 0) : null,
-          isLocal:
-            typeof track?.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
-          linkedFromTrackId: normalizeTrackId(track?.linked_from?.id ?? null),
-          restrictionsReason:
-            typeof track?.restrictions?.reason === "string"
-              ? track.restrictions.reason
-              : null,
-          popularity: typeof track?.popularity === "number" ? track.popularity : null,
-          artists: Array.isArray(track?.artists)
-            ? track.artists
-                .map((artist) => artist?.name)
-                .filter(Boolean)
-                .join(", ")
-            : null,
-          playlists: [] as Array<{ id: string; name: string; spotifyUrl: string }>,
-        };
-      })
-      .filter(Boolean);
+    if (lastBadRequest) {
+      return jsonNoStore({
+        items: [],
+        totalCount: 0,
+        asOf: Date.now(),
+      });
+    }
 
     return jsonNoStore({
-      items,
-      totalCount: items.length,
+      items: [],
+      totalCount: 0,
       asOf: Date.now(),
     });
   } catch (error) {
     if (error instanceof SpotifyFetchError) {
       if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
       if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
+      if (error.status === 400) return jsonNoStore({ error: "INVALID_SEED_TRACKS" }, 422);
       if (error.status === 429) {
         const retryAfter =
           error.retryAfterMs && error.retryAfterMs > 0

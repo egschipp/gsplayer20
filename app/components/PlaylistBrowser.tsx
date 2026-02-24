@@ -2726,7 +2726,7 @@ export default function PlaylistBrowser() {
     );
     if (loadingTracks || isSwitchingContext) return;
 
-    const seedTrackIds = pickRandomRecommendationSeedTrackIds(tracks, 25);
+    const seedTrackIds = pickRandomRecommendationSeedTrackIds(tracks, 5);
     if (seedTrackIds.length < 5) {
       setRecommendations([]);
       setRecommendationsError("Minimaal 5 unieke tracks nodig voor Recommendations.");
@@ -2741,12 +2741,12 @@ export default function PlaylistBrowser() {
     if (recommendationsRequestKeyRef.current === requestKey) return;
     recommendationsRequestKeyRef.current = requestKey;
 
-    let cancelled = false;
     const sourceTrackIds = new Set<string>();
     for (const row of tracks) {
       const canonicalId = resolveTrackRowCanonicalId(row);
       if (canonicalId) sourceTrackIds.add(canonicalId);
     }
+    const isCurrentRequest = () => recommendationsRequestKeyRef.current === requestKey;
 
     async function loadRecommendations() {
       clearRecommendationsRetryTimer();
@@ -2776,26 +2776,24 @@ export default function PlaylistBrowser() {
               typeof body.retryAfter === "number" && Number.isFinite(body.retryAfter)
                 ? Math.max(1, Math.floor(body.retryAfter))
                 : 20;
-            if (!cancelled) {
-              setRecommendations([]);
-              setRecommendationsError(
-                typeof body.message === "string" && body.message.trim()
-                  ? body.message
-                  : "Spotify Recommendations API is momenteel niet beschikbaar voor deze app."
-              );
-              recommendationsRequestKeyRef.current = null;
-              scheduleRecommendationsRetry(retryAfterSec * 1000);
-            }
+            if (!isCurrentRequest()) return;
+            setRecommendations([]);
+            setRecommendationsError(
+              typeof body.message === "string" && body.message.trim()
+                ? body.message
+                : "Spotify Recommendations API is momenteel niet beschikbaar voor deze app."
+            );
+            recommendationsRequestKeyRef.current = null;
+            scheduleRecommendationsRetry(retryAfterSec * 1000);
             return;
           }
           if (res.status === 422 || body?.error === "INVALID_SEED_TRACKS") {
-            if (!cancelled) {
-              setRecommendations([]);
-              setRecommendationsError(
-                "Voor deze playlist kon Spotify geen recommendations genereren."
-              );
-              recommendationsRequestKeyRef.current = null;
-            }
+            if (!isCurrentRequest()) return;
+            setRecommendations([]);
+            setRecommendationsError(
+              "Voor deze playlist kon Spotify geen recommendations genereren."
+            );
+            recommendationsRequestKeyRef.current = null;
             return;
           }
           if (body?.error === "RATE_LIMIT") {
@@ -2803,30 +2801,28 @@ export default function PlaylistBrowser() {
               typeof body.retryAfter === "number" && Number.isFinite(body.retryAfter)
                 ? Math.max(1, Math.floor(body.retryAfter))
                 : null;
-            if (!cancelled) {
-              setRecommendations([]);
-              setRecommendationsError(
-                retryAfter
-                  ? `Spotify is druk. Probeer recommendations opnieuw over ${retryAfter}s.`
-                  : "Spotify is druk. Probeer recommendations zo opnieuw."
-              );
-              recommendationsRequestKeyRef.current = null;
-              scheduleRecommendationsRetry((retryAfter ?? 10) * 1000);
-            }
+            if (!isCurrentRequest()) return;
+            setRecommendations([]);
+            setRecommendationsError(
+              retryAfter
+                ? `Spotify is druk. Probeer recommendations opnieuw over ${retryAfter}s.`
+                : "Spotify is druk. Probeer recommendations zo opnieuw."
+            );
+            recommendationsRequestKeyRef.current = null;
+            scheduleRecommendationsRetry((retryAfter ?? 10) * 1000);
             return;
           }
           const mapped = mapSpotifyApiError(
             res.status,
             "Recommendations laden lukt nu niet."
           );
-          if (!cancelled) {
-            setAuthRequired(Boolean(mapped.authRequired));
-            setRecommendationsError(mapped.message);
-            setRecommendations([]);
-            recommendationsRequestKeyRef.current = null;
-            if (!mapped.authRequired) {
-              scheduleRecommendationsRetry(15_000);
-            }
+          if (!isCurrentRequest()) return;
+          setAuthRequired(Boolean(mapped.authRequired));
+          setRecommendationsError(mapped.message);
+          setRecommendations([]);
+          recommendationsRequestKeyRef.current = null;
+          if (!mapped.authRequired) {
+            scheduleRecommendationsRetry(15_000);
           }
           return;
         }
@@ -2837,37 +2833,30 @@ export default function PlaylistBrowser() {
           if (!canonicalId || sourceTrackIds.has(canonicalId)) return false;
           return !row.restrictionsReason;
         });
-        if (!cancelled) {
-          setRecommendations(filtered);
-          if (!filtered.length && data.reason === "seed_rejected") {
-            setRecommendationsError("Voor deze playlist kon Spotify geen recommendations genereren.");
-            recommendationsRequestKeyRef.current = null;
-          } else {
-            setRecommendationsError(null);
-          }
+        if (!isCurrentRequest()) return;
+        setRecommendations(filtered);
+        if (!filtered.length && data.reason === "seed_rejected") {
+          setRecommendationsError("Voor deze playlist kon Spotify geen recommendations genereren.");
+          recommendationsRequestKeyRef.current = null;
+        } else {
+          setRecommendationsError(null);
         }
       } catch (error) {
-        if (cancelled) return;
         if (String(error).includes("AbortError")) return;
+        if (!isCurrentRequest()) return;
         setRecommendationsError("Recommendations laden lukt nu niet.");
         setRecommendations([]);
         recommendationsRequestKeyRef.current = null;
         scheduleRecommendationsRetry(15_000);
       } finally {
-        if (!cancelled) {
-          setRecommendationsLoading(false);
-        }
+        if (!isCurrentRequest()) return;
+        setRecommendationsLoading(false);
       }
     }
 
     void loadRecommendations();
     return () => {
-      cancelled = true;
       clearRecommendationsRetryTimer();
-      if (recommendationsRequestKeyRef.current === requestKey) {
-        recommendationsRequestKeyRef.current = null;
-      }
-      setRecommendationsLoading(false);
     };
   }, [
     loadingTracks,

@@ -39,6 +39,20 @@ const RECOMMENDATIONS_MAX_ATTEMPTS = clampInteger(
   20
 );
 
+const RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS = clampInteger(
+  Number(process.env.SPOTIFY_RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS ?? "8000"),
+  8_000,
+  2_000,
+  20_000
+);
+
+const RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS = clampInteger(
+  Number(process.env.SPOTIFY_RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS ?? "1"),
+  1,
+  1,
+  2
+);
+
 const recommendationsCapabilityState = {
   unsupportedUntil: 0,
   reason: "",
@@ -415,6 +429,8 @@ async function fetchSeedArtistsFromTracks(seedTracks: string[]) {
     }>({
       url: `https://api.spotify.com/v1/tracks?${params.toString()}`,
       userLevel: true,
+      timeoutMs: RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS,
+      maxAttempts: RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS,
     });
     const resolved: string[] = [];
     const seen = new Set<string>();
@@ -664,6 +680,8 @@ export async function GET(req: Request) {
         const data = await spotifyFetch<RecommendationsResponse>({
           url: `https://api.spotify.com/v1/recommendations?${params.toString()}`,
           userLevel: true,
+          timeoutMs: RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS,
+          maxAttempts: RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS,
         });
         const items = mapRecommendationTracks(data, blockedTrackIds);
         for (const item of items) {

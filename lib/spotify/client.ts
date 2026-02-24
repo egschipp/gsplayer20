@@ -28,6 +28,8 @@ export async function spotifyFetch<T>(args: {
   body?: unknown;
   userLevel?: boolean;
   correlationId?: string;
+  timeoutMs?: number;
+  maxAttempts?: number;
 }) {
   const {
     url,
@@ -35,6 +37,8 @@ export async function spotifyFetch<T>(args: {
     body,
     userLevel = false,
     correlationId = createCorrelationId(),
+    timeoutMs = FETCH_TIMEOUT_MS,
+    maxAttempts,
   } = args;
 
   try {
@@ -45,7 +49,8 @@ export async function spotifyFetch<T>(args: {
         method,
         body,
         accessToken: appToken,
-        timeoutMs: FETCH_TIMEOUT_MS,
+        timeoutMs,
+        maxAttempts,
         correlationId,
       });
     }
@@ -89,7 +94,8 @@ export async function spotifyFetch<T>(args: {
         method,
         body,
         accessToken: tokenResult.accessToken,
-        timeoutMs: FETCH_TIMEOUT_MS,
+        timeoutMs,
+        maxAttempts,
         correlationId,
       });
     } catch (error) {
@@ -110,7 +116,8 @@ export async function spotifyFetch<T>(args: {
           method,
           body,
           accessToken: forced.accessToken,
-          timeoutMs: FETCH_TIMEOUT_MS,
+          timeoutMs,
+          maxAttempts,
           correlationId,
         });
       }
@@ -123,4 +130,3 @@ export async function spotifyFetch<T>(args: {
     throw mapToFetchError(error, correlationId);
   }
 }
-

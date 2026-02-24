@@ -2705,7 +2705,13 @@ export default function PlaylistBrowser() {
   useEffect(() => {
     clearRecommendationsRetryTimer();
     recommendationsRequestKeyRef.current = null;
-    if (mode === "playlists" && selectedPlaylist?.id) return;
+    if (
+      mode === "playlists" &&
+      selectedPlaylist?.type === "playlist" &&
+      selectedPlaylist?.id
+    ) {
+      return;
+    }
     setRecommendations([]);
     setRecommendationsError(null);
     setRecommendationsLoading(false);
@@ -2718,13 +2724,20 @@ export default function PlaylistBrowser() {
   ]);
 
   useEffect(() => {
-    if (mode !== "playlists" || !selectedPlaylist?.id) return;
+    if (
+      mode !== "playlists" ||
+      selectedPlaylist?.type !== "playlist" ||
+      !selectedPlaylist?.id
+    ) {
+      return;
+    }
     const isSwitchingContext = Boolean(
       loadingTracks &&
         pendingTracksContextKey &&
         pendingTracksContextKey !== tracksContextKey
     );
     if (loadingTracks || isSwitchingContext) return;
+    const selectedPlaylistId = selectedPlaylist.id;
 
     const seedTrackIds = pickRandomRecommendationSeedTrackIds(tracks, 5);
     if (seedTrackIds.length < 5) {
@@ -2735,7 +2748,7 @@ export default function PlaylistBrowser() {
       return;
     }
 
-    const requestKey = `recommendations:${selectedPlaylist.type}:${selectedPlaylist.id}:${
+    const requestKey = `recommendations:${selectedPlaylist.type}:${selectedPlaylistId}:${
       tracksContextKey ?? "no-context"
     }`;
     if (recommendationsRequestKeyRef.current === requestKey) return;
@@ -2756,6 +2769,7 @@ export default function PlaylistBrowser() {
         const res = await fetch(
           buildApiUrl("/api/spotify/me/recommendations", {
             seed_tracks: seedTrackIds.join(","),
+            playlist_id: selectedPlaylistId,
             limit: "25",
           }),
           {
@@ -3459,7 +3473,7 @@ export default function PlaylistBrowser() {
           .join(" • ")
       : "";
   const showRecommendations =
-    mode === "playlists" && Boolean(selectedPlaylist?.id);
+    mode === "playlists" && selectedPlaylist?.type === "playlist";
   const isMainListCollapsed = mode === "playlists" && tracksListCollapsed;
   const recommendationsCountLabel = `${recommendations.length} ${
     recommendations.length === 1 ? "track" : "tracks"

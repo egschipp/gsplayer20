@@ -1,13 +1,11 @@
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { jsonNoStore, rateLimitResponse, requireAppUser } from "@/lib/api/guards";
-import { getDb } from "@/lib/db/client";
-import { artists, trackArtists, tracks, userSavedTracks } from "@/lib/db/schema";
-import { desc, eq, sql } from "drizzle-orm";
 
 export const runtime = "nodejs";
 
 const TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
+const PLAYLIST_ID_REGEX = /^[A-Za-z0-9]{22}$/;
 const ARTIST_ID_REGEX = /^[A-Za-z0-9]{22}$/;
 
 type RecommendationsMode = "auto" | "on" | "off";
@@ -117,6 +115,18 @@ function normalizeTrackId(value: unknown) {
   return null;
 }
 
+function normalizePlaylistId(value: unknown) {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  if (PLAYLIST_ID_REGEX.test(raw)) return raw;
+  if (raw.startsWith("spotify:playlist:")) {
+    const id = raw.split(":").pop() ?? "";
+    return PLAYLIST_ID_REGEX.test(id) ? id : null;
+  }
+  return null;
+}
+
 function normalizeArtistId(value: unknown) {
   if (typeof value !== "string") return null;
   const raw = value.trim();
@@ -135,20 +145,6 @@ function parseSeedTracks(value: string | null) {
   const seeds: string[] = [];
   for (const part of value.split(",")) {
     const id = normalizeTrackId(part);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    seeds.push(id);
-    if (seeds.length >= 50) break;
-  }
-  return seeds;
-}
-
-function parseSeedArtists(value: string | null) {
-  if (!value) return [] as string[];
-  const seen = new Set<string>();
-  const seeds: string[] = [];
-  for (const part of value.split(",")) {
-    const id = normalizeArtistId(part);
     if (!id || seen.has(id)) continue;
     seen.add(id);
     seeds.push(id);
@@ -451,182 +447,29 @@ async function fetchSeedArtistsFromTracks(seedTracks: string[]) {
   }
 }
 
-function parseArtistIdsCsv(value: string | null | undefined) {
-  if (typeof value !== "string" || !value.trim()) return [] as string[];
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  for (const part of value.split(",")) {
-    const id = normalizeArtistId(part);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
-}
-
-async function buildLocalFallbackRecommendations(args: {
-  userId: string;
-  limit: number;
-  blockedTrackIds: Set<string>;
-  seedArtists: string[];
-}) {
-  const db = getDb();
-  const rows = await db
-    .select({
-      trackId: tracks.trackId,
-      name: tracks.name,
-      albumId: tracks.albumId,
-      albumName: tracks.albumName,
-      albumReleaseDate: tracks.albumReleaseDate,
-      releaseYear: tracks.albumReleaseYear,
-      albumImageUrl: tracks.albumImageUrl,
-      durationMs: tracks.durationMs,
-      explicit: tracks.explicit,
-      isLocal: tracks.isLocal,
-      linkedFromTrackId: tracks.linkedFromTrackId,
-      restrictionsReason: tracks.restrictionsReason,
-      popularity: tracks.popularity,
-      artistsText: sql<string | null>`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,
-      artistIdsCsv: sql<string | null>`group_concat(DISTINCT ${artists.artistId})`,
-      addedAt: userSavedTracks.addedAt,
-    })
-    .from(userSavedTracks)
-    .innerJoin(tracks, eq(tracks.trackId, userSavedTracks.trackId))
-    .leftJoin(trackArtists, eq(trackArtists.trackId, tracks.trackId))
-    .leftJoin(artists, eq(artists.artistId, trackArtists.artistId))
-    .where(eq(userSavedTracks.userId, args.userId))
-    .groupBy(tracks.trackId, userSavedTracks.addedAt)
-    .orderBy(desc(userSavedTracks.addedAt))
-    .limit(700);
-
-  if (!rows.length) return [] as RecommendationItem[];
-
-  const seedArtistSet = new Set(args.seedArtists);
-  const blockedTrackIds = args.blockedTrackIds;
-  const candidates: Array<{ item: RecommendationItem; score: number }> = [];
-  const now = Date.now();
-  for (const row of rows) {
-    const trackId = normalizeTrackId(row.trackId);
-    if (!trackId) continue;
-    const canonicalTrackId = normalizeTrackId(row.linkedFromTrackId ?? null) ?? trackId;
-    if (blockedTrackIds.has(canonicalTrackId)) continue;
-    if (typeof row.restrictionsReason === "string" && row.restrictionsReason.trim()) continue;
-    if (typeof row.isLocal === "number" && row.isLocal === 1) continue;
-    const artistIds = parseArtistIdsCsv(row.artistIdsCsv);
-    const matchingArtistCount = artistIds.reduce(
-      (count, id) => (seedArtistSet.has(id) ? count + 1 : count),
-      0
-    );
-    const popularityScore =
-      typeof row.popularity === "number" && Number.isFinite(row.popularity) ? row.popularity : 0;
-    const recencyDays =
-      typeof row.addedAt === "number" && Number.isFinite(row.addedAt)
-        ? Math.max(0, Math.floor((now - row.addedAt) / 86_400_000))
-        : 3650;
-    const recencyScore = Math.max(0, 90 - Math.min(90, recencyDays));
-    const explorationNoise = Math.random() * 6;
-    const score =
-      matchingArtistCount * 120 + popularityScore * 1.2 + recencyScore * 0.35 + explorationNoise;
-    candidates.push({
-      item: {
-        trackId,
-        name: row.name ?? "Onbekend nummer",
-        albumId: row.albumId ?? null,
-        albumName: row.albumName ?? null,
-        albumReleaseDate: row.albumReleaseDate ?? null,
-        releaseYear: typeof row.releaseYear === "number" ? row.releaseYear : null,
-        albumImageUrl: row.albumImageUrl ?? null,
-        coverUrl: row.albumImageUrl ?? null,
-        durationMs: typeof row.durationMs === "number" ? row.durationMs : null,
-        explicit:
-          typeof row.explicit === "number" && Number.isFinite(row.explicit)
-            ? row.explicit
-            : null,
-        isLocal:
-          typeof row.isLocal === "number" && Number.isFinite(row.isLocal) ? row.isLocal : null,
-        linkedFromTrackId: normalizeTrackId(row.linkedFromTrackId ?? null),
-        restrictionsReason:
-          typeof row.restrictionsReason === "string" ? row.restrictionsReason : null,
-        popularity:
-          typeof row.popularity === "number" && Number.isFinite(row.popularity)
-            ? row.popularity
-            : null,
-        artists:
-          typeof row.artistsText === "string" && row.artistsText.trim()
-            ? row.artistsText
-            : null,
-        artistIds,
-        playlists: [],
-      },
-      score,
-    });
-  }
-
-  candidates.sort((a, b) => b.score - a.score);
-  const deduped: RecommendationItem[] = [];
-  const seen = new Set<string>();
-  for (const candidate of candidates) {
-    const canonicalId =
-      normalizeTrackId(candidate.item.linkedFromTrackId ?? null) ??
-      normalizeTrackId(candidate.item.trackId) ??
-      candidate.item.trackId;
-    if (!canonicalId || seen.has(canonicalId)) continue;
-    seen.add(canonicalId);
-    deduped.push(candidate.item);
-    if (deduped.length >= args.limit) break;
-  }
-  return deduped;
-}
-
-async function buildLocalFallbackRecommendationsSafe(args: {
-  userId: string;
-  limit: number;
-  blockedTrackIds: Set<string>;
-  seedArtists: string[];
-}) {
-  try {
-    return await buildLocalFallbackRecommendations(args);
-  } catch {
-    return [] as RecommendationItem[];
-  }
-}
-
 export async function GET(req: Request) {
   const { session, response } = await requireAppUser();
   if (response) return response;
+  const { searchParams } = new URL(req.url);
+  const playlistId = normalizePlaylistId(searchParams.get("playlist_id"));
+  if (!playlistId) {
+    return jsonNoStore({ error: "MISSING_PLAYLIST_ID" }, 400);
+  }
   const rl = await rateLimitResponse({
-    key: `recommendations:${session.appUserId}`,
+    key: `recommendations:${session.appUserId}:${playlistId}`,
     limit: 240,
     windowMs: 60_000,
     includeRetryAfter: true,
   });
   if (rl) return rl;
-
-  const { searchParams } = new URL(req.url);
   const seedTracks = parseSeedTracks(searchParams.get("seed_tracks"));
   if (seedTracks.length === 0) {
     return jsonNoStore({ error: "MISSING_SEED_TRACKS" }, 400);
   }
-  const seedArtistsFromRequest = parseSeedArtists(searchParams.get("seed_artists"));
   const limit = parseLimit(searchParams.get("limit"));
   const blockedTrackIds = new Set(seedTracks);
 
   if (RECOMMENDATIONS_MODE === "off") {
-    const localFallback = await buildLocalFallbackRecommendationsSafe({
-      userId: session.appUserId as string,
-      limit,
-      blockedTrackIds,
-      seedArtists: seedArtistsFromRequest,
-    });
-    if (localFallback.length > 0) {
-      return jsonNoStore({
-        items: localFallback,
-        totalCount: localFallback.length,
-        asOf: Date.now(),
-        source: "local_fallback",
-        reason: "disabled_by_config",
-      });
-    }
     return recommendationsUnavailableResponse({ reason: "disabled_by_config" });
   }
 
@@ -634,21 +477,6 @@ export async function GET(req: Request) {
     RECOMMENDATIONS_MODE === "auto" &&
     recommendationsCapabilityState.unsupportedUntil > Date.now()
   ) {
-    const localFallback = await buildLocalFallbackRecommendationsSafe({
-      userId: session.appUserId as string,
-      limit,
-      blockedTrackIds,
-      seedArtists: seedArtistsFromRequest,
-    });
-    if (localFallback.length > 0) {
-      return jsonNoStore({
-        items: localFallback,
-        totalCount: localFallback.length,
-        asOf: Date.now(),
-        source: "local_fallback",
-        reason: "cached_unavailable",
-      });
-    }
     const retryAfterSec = Math.max(
       1,
       Math.ceil((recommendationsCapabilityState.unsupportedUntil - Date.now()) / 1000)
@@ -660,8 +488,7 @@ export async function GET(req: Request) {
   }
 
   try {
-    const derivedSeedArtists = await fetchSeedArtistsFromTracks(seedTracks);
-    const seedArtists = uniqueIds(seedArtistsFromRequest, derivedSeedArtists, 50);
+    const seedArtists = await fetchSeedArtistsFromTracks(seedTracks);
     const seedAttempts = buildSeedAttempts(seedTracks, seedArtists);
     const collected: RecommendationItem[] = [];
     const collectedTrackIds = new Set<string>();
@@ -720,22 +547,6 @@ export async function GET(req: Request) {
       });
     }
 
-    const localFallback = await buildLocalFallbackRecommendationsSafe({
-      userId: session.appUserId as string,
-      limit,
-      blockedTrackIds,
-      seedArtists,
-    });
-    if (localFallback.length > 0) {
-      return jsonNoStore({
-        items: localFallback,
-        totalCount: localFallback.length,
-        asOf: Date.now(),
-        source: "local_fallback",
-        reason: unavailableReason ? "spotify_unavailable" : hadRejectedSeedAttempt ? "seed_rejected" : "no_results",
-      });
-    }
-
     if (unavailableReason) {
       const retryAfterSec =
         RECOMMENDATIONS_MODE === "auto"
@@ -763,21 +574,6 @@ export async function GET(req: Request) {
       if (isRecommendationsUnavailableError(error)) {
         const reason = extractSpotifyErrorMessage(error.body) || "upstream_unavailable";
         markRecommendationsUnavailable(reason);
-        const localFallback = await buildLocalFallbackRecommendationsSafe({
-          userId: session.appUserId as string,
-          limit,
-          blockedTrackIds,
-          seedArtists: seedArtistsFromRequest,
-        });
-        if (localFallback.length > 0) {
-          return jsonNoStore({
-            items: localFallback,
-            totalCount: localFallback.length,
-            asOf: Date.now(),
-            source: "local_fallback",
-            reason: "spotify_unavailable",
-          });
-        }
         const retryAfterSec =
           RECOMMENDATIONS_MODE === "auto"
             ? Math.max(1, Math.ceil(RECOMMENDATIONS_UNSUPPORTED_TTL_MS / 1000))
@@ -798,21 +594,6 @@ export async function GET(req: Request) {
           retryAfter ? { "Retry-After": String(retryAfter) } : undefined
         );
       }
-      const localFallback = await buildLocalFallbackRecommendationsSafe({
-        userId: session.appUserId as string,
-        limit,
-        blockedTrackIds,
-        seedArtists: seedArtistsFromRequest,
-      });
-      if (localFallback.length > 0) {
-        return jsonNoStore({
-          items: localFallback,
-          totalCount: localFallback.length,
-          asOf: Date.now(),
-          source: "local_fallback",
-          reason: "spotify_upstream",
-        });
-      }
       return jsonNoStore({
         items: [],
         totalCount: 0,
@@ -822,21 +603,6 @@ export async function GET(req: Request) {
     }
     if (String(error).includes("UserNotAuthenticated")) {
       return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
-    }
-    const localFallback = await buildLocalFallbackRecommendationsSafe({
-      userId: session.appUserId as string,
-      limit,
-      blockedTrackIds,
-      seedArtists: seedArtistsFromRequest,
-    });
-    if (localFallback.length > 0) {
-      return jsonNoStore({
-        items: localFallback,
-        totalCount: localFallback.length,
-        asOf: Date.now(),
-        source: "local_fallback",
-        reason: "internal_recovery",
-      });
     }
     return jsonNoStore({
       items: [],

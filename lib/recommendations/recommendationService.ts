@@ -261,6 +261,32 @@ function getLastSuccess(args: { userId: string; playlistId: string; limit: numbe
   return entry.payload;
 }
 
+function isSoftFallbackError(error: RecommendationsServiceError) {
+  return (
+    error.code === "SPOTIFY_UPSTREAM" ||
+    error.code === "RATE_LIMIT" ||
+    error.code === "RECOMMENDATIONS_UNAVAILABLE"
+  );
+}
+
+function createNoResultsPayload(args: {
+  playlistId: string;
+  snapshotId: string | null;
+  cacheState: "miss" | "stale";
+}): PlaylistRecommendationsPayload {
+  return {
+    items: [],
+    totalCount: 0,
+    asOf: Date.now(),
+    reason: "no_results",
+    playlistId: args.playlistId,
+    snapshotId: args.snapshotId,
+    seedTrackCount: 0,
+    seedArtistCount: 0,
+    cacheState: args.cacheState,
+  };
+}
+
 function markRecommendationsUnavailable(reason: string) {
   if (RECOMMENDATIONS_MODE !== "auto") return;
   recommendationsCapabilityState.unsupportedUntil =
@@ -606,11 +632,35 @@ export async function getPlaylistRecommendations(args: {
     });
   }
   const limit = parseLimit(String(args.limit));
-  const context = await prepareRecommendationsContext({
-    userId: args.userId,
-    playlistId,
-    limit,
-  });
+  let context: RecommendationsContext;
+  try {
+    context = await prepareRecommendationsContext({
+      userId: args.userId,
+      playlistId,
+      limit,
+    });
+  } catch (error) {
+    if (error instanceof RecommendationsServiceError && isSoftFallbackError(error)) {
+      const fallback = getLastSuccess({
+        userId: args.userId,
+        playlistId,
+        limit,
+      });
+      if (fallback) {
+        return {
+          ...fallback,
+          asOf: Date.now(),
+          cacheState: "stale",
+        };
+      }
+      return createNoResultsPayload({
+        playlistId,
+        snapshotId: null,
+        cacheState: "miss",
+      });
+    }
+    throw error;
+  }
   const cacheKey = `playlist-recommendations:v2:${args.userId}:${playlistId}:${context.snapshotToken}|limit:${limit}|mode:${RECOMMENDATIONS_MODE}`;
   let cached: { value: CachedRecommendationsPayload; cacheState: "hit" | "miss" | "coalesced" | "stale" };
   try {
@@ -624,12 +674,7 @@ export async function getPlaylistRecommendations(args: {
       },
     });
   } catch (error) {
-    if (
-      error instanceof RecommendationsServiceError &&
-      (error.code === "SPOTIFY_UPSTREAM" ||
-        error.code === "RATE_LIMIT" ||
-        error.code === "RECOMMENDATIONS_UNAVAILABLE")
-    ) {
+    if (error instanceof RecommendationsServiceError && isSoftFallbackError(error)) {
       const fallback = getLastSuccess({
         userId: args.userId,
         playlistId,
@@ -642,6 +687,11 @@ export async function getPlaylistRecommendations(args: {
           cacheState: "stale",
         };
       }
+      return createNoResultsPayload({
+        playlistId,
+        snapshotId: context.snapshotId,
+        cacheState: "miss",
+      });
     }
     throw error;
   }

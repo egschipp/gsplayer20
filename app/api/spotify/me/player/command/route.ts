@@ -60,6 +60,15 @@ function mapSpotifyError(error: unknown) {
       return jsonNoStore({ error: "FORBIDDEN" }, 403);
     }
     if (error.status === 404) return jsonNoStore({ error: "NOT_FOUND" }, 404);
+    if (error.status === 409) {
+      return jsonNoStore(
+        {
+          error: "DEVICE_CONFLICT",
+          message: "Spotify Connect staat op een ander apparaat. Kies opnieuw.",
+        },
+        409
+      );
+    }
     if (error.status === 429) {
       const retryAfter =
         error.retryAfterMs && error.retryAfterMs > 0
@@ -105,6 +114,34 @@ function parseExpectedDeviceId(input: unknown) {
 function parseIntentSeq(input: unknown) {
   if (typeof input !== "number" || !Number.isFinite(input)) return null;
   return Math.max(0, Math.floor(input));
+}
+
+function parseTargetDeviceIdFromPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object") return null;
+  const data = payload as Record<string, unknown>;
+  if (typeof data.device_id === "string" && data.device_id.trim()) {
+    return data.device_id.trim().slice(0, 128);
+  }
+  if (Array.isArray(data.device_ids)) {
+    const candidate = data.device_ids.find(
+      (value): value is string => typeof value === "string" && value.trim().length > 0
+    );
+    if (candidate) return candidate.trim().slice(0, 128);
+  }
+  return null;
+}
+
+function parseTargetDeviceIdFromSearch(search: string) {
+  if (!search) return null;
+  try {
+    const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+    const deviceId = params.get("device_id");
+    if (!deviceId) return null;
+    const trimmed = deviceId.trim();
+    return trimmed ? trimmed.slice(0, 128) : null;
+  } catch {
+    return null;
+  }
 }
 
 function cacheCommandResult(commandId: string, status: number, body: Record<string, unknown>) {
@@ -160,6 +197,8 @@ export async function POST(req: NextRequest) {
 
   const url = `https://api.spotify.com/v1/me/player${endpoint}${search}`;
   const payload = body?.payload;
+  const explicitTargetDeviceId =
+    parseTargetDeviceIdFromSearch(search) ?? parseTargetDeviceIdFromPayload(payload);
 
   const isMutatingCommand = method !== "GET";
   if (isMutatingCommand && commandId) {
@@ -180,17 +219,23 @@ export async function POST(req: NextRequest) {
       const currentDeviceId =
         typeof current?.device?.id === "string" ? current.device.id : null;
       if (currentDeviceId && currentDeviceId !== expectedDeviceId) {
-        const conflictBody = {
-          error: "DEVICE_CONFLICT",
-          expectedDeviceId,
-          currentDeviceId,
-          commandId,
-          intentSeq,
-        };
-        if (commandId) {
-          cacheCommandResult(commandId, 409, conflictBody);
+        // If the command already carries an explicit target device_id, allow Spotify
+        // to resolve that command instead of failing early on a stale local expectation.
+        if (explicitTargetDeviceId) {
+          // continue
+        } else {
+          const conflictBody = {
+            error: "DEVICE_CONFLICT",
+            expectedDeviceId,
+            currentDeviceId,
+            commandId,
+            intentSeq,
+          };
+          if (commandId) {
+            cacheCommandResult(commandId, 409, conflictBody);
+          }
+          return jsonNoStore(conflictBody, 409);
         }
-        return jsonNoStore(conflictBody, 409);
       }
     } catch (error) {
       if (error instanceof SpotifyFetchError && error.status === 404) {

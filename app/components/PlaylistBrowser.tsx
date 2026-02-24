@@ -2807,7 +2807,8 @@ export default function PlaylistBrowser() {
         recommendationsRequestKeyRef.current = null;
         scheduleRecommendationsRetry(15_000);
       } finally {
-        if (!isCurrentRequest()) return;
+        const activeKey = recommendationsRequestKeyRef.current;
+        if (activeKey && activeKey !== requestKey) return;
         setRecommendationsLoading(false);
       }
     }

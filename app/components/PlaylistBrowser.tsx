@@ -38,8 +38,6 @@ import {
   TRACK_ROW_HEIGHT,
 } from "@/lib/ui/trackLayout";
 
-const SPOTIFY_TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
-
 function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   if (!track) return null;
   if ("trackId" in track && typeof track.trackId === "string" && track.trackId) {
@@ -719,12 +717,6 @@ function normalizeTrackIdentity(value: string | null | undefined) {
   return raw;
 }
 
-function normalizeSeedTrackIdentity(value: string | null | undefined) {
-  const normalized = normalizeTrackIdentity(value);
-  if (!normalized) return null;
-  return SPOTIFY_TRACK_ID_REGEX.test(normalized) ? normalized : null;
-}
-
 function resolveTrackRowCanonicalId(row: TrackRow) {
   return (
     normalizeTrackIdentity(row.linkedFromTrackId) ??
@@ -787,39 +779,6 @@ function dedupeTrackRows(rows: TrackRow[]) {
     deduped[existingIndex] = mergeTrackRows(deduped[existingIndex], row);
   }
   return deduped;
-}
-
-function resolveTrackRowSeedId(row: TrackRow) {
-  return (
-    normalizeSeedTrackIdentity(row.trackId) ??
-    normalizeSeedTrackIdentity(row.linkedFromTrackId) ??
-    normalizeSeedTrackIdentity(row.id) ??
-    null
-  );
-}
-
-function pickRandomRecommendationSeedTrackIds(rows: TrackRow[], count = 5) {
-  const unique: string[] = [];
-  const seen = new Set<string>();
-  for (const row of rows) {
-    if (typeof row.restrictionsReason === "string" && row.restrictionsReason.trim()) {
-      continue;
-    }
-    if (row.isLocal === 1) continue;
-    const id = resolveTrackRowSeedId(row);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    unique.push(id);
-  }
-  if (!unique.length) return [] as string[];
-  const shuffled = [...unique];
-  for (let index = shuffled.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1));
-    const temp = shuffled[index];
-    shuffled[index] = shuffled[swapIndex];
-    shuffled[swapIndex] = temp;
-  }
-  return shuffled.slice(0, Math.min(count, shuffled.length));
 }
 
 function mergeTrackItemArtists(
@@ -2739,43 +2698,28 @@ export default function PlaylistBrowser() {
     if (loadingTracks || isSwitchingContext) return;
     const selectedPlaylistId = selectedPlaylist.id;
 
-    const seedTrackIds = pickRandomRecommendationSeedTrackIds(tracks, 5);
-    if (seedTrackIds.length < 5) {
-      setRecommendations([]);
-      setRecommendationsError("Minimaal 5 unieke tracks nodig voor Recommendations.");
-      setRecommendationsLoading(false);
-      recommendationsRequestKeyRef.current = null;
-      return;
-    }
-
     const requestKey = `recommendations:${selectedPlaylist.type}:${selectedPlaylistId}:${
       tracksContextKey ?? "no-context"
-    }`;
+    }:${tracksRefreshToken}:${recommendationsRetryNonce}`;
     if (recommendationsRequestKeyRef.current === requestKey) return;
     recommendationsRequestKeyRef.current = requestKey;
 
-    const sourceTrackIds = new Set<string>();
-    for (const row of tracks) {
-      const canonicalId = resolveTrackRowCanonicalId(row);
-      if (canonicalId) sourceTrackIds.add(canonicalId);
-    }
     const isCurrentRequest = () => recommendationsRequestKeyRef.current === requestKey;
+    const recommendationsUrl = buildApiUrl(
+      `/api/spotify/playlists/${encodeURIComponent(selectedPlaylistId)}/recommendations`,
+      {
+        limit: "25",
+      }
+    );
 
     async function loadRecommendations() {
       clearRecommendationsRetryTimer();
       setRecommendationsLoading(true);
       setRecommendationsError(null);
       try {
-        const res = await fetch(
-          buildApiUrl("/api/spotify/me/recommendations", {
-            seed_tracks: seedTrackIds.join(","),
-            playlist_id: selectedPlaylistId,
-            limit: "25",
-          }),
-          {
-            cache: "no-store",
-          }
-        );
+        const res = await fetch(recommendationsUrl, {
+          cache: "no-store",
+        });
         const body = (await res.json().catch(() => null)) as
           | (CursorResponse<TrackRow> & {
               error?: string;
@@ -2785,6 +2729,15 @@ export default function PlaylistBrowser() {
             })
           | null;
         if (!res.ok) {
+          if (body?.error === "INSUFFICIENT_PLAYLIST_SEEDS") {
+            if (!isCurrentRequest()) return;
+            setRecommendations([]);
+            setRecommendationsError(
+              "Deze playlist heeft te weinig afspeelbare tracks voor recommendations."
+            );
+            recommendationsRequestKeyRef.current = null;
+            return;
+          }
           if (body?.error === "RECOMMENDATIONS_UNAVAILABLE") {
             const retryAfterSec =
               typeof body.retryAfter === "number" && Number.isFinite(body.retryAfter)
@@ -2801,18 +2754,9 @@ export default function PlaylistBrowser() {
             scheduleRecommendationsRetry(retryAfterSec * 1000);
             return;
           }
-          if (res.status === 422 || body?.error === "INVALID_SEED_TRACKS") {
-            if (!isCurrentRequest()) return;
-            setRecommendations([]);
-            setRecommendationsError(
-              "Voor deze playlist kon Spotify geen recommendations genereren."
-            );
-            recommendationsRequestKeyRef.current = null;
-            return;
-          }
-          if (body?.error === "RATE_LIMIT") {
+          if (body?.error === "RATE_LIMIT" || res.status === 429) {
             const retryAfter =
-              typeof body.retryAfter === "number" && Number.isFinite(body.retryAfter)
+              typeof body?.retryAfter === "number" && Number.isFinite(body.retryAfter)
                 ? Math.max(1, Math.floor(body.retryAfter))
                 : null;
             if (!isCurrentRequest()) return;
@@ -2844,7 +2788,7 @@ export default function PlaylistBrowser() {
         const items = Array.isArray(data.items) ? data.items : [];
         const filtered = dedupeTrackRows(items).filter((row) => {
           const canonicalId = resolveTrackRowCanonicalId(row);
-          if (!canonicalId || sourceTrackIds.has(canonicalId)) return false;
+          if (!canonicalId) return false;
           return !row.restrictionsReason;
         });
         if (!isCurrentRequest()) return;
@@ -2879,8 +2823,8 @@ export default function PlaylistBrowser() {
     selectedPlaylist?.id,
     selectedPlaylist?.type,
     scheduleRecommendationsRetry,
-    tracks,
     tracksContextKey,
+    tracksRefreshToken,
     clearRecommendationsRetryTimer,
     recommendationsRetryNonce,
   ]);

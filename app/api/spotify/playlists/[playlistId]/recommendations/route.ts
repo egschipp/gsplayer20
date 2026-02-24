@@ -1,36 +1,33 @@
+import type { NextRequest } from "next/server";
 import { jsonNoStore, rateLimitResponse, requireAppUser } from "@/lib/api/guards";
 import {
   getPlaylistRecommendations,
-  normalizeRecommendationsPlaylistId,
   parseRecommendationsLimit,
 } from "@/lib/recommendations/recommendationService";
 import { RecommendationsServiceError } from "@/lib/recommendations/types";
 
 export const runtime = "nodejs";
 
-function shouldForceRefresh(req: Request) {
+function shouldForceRefresh(req: NextRequest) {
   const raw = String(new URL(req.url).searchParams.get("refresh") ?? "")
     .trim()
     .toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
-export async function GET(req: Request) {
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ playlistId: string }> }
+) {
   const { session, response } = await requireAppUser();
   if (response) return response;
 
-  const searchParams = new URL(req.url).searchParams;
-  const playlistId = normalizeRecommendationsPlaylistId(searchParams.get("playlist_id"));
+  const { playlistId } = await ctx.params;
   if (!playlistId) {
-    return jsonNoStore(
-      {
-        error: "MISSING_PLAYLIST_ID",
-        message: "playlist_id is verplicht.",
-      },
-      400
-    );
+    return jsonNoStore({ error: "MISSING_PLAYLIST_ID" }, 400);
   }
 
+  const searchParams = new URL(req.url).searchParams;
   let limit = 25;
   try {
     limit = parseRecommendationsLimit(searchParams.get("limit"));
@@ -42,7 +39,7 @@ export async function GET(req: Request) {
   }
 
   const rl = await rateLimitResponse({
-    key: `recommendations:${session.appUserId}:${playlistId}`,
+    key: `playlist-recommendations:${session.appUserId}:${playlistId}`,
     limit: 180,
     windowMs: 60_000,
     includeRetryAfter: true,

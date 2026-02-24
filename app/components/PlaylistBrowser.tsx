@@ -2742,7 +2742,6 @@ export default function PlaylistBrowser() {
     recommendationsRequestKeyRef.current = requestKey;
 
     let cancelled = false;
-    const controller = new AbortController();
     const sourceTrackIds = new Set<string>();
     for (const row of tracks) {
       const canonicalId = resolveTrackRowCanonicalId(row);
@@ -2761,7 +2760,6 @@ export default function PlaylistBrowser() {
           }),
           {
             cache: "no-store",
-            signal: controller.signal,
           }
         );
         const body = (await res.json().catch(() => null)) as
@@ -2865,7 +2863,6 @@ export default function PlaylistBrowser() {
     void loadRecommendations();
     return () => {
       cancelled = true;
-      controller.abort();
       clearRecommendationsRetryTimer();
       if (recommendationsRequestKeyRef.current === requestKey) {
         recommendationsRequestKeyRef.current = null;

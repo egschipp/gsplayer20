@@ -79,10 +79,10 @@ const RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS = clampInt(
 );
 
 const RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS = clampInt(
-  Number(process.env.SPOTIFY_RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS ?? "1"),
+  Number(process.env.SPOTIFY_RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS ?? "2"),
+  2,
   1,
-  1,
-  2
+  3
 );
 
 const RECOMMENDATIONS_CACHE_TTL_MS = clampInt(
@@ -193,6 +193,10 @@ function isRecommendationsUnavailableError(error: SpotifyFetchError) {
     return unavailableSignal && (text.includes("recommendation") || text.includes("endpoint"));
   }
   return false;
+}
+
+function isTransientUpstreamError(error: SpotifyFetchError) {
+  return error.status === 0 || error.status >= 500;
 }
 
 function markRecommendationsUnavailable(reason: string) {
@@ -457,6 +461,14 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
             message: "Geen toegang tot Spotify recommendations voor deze playlist.",
             correlationId: error.correlationId,
           });
+        }
+        if (error.status === 404) {
+          hadRejectedSeedAttempt = true;
+          continue;
+        }
+        if (isTransientUpstreamError(error)) {
+          lastUpstreamError = error;
+          continue;
         }
         lastUpstreamError = error;
         break;

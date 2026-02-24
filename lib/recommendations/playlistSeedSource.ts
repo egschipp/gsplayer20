@@ -15,7 +15,7 @@ const LIVE_PAGE_LIMIT = 100;
 const LIVE_MAX_PAGES = 4;
 const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS || "8000");
 const FETCH_MAX_ATTEMPTS = Number(
-  process.env.SPOTIFY_RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS || "1"
+  process.env.SPOTIFY_RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS || "2"
 );
 
 export type PlaylistSeedSourceResult = {
@@ -32,7 +32,7 @@ function clampInt(value: number, fallback: number, min: number, max: number) {
 }
 
 const SAFE_FETCH_TIMEOUT_MS = clampInt(FETCH_TIMEOUT_MS, 8_000, 2_000, 20_000);
-const SAFE_FETCH_MAX_ATTEMPTS = clampInt(FETCH_MAX_ATTEMPTS, 1, 1, 2);
+const SAFE_FETCH_MAX_ATTEMPTS = clampInt(FETCH_MAX_ATTEMPTS, 2, 1, 3);
 
 function parseSpotifyScopeError(body: string) {
   const raw = String(body || "").toLowerCase();

@@ -2720,12 +2720,47 @@ export default function PlaylistBrowser() {
             signal: controller.signal,
           }
         );
+        const body = (await res.json().catch(() => null)) as
+          | (CursorResponse<TrackRow> & {
+              error?: string;
+              reason?: string;
+              retryAfter?: number;
+              message?: string;
+            })
+          | null;
         if (!res.ok) {
-          if (res.status === 422) {
+          if (body?.error === "RECOMMENDATIONS_UNAVAILABLE") {
+            if (!cancelled) {
+              setRecommendations([]);
+              setRecommendationsError(
+                typeof body.message === "string" && body.message.trim()
+                  ? body.message
+                  : "Spotify Recommendations API is momenteel niet beschikbaar voor deze app."
+              );
+            }
+            return;
+          }
+          if (res.status === 422 || body?.error === "INVALID_SEED_TRACKS") {
             if (!cancelled) {
               setRecommendations([]);
               setRecommendationsError(
                 "Voor deze playlist kon Spotify geen recommendations genereren."
+              );
+              recommendationsRequestKeyRef.current = null;
+            }
+            return;
+          }
+          if (body?.error === "RATE_LIMIT") {
+            const retryAfter =
+              typeof body.retryAfter === "number" && Number.isFinite(body.retryAfter)
+                ? Math.max(1, Math.floor(body.retryAfter))
+                : null;
+            if (!cancelled) {
+              setRecommendations([]);
+              setRecommendationsError(
+                retryAfter
+                  ? `Spotify is druk. Probeer recommendations opnieuw over ${retryAfter}s.`
+                  : "Spotify is druk. Probeer recommendations zo opnieuw."
               );
               recommendationsRequestKeyRef.current = null;
             }
@@ -2743,7 +2778,7 @@ export default function PlaylistBrowser() {
           }
           return;
         }
-        const data = (await res.json()) as CursorResponse<TrackRow>;
+        const data = body ?? {};
         const items = Array.isArray(data.items) ? data.items : [];
         const filtered = dedupeTrackRows(items).filter((row) => {
           const canonicalId = resolveTrackRowCanonicalId(row);
@@ -2752,7 +2787,11 @@ export default function PlaylistBrowser() {
         });
         if (!cancelled) {
           setRecommendations(filtered);
-          setRecommendationsError(null);
+          if (!filtered.length && data.reason === "seed_rejected") {
+            setRecommendationsError("Voor deze playlist kon Spotify geen recommendations genereren.");
+          } else {
+            setRecommendationsError(null);
+          }
         }
       } catch (error) {
         if (cancelled) return;
@@ -3877,7 +3916,7 @@ export default function PlaylistBrowser() {
                 <div className="empty-state">
                   <div style={{ fontWeight: 600 }}>Nog geen recommendations</div>
                   <div className="text-body">
-                    Kies een playlist met minimaal 5 tracks om recommendations te tonen.
+                    Spotify kon voor deze selectie nu geen recommendations tonen.
                   </div>
                 </div>
               ) : null}

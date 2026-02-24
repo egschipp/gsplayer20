@@ -110,13 +110,35 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     pendingQueueIdRef.current = null;
 
     const fallback = snapshot.fallbackContext;
-    if (!fallback?.contextUri || !api) {
+    if (!api) {
+      snapshot.setFallbackContext(null);
+      return;
+    }
+    if (!fallback?.contextUri && !fallback?.trackUri) {
       snapshot.setFallbackContext(null);
       return;
     }
 
-    await api.playContext(fallback.contextUri, undefined, fallback.trackUri ?? undefined);
-    snapshot.setFallbackContext(null);
+    try {
+      if (fallback.contextUri) {
+        await api.playContext(fallback.contextUri, undefined, fallback.trackUri ?? undefined);
+      } else if (fallback.trackUri) {
+        await api.playQueue([fallback.trackUri], fallback.trackUri, 0);
+      }
+      setError(null);
+      snapshot.setFallbackContext(null);
+    } catch (error) {
+      const canFallbackToSingleTrack =
+        Boolean(fallback.trackUri) && Boolean(fallback.contextUri);
+      if (canFallbackToSingleTrack) {
+        await api.playQueue([fallback.trackUri as string], fallback.trackUri as string, 0);
+        setError(null);
+        snapshot.setFallbackContext(null);
+        return;
+      }
+      snapshot.setFallbackContext(null);
+      throw error;
+    }
   }, [api]);
 
   const playQueueAtIndex = useCallback(

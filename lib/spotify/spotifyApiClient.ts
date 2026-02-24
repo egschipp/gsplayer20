@@ -121,6 +121,12 @@ function isExpectedHttpCondition(args: {
   ) {
     return true;
   }
+  if (
+    endpointGroup === "v1_recommendations" &&
+    (status === 400 || status === 404)
+  ) {
+    return true;
+  }
   return false;
 }
 

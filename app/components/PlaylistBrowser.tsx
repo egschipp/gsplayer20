@@ -38,6 +38,8 @@ import {
   TRACK_ROW_HEIGHT,
 } from "@/lib/ui/trackLayout";
 
+const SPOTIFY_TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
+
 function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   if (!track) return null;
   if ("trackId" in track && typeof track.trackId === "string" && track.trackId) {
@@ -717,6 +719,12 @@ function normalizeTrackIdentity(value: string | null | undefined) {
   return raw;
 }
 
+function normalizeSeedTrackIdentity(value: string | null | undefined) {
+  const normalized = normalizeTrackIdentity(value);
+  if (!normalized) return null;
+  return SPOTIFY_TRACK_ID_REGEX.test(normalized) ? normalized : null;
+}
+
 function resolveTrackRowCanonicalId(row: TrackRow) {
   return (
     normalizeTrackIdentity(row.linkedFromTrackId) ??
@@ -783,9 +791,9 @@ function dedupeTrackRows(rows: TrackRow[]) {
 
 function resolveTrackRowSeedId(row: TrackRow) {
   return (
-    normalizeTrackIdentity(row.trackId) ??
-    normalizeTrackIdentity(row.linkedFromTrackId) ??
-    normalizeTrackIdentity(row.id) ??
+    normalizeSeedTrackIdentity(row.trackId) ??
+    normalizeSeedTrackIdentity(row.linkedFromTrackId) ??
+    normalizeSeedTrackIdentity(row.id) ??
     null
   );
 }
@@ -970,6 +978,7 @@ export default function PlaylistBrowser() {
   const [recommendations, setRecommendations] = useState<TrackRow[]>([]);
   const [recommendationsLoading, setRecommendationsLoading] = useState(false);
   const [recommendationsError, setRecommendationsError] = useState<string | null>(null);
+  const [recommendationsRetryNonce, setRecommendationsRetryNonce] = useState(0);
   const [selectedTrackDetail, setSelectedTrackDetail] = useState<TrackDetail | null>(
     null
   );
@@ -1016,6 +1025,7 @@ export default function PlaylistBrowser() {
   const artistDetailRestoreFocusRef = useRef<HTMLElement | null>(null);
   const hydratingPlaylistTargetsRef = useRef(false);
   const recommendationsRequestKeyRef = useRef<string | null>(null);
+  const recommendationsRetryTimerRef = useRef<number | null>(null);
   const comboMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setOpen(false),
   });
@@ -1029,6 +1039,32 @@ export default function PlaylistBrowser() {
       .map((pl) => pl.name || "Untitled playlist")
       .filter((name) => startsWithEmoji(name));
   }, [playlistOptions]);
+
+  const clearRecommendationsRetryTimer = useCallback(() => {
+    if (recommendationsRetryTimerRef.current == null) return;
+    window.clearTimeout(recommendationsRetryTimerRef.current);
+    recommendationsRetryTimerRef.current = null;
+  }, []);
+
+  const scheduleRecommendationsRetry = useCallback(
+    (delayMs: number) => {
+      if (typeof window === "undefined") return;
+      clearRecommendationsRetryTimer();
+      const safeDelay = Math.max(3_000, Math.min(Math.floor(delayMs), 120_000));
+      recommendationsRetryTimerRef.current = window.setTimeout(() => {
+        recommendationsRetryTimerRef.current = null;
+        recommendationsRequestKeyRef.current = null;
+        setRecommendationsRetryNonce((prev) => prev + 1);
+      }, safeDelay);
+    },
+    [clearRecommendationsRetryTimer]
+  );
+
+  useEffect(() => {
+    return () => {
+      clearRecommendationsRetryTimer();
+    };
+  }, [clearRecommendationsRetryTimer]);
 
   const applyAllMyMusicTotal = useCallback((nextTotal: number | null) => {
     setAllMyMusicTotal(nextTotal);
@@ -2667,12 +2703,19 @@ export default function PlaylistBrowser() {
   ]);
 
   useEffect(() => {
+    clearRecommendationsRetryTimer();
     recommendationsRequestKeyRef.current = null;
     if (mode === "playlists" && selectedPlaylist?.id) return;
     setRecommendations([]);
     setRecommendationsError(null);
     setRecommendationsLoading(false);
-  }, [mode, selectedPlaylist?.id, selectedPlaylist?.type, tracksRefreshToken]);
+  }, [
+    clearRecommendationsRetryTimer,
+    mode,
+    selectedPlaylist?.id,
+    selectedPlaylist?.type,
+    tracksRefreshToken,
+  ]);
 
   useEffect(() => {
     if (mode !== "playlists" || !selectedPlaylist?.id) return;
@@ -2707,6 +2750,7 @@ export default function PlaylistBrowser() {
     }
 
     async function loadRecommendations() {
+      clearRecommendationsRetryTimer();
       setRecommendationsLoading(true);
       setRecommendationsError(null);
       try {
@@ -2730,6 +2774,10 @@ export default function PlaylistBrowser() {
           | null;
         if (!res.ok) {
           if (body?.error === "RECOMMENDATIONS_UNAVAILABLE") {
+            const retryAfterSec =
+              typeof body.retryAfter === "number" && Number.isFinite(body.retryAfter)
+                ? Math.max(1, Math.floor(body.retryAfter))
+                : 20;
             if (!cancelled) {
               setRecommendations([]);
               setRecommendationsError(
@@ -2737,6 +2785,8 @@ export default function PlaylistBrowser() {
                   ? body.message
                   : "Spotify Recommendations API is momenteel niet beschikbaar voor deze app."
               );
+              recommendationsRequestKeyRef.current = null;
+              scheduleRecommendationsRetry(retryAfterSec * 1000);
             }
             return;
           }
@@ -2763,6 +2813,7 @@ export default function PlaylistBrowser() {
                   : "Spotify is druk. Probeer recommendations zo opnieuw."
               );
               recommendationsRequestKeyRef.current = null;
+              scheduleRecommendationsRetry((retryAfter ?? 10) * 1000);
             }
             return;
           }
@@ -2775,6 +2826,9 @@ export default function PlaylistBrowser() {
             setRecommendationsError(mapped.message);
             setRecommendations([]);
             recommendationsRequestKeyRef.current = null;
+            if (!mapped.authRequired) {
+              scheduleRecommendationsRetry(15_000);
+            }
           }
           return;
         }
@@ -2789,6 +2843,7 @@ export default function PlaylistBrowser() {
           setRecommendations(filtered);
           if (!filtered.length && data.reason === "seed_rejected") {
             setRecommendationsError("Voor deze playlist kon Spotify geen recommendations genereren.");
+            recommendationsRequestKeyRef.current = null;
           } else {
             setRecommendationsError(null);
           }
@@ -2799,6 +2854,7 @@ export default function PlaylistBrowser() {
         setRecommendationsError("Recommendations laden lukt nu niet.");
         setRecommendations([]);
         recommendationsRequestKeyRef.current = null;
+        scheduleRecommendationsRetry(15_000);
       } finally {
         if (!cancelled) {
           setRecommendationsLoading(false);
@@ -2817,8 +2873,11 @@ export default function PlaylistBrowser() {
     pendingTracksContextKey,
     selectedPlaylist?.id,
     selectedPlaylist?.type,
+    scheduleRecommendationsRetry,
     tracks,
     tracksContextKey,
+    clearRecommendationsRetryTimer,
+    recommendationsRetryNonce,
   ]);
 
   async function loadMore() {
@@ -4030,7 +4089,7 @@ export default function PlaylistBrowser() {
           !(mode === "tracks" ? selectedTrackId : selectedAlbumId) && loadingTracksList ? (
             <span className="text-body">Tracks laden...</span>
           ) : null
-        ) : loadingTracks || loadingMoreTracks || recommendationsLoading ? (
+        ) : loadingTracks || loadingMoreTracks || (recommendationsLoading && !showRecommendations) ? (
           <span className="text-body">
             {recommendationsLoading && !(loadingTracks || loadingMoreTracks)
               ? "Recommendations laden..."

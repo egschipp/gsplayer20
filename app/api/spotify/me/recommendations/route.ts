@@ -23,8 +23,8 @@ const RECOMMENDATIONS_MODE: RecommendationsMode = (() => {
 })();
 
 const RECOMMENDATIONS_UNSUPPORTED_TTL_MS = clampInteger(
-  Number(process.env.SPOTIFY_RECOMMENDATIONS_UNSUPPORTED_TTL_MS ?? "1800000"),
-  1_800_000,
+  Number(process.env.SPOTIFY_RECOMMENDATIONS_UNSUPPORTED_TTL_MS ?? "300000"),
+  300_000,
   60_000,
   3_600_000
 );
@@ -346,17 +346,27 @@ function isRecommendationsUnavailableError(error: SpotifyFetchError) {
   if (![403, 404, 410, 501].includes(error.status)) return false;
   const text = normalizeSpotifyErrorText(error.body);
   if (text.includes("seed")) return false;
-  if (
+  if (error.status === 410 || error.status === 501) {
+    return true;
+  }
+  const containsUnavailableSignal =
     text.includes("deprecated") ||
     text.includes("unsupported") ||
     text.includes("security requirement") ||
     text.includes("not available") ||
-    text.includes("endpoint is disabled") ||
-    text.includes("recommendation")
-  ) {
-    return true;
+    text.includes("endpoint is disabled");
+  if (error.status === 403) {
+    return containsUnavailableSignal || text.includes("recommendation");
   }
-  return error.status === 410 || error.status === 501 || (error.status === 404 && !text);
+  if (error.status === 404) {
+    return (
+      containsUnavailableSignal &&
+      (text.includes("recommendation") ||
+        text.includes("endpoint") ||
+        text.includes("not found"))
+    );
+  }
+  return false;
 }
 
 function markRecommendationsUnavailable(reason: string) {

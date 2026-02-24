@@ -867,16 +867,14 @@ export default function MonitoringDashboard() {
   const rateBackoffRemainingMs = Math.max(backoffFromSnapshotMs, backoffFromUntilMs);
   const rateBackoffRemainingSec = Math.ceil(rateBackoffRemainingMs / 1000);
   const hasActiveRateBackoff = rateBackoffRemainingSec > 0;
-
-  const rateTone: Tone = hasActiveRateBackoff
-    ? (summary?.rateLimits.count429 ?? 0) < 5
-      ? "warn"
-      : "error"
-    : (summary?.rateLimits.count429 ?? 0) === 0
-    ? "ok"
-    : (summary?.rateLimits.count429 ?? 0) < 5
-    ? "warn"
-    : "error";
+  const rateLimitCount = summary?.rateLimits.count429 ?? 0;
+  const rateLimitRatio = rateLimitCount / Math.max(1, apiSampleCount);
+  const severeRateLimit =
+    rateLimitCount >= 12 ||
+    rateLimitRatio >= 0.12 ||
+    (hasActiveRateBackoff && rateBackoffRemainingSec >= 180);
+  const moderateRateLimit = hasActiveRateBackoff || rateLimitCount > 0;
+  const rateTone: Tone = severeRateLimit ? "error" : moderateRateLimit ? "warn" : "ok";
 
   const topErrors = useMemo(() => {
     const rows = summary?.apiHealth.errorBreakdown ?? [];
@@ -970,23 +968,23 @@ export default function MonitoringDashboard() {
       });
     }
 
-    if (summary.rateLimits.count429 >= 5) {
+    if (severeRateLimit) {
       list.push({
         id: "rate-hard",
         tone: hasActiveRateBackoff ? "error" : "warn",
         title: "Spotify rate limit blokkeert requests",
         text: hasActiveRateBackoff
-          ? `Er zijn ${summary.rateLimits.count429} blokkades in de laatste ${metricsWindowLabel}; backoff loopt nog ${rateBackoffRemainingSec}s.`
-          : `Er zijn ${summary.rateLimits.count429} blokkades in de laatste ${metricsWindowLabel}; verlaag korte piekacties.`,
+          ? `Er zijn ${rateLimitCount} blokkades in de laatste ${metricsWindowLabel}; backoff loopt nog ${rateBackoffRemainingSec}s.`
+          : `Er zijn ${rateLimitCount} blokkades in de laatste ${metricsWindowLabel}; verlaag korte piekacties.`,
       });
-    } else if (summary.rateLimits.count429 > 0) {
+    } else if (rateLimitCount > 0 || hasActiveRateBackoff) {
       list.push({
         id: "rate-soft",
         tone: "warn",
         title: "Spotify rate limit actief",
         text: hasActiveRateBackoff
-          ? `Er zijn ${summary.rateLimits.count429} tijdelijke blokkades in de laatste ${metricsWindowLabel}; backoff telt af: ${rateBackoffRemainingSec}s.`
-          : `Er zijn ${summary.rateLimits.count429} tijdelijke blokkades in de laatste ${metricsWindowLabel}; app vangt dit op met backoff.`,
+          ? `Er zijn ${rateLimitCount} tijdelijke blokkades in de laatste ${metricsWindowLabel}; backoff telt af: ${rateBackoffRemainingSec}s.`
+          : `Er zijn ${rateLimitCount} tijdelijke blokkades in de laatste ${metricsWindowLabel}; app vangt dit op met backoff.`,
       });
     }
 
@@ -1042,6 +1040,8 @@ export default function MonitoringDashboard() {
     metricsWindowLabel,
     restrictionViolatedCount,
     rateBackoffRemainingSec,
+    rateLimitCount,
+    severeRateLimit,
     summary,
   ]);
 
@@ -1156,10 +1156,10 @@ export default function MonitoringDashboard() {
 
               <KpiCard
                 title="Rate limit"
-                value={`${summary?.rateLimits.count429 ?? 0}`}
+                value={`${rateLimitCount}`}
                 subtitle={rateBackoffSubtitleWithWindow}
                 tone={rateTone}
-                meter={1 - clamp01((summary?.rateLimits.count429 ?? 0) / 20)}
+                meter={1 - clamp01(rateLimitCount / 20)}
                 hint="Aantal 429 responses in het recente meetvenster. Bij actief backoff telt deze kaart live af naar 0s."
               />
 

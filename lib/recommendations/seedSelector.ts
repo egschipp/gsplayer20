@@ -5,6 +5,7 @@ const TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
 export type PlaylistSeedCandidate = {
   trackId: string | null;
   linkedFromTrackId: string | null;
+  trackType: string | null;
   isLocal: number | null;
   restrictionsReason: string | null;
   position: number | null;
@@ -77,6 +78,13 @@ export function selectDeterministicPlaylistSeedPool(args: {
   >();
 
   for (const candidate of candidates) {
+    if (
+      typeof candidate.trackType === "string" &&
+      candidate.trackType.trim() &&
+      candidate.trackType !== "track"
+    ) {
+      continue;
+    }
     if (candidate.isLocal === 1) continue;
     if (
       typeof candidate.restrictionsReason === "string" &&

@@ -2726,6 +2726,11 @@ export default function PlaylistBrowser() {
               reason?: string;
               retryAfter?: number;
               message?: string;
+              diagnostics?: {
+                validatedTrackCount?: number;
+                seedTrackPoolCount?: number;
+                attemptsUsed?: number;
+              };
             })
           | null;
         if (!res.ok) {
@@ -2786,14 +2791,17 @@ export default function PlaylistBrowser() {
         }
         const data = body ?? {};
         const items = Array.isArray(data.items) ? data.items : [];
-        const filtered = dedupeTrackRows(items).filter((row) => {
+        const deduped = dedupeTrackRows(items);
+        const filtered = deduped.filter((row) => {
           const canonicalId = resolveTrackRowCanonicalId(row);
           if (!canonicalId) return false;
           return !row.restrictionsReason;
         });
+        const fallbackRows = deduped.filter((row) => Boolean(resolveTrackRowCanonicalId(row)));
+        const rowsForUi = filtered.length ? filtered : fallbackRows;
         if (!isCurrentRequest()) return;
-        setRecommendations(filtered);
-        if (!filtered.length) {
+        setRecommendations(rowsForUi);
+        if (!rowsForUi.length) {
           if (data.reason === "seed_rejected") {
             setRecommendationsError("Voor deze playlist kon Spotify geen recommendations genereren.");
             recommendationsRequestKeyRef.current = null;
@@ -2801,6 +2809,14 @@ export default function PlaylistBrowser() {
             setRecommendationsError("Spotify is tijdelijk niet bereikbaar. Probeer het later opnieuw.");
             recommendationsRequestKeyRef.current = null;
             scheduleRecommendationsRetry(15_000);
+          } else if (
+            typeof data.diagnostics?.validatedTrackCount === "number" &&
+            data.diagnostics.validatedTrackCount <= 0
+          ) {
+            setRecommendationsError(
+              "Deze playlist bevat nu geen valide track-seeds voor Spotify recommendations."
+            );
+            recommendationsRequestKeyRef.current = null;
           } else {
             setRecommendationsError(null);
           }

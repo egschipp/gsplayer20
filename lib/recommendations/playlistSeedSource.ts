@@ -109,6 +109,7 @@ async function loadDbCandidates(args: {
         : null,
     trackId: normalizeTrackId(row.trackId ?? null) ?? normalizeTrackId(row.itemTrackId ?? null),
     linkedFromTrackId: normalizeTrackId(row.linkedFromTrackId ?? null),
+    trackType: null,
     isLocal:
       typeof row.isLocal === "number" && Number.isFinite(row.isLocal) ? Math.floor(row.isLocal) : null,
     restrictionsReason:
@@ -159,7 +160,7 @@ async function loadLiveCandidates(args: {
     const remaining = args.maxCandidates - candidates.length;
     const limit = Math.max(1, Math.min(LIVE_PAGE_LIMIT, remaining));
     const fields =
-      "items(added_at,track(id,is_local,linked_from(id),restrictions(reason))),next,total";
+      "items(added_at,track(type,id,is_local,linked_from(id),restrictions(reason))),next,total";
     const url = `https://api.spotify.com/v1/playlists/${encodeURIComponent(
       args.playlistId
     )}/tracks?limit=${limit}&offset=${offset}&fields=${encodeURIComponent(fields)}`;
@@ -167,6 +168,7 @@ async function loadLiveCandidates(args: {
     const data = await spotifyFetch<{
       items?: Array<{
         track?: {
+          type?: string | null;
           id?: string | null;
           is_local?: boolean | null;
           linked_from?: { id?: string | null } | null;
@@ -193,6 +195,7 @@ async function loadLiveCandidates(args: {
         position: offset + index,
         trackId: normalizeTrackId(track?.id ?? null),
         linkedFromTrackId: normalizeTrackId(track?.linked_from?.id ?? null),
+        trackType: typeof track?.type === "string" ? track.type : null,
         isLocal: typeof track?.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
         restrictionsReason:
           typeof track?.restrictions?.reason === "string" ? track.restrictions.reason : null,
@@ -216,6 +219,13 @@ async function loadLiveCandidates(args: {
 function countEligibleCandidates(candidates: PlaylistSeedCandidate[]) {
   let count = 0;
   for (const candidate of candidates) {
+    if (
+      typeof candidate.trackType === "string" &&
+      candidate.trackType.trim().length > 0 &&
+      candidate.trackType !== "track"
+    ) {
+      continue;
+    }
     const trackId = normalizeTrackId(candidate.linkedFromTrackId) ?? normalizeTrackId(candidate.trackId);
     if (!trackId) continue;
     if (candidate.isLocal === 1) continue;

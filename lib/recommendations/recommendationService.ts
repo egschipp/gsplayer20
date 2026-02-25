@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { inArray } from "drizzle-orm";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
@@ -11,6 +12,7 @@ import {
 } from "@/lib/recommendations/seedSelector";
 import {
   type PlaylistRecommendationsPayload,
+  type RecommendationsSeedDiagnostics,
   type RecommendationItem,
   RecommendationsServiceError,
 } from "@/lib/recommendations/types";
@@ -40,12 +42,33 @@ type RecommendationsResponse = {
   }>;
 };
 
+type TracksLookupResponse = {
+  tracks?: Array<
+    | {
+        id?: string | null;
+        type?: string | null;
+        is_playable?: boolean;
+        restrictions?: { reason?: string | null } | null;
+        artists?: Array<{ id?: string | null }>;
+      }
+    | null
+  >;
+};
+
+type TracksLookupItem = NonNullable<NonNullable<TracksLookupResponse["tracks"]>[number]>;
+
 type CachedRecommendationsPayload = Omit<PlaylistRecommendationsPayload, "cacheState">;
 
 type SeedAttempt = {
   seedTracks: string[];
   seedArtists: string[];
   key: string;
+};
+
+type ValidatedSeedBundle = {
+  trackIds: string[];
+  artistIds: string[];
+  hadValidationFailure: boolean;
 };
 
 function clampInt(value: number, fallback: number, min: number, max: number) {
@@ -117,6 +140,20 @@ const RECOMMENDATIONS_LAST_SUCCESS_TTL_MS = clampInt(
   7_200_000
 );
 
+const RECOMMENDATIONS_SEED_VALIDATION_TTL_MS = clampInt(
+  Number(process.env.SPOTIFY_RECOMMENDATIONS_SEED_VALIDATION_TTL_MS ?? "180000"),
+  180_000,
+  10_000,
+  900_000
+);
+
+const RECOMMENDATIONS_SEED_VALIDATION_STALE_MS = clampInt(
+  Number(process.env.SPOTIFY_RECOMMENDATIONS_SEED_VALIDATION_STALE_MS ?? "900000"),
+  900_000,
+  RECOMMENDATIONS_SEED_VALIDATION_TTL_MS,
+  3_600_000
+);
+
 type LastSuccessEntry = {
   payload: CachedRecommendationsPayload;
   expiresAt: number;
@@ -141,6 +178,10 @@ function uniqueIds(primary: string[], secondary: string[], maxSize = 50) {
     }
   }
   return deduped;
+}
+
+function hashText(value: string) {
+  return crypto.createHash("sha1").update(value).digest("hex");
 }
 
 function normalizePlaylistId(value: unknown) {
@@ -297,6 +338,7 @@ function createNoResultsPayload(args: {
   snapshotId: string | null;
   cacheState: "miss" | "stale";
   reason?: "no_results" | "upstream_fallback";
+  diagnostics?: RecommendationsSeedDiagnostics;
 }): PlaylistRecommendationsPayload {
   return {
     items: [],
@@ -307,6 +349,7 @@ function createNoResultsPayload(args: {
     snapshotId: args.snapshotId,
     seedTrackCount: 0,
     seedArtistCount: 0,
+    diagnostics: args.diagnostics,
     cacheState: args.cacheState,
   };
 }
@@ -505,6 +548,9 @@ type RecommendationsContext = {
   seedTrackPool: string[];
   seedArtistPool: string[];
   blockedTrackIds: Set<string>;
+  seedSource: "db" | "live";
+  candidateTrackCount: number;
+  validatedTrackCount: number;
 };
 
 async function loadArtistSeedsFromTrackPool(seedTrackPool: string[]) {
@@ -552,10 +598,188 @@ async function loadArtistSeedsFromTrackPool(seedTrackPool: string[]) {
   return uniqueIds(fallbackArtists, [], 25);
 }
 
+function chunkIds(ids: string[], size: number) {
+  const chunks: string[][] = [];
+  const safeSize = Math.max(1, Math.floor(size));
+  for (let index = 0; index < ids.length; index += safeSize) {
+    chunks.push(ids.slice(index, index + safeSize));
+  }
+  return chunks;
+}
+
+function toValidatedTrackCandidate(track: TracksLookupItem | null | undefined) {
+  const trackId = normalizeTrackId(track?.id ?? null);
+  if (!trackId) return null;
+  if (typeof track?.type === "string" && track.type.trim() && track.type !== "track") {
+    return null;
+  }
+  if (track?.is_playable === false) return null;
+  if (typeof track?.restrictions?.reason === "string" && track.restrictions.reason.trim()) {
+    return null;
+  }
+  return {
+    trackId,
+    artistIds: Array.isArray(track?.artists)
+      ? track.artists
+          .map((artist) => normalizeArtistId(artist?.id ?? null))
+          .filter((value): value is string => Boolean(value))
+      : [],
+  };
+}
+
+async function loadValidatedSeedBundle(seedTrackPool: string[]): Promise<ValidatedSeedBundle> {
+  const trackIds = uniqueIds(seedTrackPool, [], 50);
+  if (!trackIds.length) {
+    return {
+      trackIds: [],
+      artistIds: [],
+      hadValidationFailure: false,
+    };
+  }
+
+  const validatedTrackIds: string[] = [];
+  const validatedTrackSet = new Set<string>();
+  const validatedArtistIds: string[] = [];
+  const validatedArtistSet = new Set<string>();
+  let hadValidationFailure = false;
+
+  const appendValidated = (
+    track: TracksLookupItem | null | undefined
+  ) => {
+    const candidate = toValidatedTrackCandidate(track);
+    if (!candidate) return;
+    if (!validatedTrackSet.has(candidate.trackId)) {
+      validatedTrackSet.add(candidate.trackId);
+      validatedTrackIds.push(candidate.trackId);
+    }
+    for (const artistId of candidate.artistIds) {
+      if (validatedArtistSet.has(artistId)) continue;
+      validatedArtistSet.add(artistId);
+      validatedArtistIds.push(artistId);
+    }
+  };
+
+  for (const chunk of chunkIds(trackIds, 50)) {
+    if (validatedTrackIds.length >= 25) break;
+    try {
+      const data = await spotifyFetch<TracksLookupResponse>({
+        url: `https://api.spotify.com/v1/tracks?ids=${encodeURIComponent(
+          chunk.join(",")
+        )}&market=from_token`,
+        userLevel: true,
+        timeoutMs: RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS,
+        maxAttempts: RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS,
+      });
+      for (const track of Array.isArray(data?.tracks) ? data.tracks : []) {
+        appendValidated(track);
+        if (validatedTrackIds.length >= 25) break;
+      }
+      continue;
+    } catch (error) {
+      if (error instanceof SpotifyFetchError) {
+        if (error.status === 401) {
+          throw new RecommendationsServiceError({
+            status: 401,
+            code: "UNAUTHENTICATED",
+            message: "Je bent nog niet verbonden met Spotify.",
+            correlationId: error.correlationId,
+          });
+        }
+        if (error.status === 429) {
+          throw new RecommendationsServiceError({
+            status: 429,
+            code: "RATE_LIMIT",
+            message: "Spotify is tijdelijk druk met requests.",
+            retryAfterSec: toRetryAfterSec(error.retryAfterMs),
+            correlationId: error.correlationId,
+          });
+        }
+
+        hadValidationFailure = true;
+
+        if (error.status !== 400 && error.status !== 404) {
+          continue;
+        }
+      } else {
+        hadValidationFailure = true;
+        continue;
+      }
+    }
+
+    // Fallback to per-track validation when batched lookup rejects the input set.
+    for (const trackId of chunk.slice(0, 25)) {
+      try {
+        const data = await spotifyFetch<{
+          id?: string | null;
+          type?: string | null;
+          is_playable?: boolean;
+          restrictions?: { reason?: string | null } | null;
+          artists?: Array<{ id?: string | null }>;
+        }>({
+          url: `https://api.spotify.com/v1/tracks/${encodeURIComponent(trackId)}?market=from_token`,
+          userLevel: true,
+          timeoutMs: RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS,
+          maxAttempts: 1,
+        });
+        appendValidated(data);
+        if (validatedTrackIds.length >= 25) break;
+      } catch (error) {
+        if (error instanceof SpotifyFetchError) {
+          if (error.status === 401) {
+            throw new RecommendationsServiceError({
+              status: 401,
+              code: "UNAUTHENTICATED",
+              message: "Je bent nog niet verbonden met Spotify.",
+              correlationId: error.correlationId,
+            });
+          }
+          if (error.status === 429) {
+            throw new RecommendationsServiceError({
+              status: 429,
+              code: "RATE_LIMIT",
+              message: "Spotify is tijdelijk druk met requests.",
+              retryAfterSec: toRetryAfterSec(error.retryAfterMs),
+              correlationId: error.correlationId,
+            });
+          }
+        }
+        hadValidationFailure = true;
+      }
+    }
+  }
+
+  return {
+    trackIds: validatedTrackIds.slice(0, 25),
+    artistIds: validatedArtistIds.slice(0, 25),
+    hadValidationFailure,
+  };
+}
+
+async function getCachedValidatedSeedBundle(args: {
+  userId: string;
+  playlistId: string;
+  snapshotToken: string;
+  seedTrackPool: string[];
+  forceRefresh?: boolean;
+}) {
+  const key = `playlist-recommendations:seed-validation:v1:${args.userId}:${args.playlistId}:${args.snapshotToken}`;
+  const cached = await getCachedValue<ValidatedSeedBundle>({
+    key,
+    ttlMs: RECOMMENDATIONS_SEED_VALIDATION_TTL_MS,
+    staleMs: RECOMMENDATIONS_SEED_VALIDATION_STALE_MS,
+    forceRefresh: Boolean(args.forceRefresh),
+    loader: async () => {
+      return await loadValidatedSeedBundle(args.seedTrackPool);
+    },
+  });
+  return cached.value;
+}
+
 async function prepareRecommendationsContext(args: {
   userId: string;
   playlistId: string;
   limit: number;
+  forceRefresh?: boolean;
 }) {
   const seedSource = await getPlaylistSeedSource({
     userId: args.userId,
@@ -575,16 +799,54 @@ async function prepareRecommendationsContext(args: {
     });
   }
 
-  const seedArtistPool = await loadArtistSeedsFromTrackPool(seedSelection.seedTrackPool);
+  let validatedSeeds: ValidatedSeedBundle | null = null;
+  try {
+    validatedSeeds = await getCachedValidatedSeedBundle({
+      userId: args.userId,
+      playlistId: args.playlistId,
+      snapshotToken: seedSelection.snapshotToken,
+      seedTrackPool: seedSelection.seedTrackPool,
+      forceRefresh: args.forceRefresh,
+    });
+  } catch (error) {
+    if (error instanceof RecommendationsServiceError) {
+      throw error;
+    }
+    // Keep raw playlist-derived seeds when validation itself is transiently unavailable.
+    validatedSeeds = null;
+  }
+
+  const validatedTrackPool = uniqueIds(validatedSeeds?.trackIds ?? [], [], 25);
+  const effectiveSeedTrackPool = validatedTrackPool.length
+    ? validatedTrackPool
+    : seedSelection.seedTrackPool;
+  if (!effectiveSeedTrackPool.length) {
+    throw new RecommendationsServiceError({
+      status: 422,
+      code: "INSUFFICIENT_PLAYLIST_SEEDS",
+      message: "Deze playlist heeft te weinig geldige seeds voor recommendations.",
+    });
+  }
+
+  let seedArtistPool = uniqueIds(validatedSeeds?.artistIds ?? [], [], 25);
+  if (!seedArtistPool.length) {
+    seedArtistPool = await loadArtistSeedsFromTrackPool(effectiveSeedTrackPool);
+  }
+
+  const blockedTrackIds = new Set<string>(effectiveSeedTrackPool);
+  const snapshotSeedHash = hashText(effectiveSeedTrackPool.join(","));
 
   const context: RecommendationsContext = {
     playlistId: args.playlistId,
     limit: args.limit,
     snapshotId: seedSource.snapshotId,
-    snapshotToken: seedSelection.snapshotToken,
-    seedTrackPool: seedSelection.seedTrackPool,
+    snapshotToken: `${seedSelection.snapshotToken}:seed:${snapshotSeedHash}`,
+    seedTrackPool: effectiveSeedTrackPool,
     seedArtistPool,
-    blockedTrackIds: seedSelection.blockedTrackIds,
+    blockedTrackIds,
+    seedSource: seedSource.source === "live" ? "live" : "db",
+    candidateTrackCount: seedSelection.eligibleCount,
+    validatedTrackCount: validatedTrackPool.length,
   };
   return context;
 }
@@ -650,6 +912,24 @@ async function loadArtistTopTracksFallback(context: RecommendationsContext) {
   return collected;
 }
 
+function buildSeedDiagnostics(args: {
+  context: RecommendationsContext;
+  attemptsPlanned: number;
+  attemptsUsed: number;
+  fallbackUsed: "none" | "artist_top_tracks";
+}): RecommendationsSeedDiagnostics {
+  return {
+    seedSource: args.context.seedSource,
+    candidateTrackCount: args.context.candidateTrackCount,
+    validatedTrackCount: args.context.validatedTrackCount,
+    seedTrackPoolCount: args.context.seedTrackPool.length,
+    seedArtistPoolCount: args.context.seedArtistPool.length,
+    attemptsPlanned: Math.max(0, Math.floor(args.attemptsPlanned)),
+    attemptsUsed: Math.max(0, Math.floor(args.attemptsUsed)),
+    fallbackUsed: args.fallbackUsed,
+  };
+}
+
 async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
   if (RECOMMENDATIONS_MODE === "off") {
     throw new RecommendationsServiceError({
@@ -681,6 +961,7 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
     seedArtistPool: context.seedArtistPool,
     maxAttempts: RECOMMENDATIONS_MAX_ATTEMPTS,
   });
+  const attemptsPlanned = seedAttempts.length;
   if (seedAttempts.length === 0) {
     throw new RecommendationsServiceError({
       status: 422,
@@ -694,8 +975,10 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
   let hadRejectedSeedAttempt = false;
   let unavailableReason: string | null = null;
   let lastUpstreamError: SpotifyFetchError | null = null;
+  let attemptsUsed = 0;
 
   for (const seedAttempt of seedAttempts) {
+    attemptsUsed += 1;
     try {
       const params = new URLSearchParams();
       if (seedAttempt.seedTracks.length > 0) {
@@ -782,6 +1065,12 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
       snapshotId: context.snapshotId,
       seedTrackCount: primarySeedTracks.length,
       seedArtistCount: context.seedArtistPool.length,
+      diagnostics: buildSeedDiagnostics({
+        context,
+        attemptsPlanned,
+        attemptsUsed,
+        fallbackUsed: "none",
+      }),
     };
     return payload;
   }
@@ -796,6 +1085,12 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
       snapshotId: context.snapshotId,
       seedTrackCount: primarySeedTracks.length,
       seedArtistCount: context.seedArtistPool.length,
+      diagnostics: buildSeedDiagnostics({
+        context,
+        attemptsPlanned,
+        attemptsUsed,
+        fallbackUsed: "artist_top_tracks",
+      }),
     } satisfies CachedRecommendationsPayload;
   }
 
@@ -830,6 +1125,12 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
     snapshotId: context.snapshotId,
     seedTrackCount: primarySeedTracks.length,
     seedArtistCount: context.seedArtistPool.length,
+    diagnostics: buildSeedDiagnostics({
+      context,
+      attemptsPlanned,
+      attemptsUsed,
+      fallbackUsed: "none",
+    }),
   };
   return payload;
 }
@@ -855,6 +1156,7 @@ export async function getPlaylistRecommendations(args: {
       userId: args.userId,
       playlistId,
       limit,
+      forceRefresh: Boolean(args.forceRefresh),
     });
   } catch (error) {
     if (error instanceof RecommendationsServiceError && isSoftFallbackError(error)) {
@@ -910,6 +1212,12 @@ export async function getPlaylistRecommendations(args: {
         snapshotId: context.snapshotId,
         cacheState: "miss",
         reason: "upstream_fallback",
+        diagnostics: buildSeedDiagnostics({
+          context,
+          attemptsPlanned: 0,
+          attemptsUsed: 0,
+          fallbackUsed: "none",
+        }),
       });
     }
     throw error;

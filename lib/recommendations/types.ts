@@ -18,6 +18,17 @@ export type RecommendationItem = {
   playlists: Array<{ id: string; name: string; spotifyUrl: string }>;
 };
 
+export type RecommendationsSeedDiagnostics = {
+  seedSource: "db" | "live";
+  candidateTrackCount: number;
+  validatedTrackCount: number;
+  seedTrackPoolCount: number;
+  seedArtistPoolCount: number;
+  attemptsPlanned: number;
+  attemptsUsed: number;
+  fallbackUsed: "none" | "artist_top_tracks";
+};
+
 export type PlaylistRecommendationsPayload = {
   items: RecommendationItem[];
   totalCount: number;
@@ -27,6 +38,7 @@ export type PlaylistRecommendationsPayload = {
   snapshotId: string | null;
   seedTrackCount: number;
   seedArtistCount: number;
+  diagnostics?: RecommendationsSeedDiagnostics;
   cacheState: "hit" | "miss" | "coalesced" | "stale";
 };
 

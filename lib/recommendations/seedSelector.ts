@@ -75,7 +75,6 @@ export function selectDeterministicPlaylistSeedPool(args: {
       itemId: string;
     }
   >();
-  const blockedTrackIds = new Set<string>();
 
   for (const candidate of candidates) {
     if (candidate.isLocal === 1) continue;
@@ -85,10 +84,6 @@ export function selectDeterministicPlaylistSeedPool(args: {
     ) {
       continue;
     }
-    const sourceTrackId = normalizeTrackId(candidate.trackId);
-    const linkedTrackId = normalizeTrackId(candidate.linkedFromTrackId);
-    if (sourceTrackId) blockedTrackIds.add(sourceTrackId);
-    if (linkedTrackId) blockedTrackIds.add(linkedTrackId);
     const canonicalId = resolveCanonicalTrackId(candidate);
     if (!canonicalId) continue;
     const position =
@@ -137,7 +132,7 @@ export function selectDeterministicPlaylistSeedPool(args: {
 
   const result: SeedSelectorResult = {
     seedTrackPool,
-    blockedTrackIds,
+    blockedTrackIds: new Set<string>(seedTrackPool),
     snapshotToken,
     eligibleCount: allCanonicalIds.length,
   };

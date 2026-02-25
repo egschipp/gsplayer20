@@ -337,22 +337,29 @@ function mapRecommendationTracks(
 ) {
   const seen = new Set<string>();
   const mapped: RecommendationItem[] = [];
+  const blockedCandidates: Array<
+    NonNullable<RecommendationsResponse["tracks"]>[number]
+  > = [];
   const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
-  for (const track of tracks) {
+  const appendTrack = (
+    track: NonNullable<RecommendationsResponse["tracks"]>[number],
+    allowBlocked: boolean
+  ) => {
     const trackId = normalizeTrackId(track?.id ?? null);
-    if (!trackId) continue;
+    if (!trackId) return;
     const linkedTrackId = normalizeTrackId(track?.linked_from?.id ?? null);
     const canonicalTrackId = linkedTrackId ?? trackId;
-    if (seen.has(canonicalTrackId)) continue;
-    if (
+    if (seen.has(canonicalTrackId)) return;
+    const isBlocked =
       blockedTrackIds.has(canonicalTrackId) ||
       blockedTrackIds.has(trackId) ||
-      (linkedTrackId ? blockedTrackIds.has(linkedTrackId) : false)
-    ) {
-      continue;
+      (linkedTrackId ? blockedTrackIds.has(linkedTrackId) : false);
+    if (isBlocked && !allowBlocked) {
+      blockedCandidates.push(track);
+      return;
     }
-    if (track?.is_playable === false) continue;
-    if (typeof track?.restrictions?.reason === "string") continue;
+    if (track?.is_playable === false) return;
+    if (typeof track?.restrictions?.reason === "string") return;
     seen.add(canonicalTrackId);
 
     const releaseDate = track?.album?.release_date ?? null;
@@ -397,6 +404,17 @@ function mapRecommendationTracks(
       artistIds,
       playlists: [],
     });
+  };
+
+  for (const track of tracks) {
+    appendTrack(track, false);
+  }
+
+  // If filtering out seed overlaps removes everything, fall back to allowing those tracks.
+  if (mapped.length === 0 && blockedCandidates.length > 0) {
+    for (const track of blockedCandidates) {
+      appendTrack(track, true);
+    }
   }
 
   return mapped;

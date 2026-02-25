@@ -388,7 +388,8 @@ function normalizeSpotifyErrorText(body: string) {
 function isRejectedSeedError(error: SpotifyFetchError) {
   if (error.status !== 400 && error.status !== 404) return false;
   const text = normalizeSpotifyErrorText(error.body);
-  if (!text) return false;
+  if (!text) return error.status === 404;
+  if (text === "not_found" || text.includes("not found")) return true;
   return (
     text.includes("seed") ||
     text.includes("invalid id") ||
@@ -1298,7 +1299,8 @@ async function loadRecommendationsFromSpotify(
     return payload;
   }
 
-  if (RECOMMENDATIONS_ENABLE_ARTIST_FALLBACK) {
+  const shouldUseArtistFallback = RECOMMENDATIONS_ENABLE_ARTIST_FALLBACK || hadRejectedSeedAttempt;
+  if (shouldUseArtistFallback) {
     const artistFallbackItems = await loadArtistTopTracksFallback(context, args);
     if (artistFallbackItems.length > 0) {
       return {

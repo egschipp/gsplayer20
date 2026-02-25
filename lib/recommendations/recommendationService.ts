@@ -221,6 +221,16 @@ function parseLimit(value: string | null | undefined) {
   return Math.min(Math.floor(parsed), 100);
 }
 
+function parseSeedTracks(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return [] as string[];
+  const ids = raw
+    .split(",")
+    .map((part) => normalizeTrackId(part))
+    .filter((id): id is string => Boolean(id));
+  return uniqueIds(ids, [], 5);
+}
+
 function extractSpotifyErrorMessage(body: string) {
   const trimmed = String(body ?? "").trim();
   if (!trimmed) return "";
@@ -384,17 +394,16 @@ function addSeedAttempt(
 
 function buildDeterministicSeedAttempts(args: {
   seedTrackPool: string[];
-  seedArtistPool: string[];
   maxAttempts: number;
 }) {
   const attempts: SeedAttempt[] = [];
   const seen = new Set<string>();
   const tracks = uniqueIds(args.seedTrackPool, [], 30);
-  const artists = uniqueIds(args.seedArtistPool, [], 25);
   const maxAttempts = Math.max(1, Math.floor(args.maxAttempts));
   const mid = Math.floor(tracks.length / 2);
   const tail = Math.max(0, tracks.length - 5);
 
+  // Keep recommendation requests track-seed-only for maximum Spotify compatibility.
   addSeedAttempt(attempts, seen, { seedTracks: tracks.slice(0, 5) });
   if (attempts.length < maxAttempts) {
     addSeedAttempt(attempts, seen, { seedTracks: tracks.slice(mid, mid + 5) });
@@ -403,33 +412,7 @@ function buildDeterministicSeedAttempts(args: {
     addSeedAttempt(attempts, seen, { seedTracks: tracks.slice(tail, tail + 5) });
   }
   if (attempts.length < maxAttempts) {
-    addSeedAttempt(attempts, seen, {
-      seedTracks: tracks.slice(0, 3),
-      seedArtists: artists.slice(0, 2),
-    });
-  }
-  if (attempts.length < maxAttempts) {
-    addSeedAttempt(attempts, seen, {
-      seedTracks: tracks.slice(mid, mid + 2),
-      seedArtists: artists.slice(2, 5),
-    });
-  }
-  if (attempts.length < maxAttempts) {
-    addSeedAttempt(attempts, seen, {
-      seedTracks: tracks.slice(0, 1),
-      seedArtists: artists.slice(0, 4),
-    });
-  }
-  if (attempts.length < maxAttempts) {
-    addSeedAttempt(attempts, seen, {
-      seedArtists: artists.slice(0, 5),
-    });
-  }
-  if (attempts.length < maxAttempts) {
-    addSeedAttempt(attempts, seen, { seedTracks: tracks.slice(0, 3) });
-  }
-  if (attempts.length < maxAttempts) {
-    addSeedAttempt(attempts, seen, { seedTracks: tracks.slice(mid, mid + 3) });
+    addSeedAttempt(attempts, seen, { seedTracks: tracks.slice(0, 4) });
   }
   if (attempts.length < maxAttempts) {
     for (let start = 0; start < tracks.length && attempts.length < maxAttempts; start += 2) {
@@ -551,6 +534,7 @@ type RecommendationsContext = {
   seedSource: "db" | "live";
   candidateTrackCount: number;
   validatedTrackCount: number;
+  preferredSeedTrackCount: number;
 };
 
 async function loadArtistSeedsFromTrackPool(seedTrackPool: string[]) {
@@ -780,6 +764,7 @@ async function prepareRecommendationsContext(args: {
   playlistId: string;
   limit: number;
   forceRefresh?: boolean;
+  preferredSeedTracks?: string[];
 }) {
   const seedSource = await getPlaylistSeedSource({
     userId: args.userId,
@@ -817,16 +802,25 @@ async function prepareRecommendationsContext(args: {
   }
 
   const validatedTrackPool = uniqueIds(validatedSeeds?.trackIds ?? [], [], 25);
-  const effectiveSeedTrackPool = validatedTrackPool.length
+  const baseSeedTrackPool = validatedTrackPool.length
     ? validatedTrackPool
     : seedSelection.seedTrackPool;
-  if (!effectiveSeedTrackPool.length) {
+  if (!baseSeedTrackPool.length) {
     throw new RecommendationsServiceError({
       status: 422,
       code: "INSUFFICIENT_PLAYLIST_SEEDS",
       message: "Deze playlist heeft te weinig geldige seeds voor recommendations.",
     });
   }
+
+  const preferredFromRequest = uniqueIds(
+    (args.preferredSeedTracks ?? []).map((trackId) => normalizeTrackId(trackId) ?? ""),
+    [],
+    5
+  );
+  const basePoolSet = new Set(baseSeedTrackPool);
+  const preferredSeedTracks = preferredFromRequest.filter((trackId) => basePoolSet.has(trackId));
+  const effectiveSeedTrackPool = uniqueIds(preferredSeedTracks, baseSeedTrackPool, 25);
 
   let seedArtistPool = uniqueIds(validatedSeeds?.artistIds ?? [], [], 25);
   if (!seedArtistPool.length) {
@@ -847,6 +841,7 @@ async function prepareRecommendationsContext(args: {
     seedSource: seedSource.source === "live" ? "live" : "db",
     candidateTrackCount: seedSelection.eligibleCount,
     validatedTrackCount: validatedTrackPool.length,
+    preferredSeedTrackCount: preferredSeedTracks.length,
   };
   return context;
 }
@@ -923,6 +918,7 @@ function buildSeedDiagnostics(args: {
     candidateTrackCount: args.context.candidateTrackCount,
     validatedTrackCount: args.context.validatedTrackCount,
     seedTrackPoolCount: args.context.seedTrackPool.length,
+    preferredSeedTrackCount: args.context.preferredSeedTrackCount,
     seedArtistPoolCount: args.context.seedArtistPool.length,
     attemptsPlanned: Math.max(0, Math.floor(args.attemptsPlanned)),
     attemptsUsed: Math.max(0, Math.floor(args.attemptsUsed)),
@@ -958,7 +954,6 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
   const primarySeedTracks = context.seedTrackPool.slice(0, 5);
   const seedAttempts = buildDeterministicSeedAttempts({
     seedTrackPool: context.seedTrackPool,
-    seedArtistPool: context.seedArtistPool,
     maxAttempts: RECOMMENDATIONS_MAX_ATTEMPTS,
   });
   const attemptsPlanned = seedAttempts.length;
@@ -983,9 +978,6 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
       const params = new URLSearchParams();
       if (seedAttempt.seedTracks.length > 0) {
         params.set("seed_tracks", seedAttempt.seedTracks.join(","));
-      }
-      if (seedAttempt.seedArtists.length > 0) {
-        params.set("seed_artists", seedAttempt.seedArtists.join(","));
       }
       params.set("limit", String(context.limit));
       params.set("market", "from_token");
@@ -1140,6 +1132,7 @@ export async function getPlaylistRecommendations(args: {
   playlistId: string;
   limit: number;
   forceRefresh?: boolean;
+  preferredSeedTracks?: string[];
 }) {
   const playlistId = normalizePlaylistId(args.playlistId);
   if (!playlistId) {
@@ -1157,6 +1150,7 @@ export async function getPlaylistRecommendations(args: {
       playlistId,
       limit,
       forceRefresh: Boolean(args.forceRefresh),
+      preferredSeedTracks: args.preferredSeedTracks ?? [],
     });
   } catch (error) {
     if (error instanceof RecommendationsServiceError && isSoftFallbackError(error)) {
@@ -1240,6 +1234,10 @@ export async function getPlaylistRecommendations(args: {
 
 export function parseRecommendationsLimit(value: string | null | undefined) {
   return parseLimit(value);
+}
+
+export function parseRecommendationsSeedTracks(value: string | null | undefined) {
+  return parseSeedTracks(value);
 }
 
 export function normalizeRecommendationsPlaylistId(value: unknown) {

@@ -726,6 +726,35 @@ function resolveTrackRowCanonicalId(row: TrackRow) {
   );
 }
 
+function selectRecommendationSeedTracksFromList(rows: TrackRow[], previousSeedKey?: string | null) {
+  const eligible: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (row?.isLocal === 1) continue;
+    if (typeof row?.restrictionsReason === "string" && row.restrictionsReason.trim()) continue;
+    const canonicalId = resolveTrackRowCanonicalId(row);
+    if (!canonicalId || seen.has(canonicalId)) continue;
+    seen.add(canonicalId);
+    eligible.push(canonicalId);
+  }
+  if (eligible.length <= 5) return eligible;
+
+  const prev = String(previousSeedKey ?? "");
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const bag = [...eligible];
+    for (let index = bag.length - 1; index > 0; index -= 1) {
+      const randomIndex = Math.floor(Math.random() * (index + 1));
+      const tmp = bag[index];
+      bag[index] = bag[randomIndex];
+      bag[randomIndex] = tmp;
+    }
+    const sample = bag.slice(0, 5);
+    const sampleKey = sample.join(",");
+    if (!prev || sampleKey !== prev || attempt >= 7) return sample;
+  }
+  return eligible.slice(0, 5);
+}
+
 function resolveTrackItemCanonicalId(item: TrackItem) {
   return (
     normalizeTrackIdentity(item.linkedFromTrackId) ??
@@ -938,6 +967,7 @@ export default function PlaylistBrowser() {
   const [recommendationsLoading, setRecommendationsLoading] = useState(false);
   const [recommendationsError, setRecommendationsError] = useState<string | null>(null);
   const [recommendationsRetryNonce, setRecommendationsRetryNonce] = useState(0);
+  const [recommendationsSeedRefreshNonce, setRecommendationsSeedRefreshNonce] = useState(0);
   const [selectedTrackDetail, setSelectedTrackDetail] = useState<TrackDetail | null>(
     null
   );
@@ -985,6 +1015,7 @@ export default function PlaylistBrowser() {
   const hydratingPlaylistTargetsRef = useRef(false);
   const recommendationsRequestKeyRef = useRef<string | null>(null);
   const recommendationsRetryTimerRef = useRef<number | null>(null);
+  const lastRecommendationsSeedKeyRef = useRef<string>("");
   const comboMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setOpen(false),
   });
@@ -1018,6 +1049,13 @@ export default function PlaylistBrowser() {
     },
     [clearRecommendationsRetryTimer]
   );
+
+  const refreshRecommendationsSeeds = useCallback(() => {
+    clearRecommendationsRetryTimer();
+    recommendationsRequestKeyRef.current = null;
+    setRecommendationsError(null);
+    setRecommendationsSeedRefreshNonce((prev) => prev + 1);
+  }, [clearRecommendationsRetryTimer]);
 
   useEffect(() => {
     return () => {
@@ -2664,6 +2702,7 @@ export default function PlaylistBrowser() {
   useEffect(() => {
     clearRecommendationsRetryTimer();
     recommendationsRequestKeyRef.current = null;
+    lastRecommendationsSeedKeyRef.current = "";
     if (
       mode === "playlists" &&
       selectedPlaylist?.type === "playlist" &&
@@ -2697,10 +2736,16 @@ export default function PlaylistBrowser() {
     );
     if (loadingTracks || isSwitchingContext) return;
     const selectedPlaylistId = selectedPlaylist.id;
+    const seedTracks = selectRecommendationSeedTracksFromList(
+      tracks,
+      lastRecommendationsSeedKeyRef.current
+    );
+    const seedTracksKey = seedTracks.join(",");
+    lastRecommendationsSeedKeyRef.current = seedTracksKey;
 
     const requestKey = `recommendations:${selectedPlaylist.type}:${selectedPlaylistId}:${
       tracksContextKey ?? "no-context"
-    }:${tracksRefreshToken}:${recommendationsRetryNonce}`;
+    }:${tracksRefreshToken}:${recommendationsRetryNonce}:seeds:${seedTracksKey || "none"}`;
     if (recommendationsRequestKeyRef.current === requestKey) return;
     recommendationsRequestKeyRef.current = requestKey;
 
@@ -2709,6 +2754,7 @@ export default function PlaylistBrowser() {
       `/api/spotify/playlists/${encodeURIComponent(selectedPlaylistId)}/recommendations`,
       {
         limit: "25",
+        ...(seedTracks.length ? { seed_tracks: seedTracks.join(",") } : {}),
       }
     );
 
@@ -2848,10 +2894,12 @@ export default function PlaylistBrowser() {
     selectedPlaylist?.id,
     selectedPlaylist?.type,
     scheduleRecommendationsRetry,
+    tracks,
     tracksContextKey,
     tracksRefreshToken,
     clearRecommendationsRetryTimer,
     recommendationsRetryNonce,
+    recommendationsSeedRefreshNonce,
   ]);
 
   async function loadMore() {
@@ -3931,7 +3979,18 @@ export default function PlaylistBrowser() {
             <div className="track-list track-list-recommendations" style={{ marginTop: 16 }}>
               <div className="track-list-section-heading">
                 <span className="track-list-section-title">Recommendations</span>
-                <span className="track-list-section-meta">{recommendationsCountLabel}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span className="track-list-section-meta">{recommendationsCountLabel}</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ padding: "6px 12px", minHeight: 30 }}
+                    onClick={refreshRecommendationsSeeds}
+                    disabled={recommendationsLoading}
+                  >
+                    {recommendationsLoading ? "Vernieuwen..." : "Refresh"}
+                  </button>
+                </div>
               </div>
               {recommendationsLoading ? (
                 <p className="text-body" role="status">

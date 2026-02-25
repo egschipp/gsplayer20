@@ -23,6 +23,7 @@ export type RecommendationsSeedDiagnostics = {
   candidateTrackCount: number;
   validatedTrackCount: number;
   seedTrackPoolCount: number;
+  preferredSeedTrackCount: number;
   seedArtistPoolCount: number;
   attemptsPlanned: number;
   attemptsUsed: number;

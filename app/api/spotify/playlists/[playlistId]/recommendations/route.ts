@@ -3,6 +3,7 @@ import { jsonNoStore, rateLimitResponse, requireAppUser } from "@/lib/api/guards
 import {
   getPlaylistRecommendations,
   parseRecommendationsLimit,
+  parseRecommendationsSeedTracks,
 } from "@/lib/recommendations/recommendationService";
 import { RecommendationsServiceError } from "@/lib/recommendations/types";
 
@@ -28,6 +29,9 @@ export async function GET(
   }
 
   const searchParams = new URL(req.url).searchParams;
+  const preferredSeedTracks = parseRecommendationsSeedTracks(
+    searchParams.get("seed_tracks")
+  );
   let limit = 25;
   try {
     limit = parseRecommendationsLimit(searchParams.get("limit"));
@@ -52,6 +56,7 @@ export async function GET(
       playlistId,
       limit,
       forceRefresh: shouldForceRefresh(req),
+      preferredSeedTracks,
     });
     return jsonNoStore(payload, 200, {
       "x-recommendations-cache": payload.cacheState,

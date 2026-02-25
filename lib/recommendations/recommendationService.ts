@@ -89,6 +89,13 @@ const RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS = clampInt(
   3
 );
 
+const RECOMMENDATIONS_FALLBACK_ARTIST_LIMIT = clampInt(
+  Number(process.env.SPOTIFY_RECOMMENDATIONS_FALLBACK_ARTIST_LIMIT ?? "8"),
+  8,
+  1,
+  20
+);
+
 const RECOMMENDATIONS_CACHE_TTL_MS = clampInt(
   Number(process.env.SPOTIFY_RECOMMENDATIONS_CACHE_TTL_MS ?? "120000"),
   120_000,
@@ -486,6 +493,10 @@ function toRetryAfterSec(retryAfterMs: number | null | undefined) {
   return Math.max(1, Math.ceil(retryAfterMs / 1000));
 }
 
+function toCanonicalTrackId(track: RecommendationItem) {
+  return normalizeTrackId(track.linkedFromTrackId ?? null) ?? normalizeTrackId(track.trackId) ?? null;
+}
+
 type RecommendationsContext = {
   playlistId: string;
   limit: number;
@@ -576,6 +587,67 @@ async function prepareRecommendationsContext(args: {
     blockedTrackIds: seedSelection.blockedTrackIds,
   };
   return context;
+}
+
+async function loadArtistTopTracksFallback(context: RecommendationsContext) {
+  const artistIds = uniqueIds(
+    context.seedArtistPool,
+    [],
+    RECOMMENDATIONS_FALLBACK_ARTIST_LIMIT
+  );
+  if (!artistIds.length) return [] as RecommendationItem[];
+  const collected: RecommendationItem[] = [];
+  const collectedIds = new Set<string>();
+
+  for (const artistId of artistIds) {
+    let data: { tracks?: RecommendationsResponse["tracks"] } | undefined;
+    try {
+      data = await spotifyFetch<{ tracks?: RecommendationsResponse["tracks"] }>({
+        url: `https://api.spotify.com/v1/artists/${encodeURIComponent(
+          artistId
+        )}/top-tracks?market=from_token`,
+        userLevel: true,
+        timeoutMs: RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS,
+        maxAttempts: RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS,
+      });
+    } catch (error) {
+      if (error instanceof SpotifyFetchError) {
+        if (error.status === 401) {
+          throw new RecommendationsServiceError({
+            status: 401,
+            code: "UNAUTHENTICATED",
+            message: "Je bent nog niet verbonden met Spotify.",
+            correlationId: error.correlationId,
+          });
+        }
+        if (error.status === 429) {
+          throw new RecommendationsServiceError({
+            status: 429,
+            code: "RATE_LIMIT",
+            message: "Spotify is tijdelijk druk met requests.",
+            retryAfterSec: toRetryAfterSec(error.retryAfterMs),
+            correlationId: error.correlationId,
+          });
+        }
+      }
+      continue;
+    }
+
+    const mapped = mapRecommendationTracks(
+      { tracks: Array.isArray(data?.tracks) ? data?.tracks : [] },
+      context.blockedTrackIds
+    );
+    for (const item of mapped) {
+      const canonicalId = toCanonicalTrackId(item) ?? item.trackId;
+      if (!canonicalId || collectedIds.has(canonicalId)) continue;
+      collectedIds.add(canonicalId);
+      collected.push(item);
+      if (collected.length >= context.limit) break;
+    }
+    if (collected.length >= context.limit) break;
+  }
+
+  return collected;
 }
 
 async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
@@ -712,6 +784,19 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
       seedArtistCount: context.seedArtistPool.length,
     };
     return payload;
+  }
+
+  const artistFallbackItems = await loadArtistTopTracksFallback(context);
+  if (artistFallbackItems.length > 0) {
+    return {
+      items: artistFallbackItems.slice(0, context.limit),
+      totalCount: artistFallbackItems.length,
+      asOf: Date.now(),
+      playlistId: context.playlistId,
+      snapshotId: context.snapshotId,
+      seedTrackCount: primarySeedTracks.length,
+      seedArtistCount: context.seedArtistPool.length,
+    } satisfies CachedRecommendationsPayload;
   }
 
   if (unavailableReason) {

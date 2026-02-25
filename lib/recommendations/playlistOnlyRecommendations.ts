@@ -91,6 +91,8 @@ const shownTracksBySession = new Map<string, { ids: Set<string>; expiresAt: numb
 const userMarketCache = new Map<string, { market: string; expiresAt: number }>();
 const inflightReco = new Map<string, Promise<PlaylistOnlyRecommendationsResponse>>();
 const lastSeedSetByPlaylist = new Map<string, { ids: string[]; expiresAt: number }>();
+const recommendationsUnavailableUntilByUser = new Map<string, number>();
+const RECOMMENDATIONS_UNAVAILABLE_TTL_MS = 10 * 60 * 1000;
 
 function hashText(value: string) {
   return crypto.createHash("sha1").update(value).digest("hex");
@@ -406,6 +408,24 @@ async function fetchRecommendations(args: {
   limit: number;
   correlationId: string;
 }) {
+  const invalidSeeds = args.seedTrackIds.filter((id) => !/^[A-Za-z0-9]{22}$/.test(id));
+  if (invalidSeeds.length > 0) {
+    logEvent({
+      level: "warn",
+      event: "playlist_only_recommendations_seed_invalid",
+      correlationId: args.correlationId,
+      appUserId: args.userId,
+      data: {
+        playlistId: args.playlistId,
+        invalidSeedCount: invalidSeeds.length,
+      },
+    });
+    return {
+      tracks: [],
+      status: "seed_invalid" as const,
+    };
+  }
+
   const seedHash = hashText(args.seedTrackIds.join(","));
   const cacheKey = `reco:${args.userId}:${args.playlistId}:${args.market}:${seedHash}:${args.limit}`;
   const cached = recommendationsCache.get(cacheKey);
@@ -418,11 +438,13 @@ async function fetchRecommendations(args: {
   const params = new URLSearchParams({
     seed_tracks: args.seedTrackIds.join(","),
     limit: String(args.limit),
-    market: "from_token",
+    market: args.market,
   });
+  const recoUrl = `https://api.spotify.com/v1/recommendations?${params.toString()}`;
+  const outboundHost = new URL(recoUrl).host;
   try {
     const response = await spotifyFetch<RecoResponse>({
-      url: `https://api.spotify.com/v1/recommendations?${params.toString()}`,
+      url: recoUrl,
       userLevel: true,
       correlationId: args.correlationId,
       priority: "interactive",
@@ -432,6 +454,19 @@ async function fetchRecommendations(args: {
       staleWhileRevalidateMs: 8_000,
     });
     const tracks = Array.isArray(response?.tracks) ? response.tracks : [];
+    logEvent({
+      level: "info",
+      event: "playlist_only_recommendations_spotify_response",
+      correlationId: args.correlationId,
+      appUserId: args.userId,
+      data: {
+        playlistId: args.playlistId,
+        outboundHost,
+        spotifyStatus: 200,
+        marketUsed: args.market,
+        rawTrackCount: tracks.length,
+      },
+    });
     recommendationsCache.set(cacheKey, { value: tracks, expiresAt: nowMs() + RECO_CACHE_TTL_MS });
     return {
       tracks,
@@ -439,6 +474,20 @@ async function fetchRecommendations(args: {
     };
   } catch (error) {
     if (error instanceof SpotifyFetchError) {
+      logEvent({
+        level: "warn",
+        event: "playlist_only_recommendations_spotify_error",
+        correlationId: args.correlationId,
+        appUserId: args.userId,
+        data: {
+          playlistId: args.playlistId,
+          outboundHost,
+          spotifyStatus: error.status,
+          spotifyErrorCode: error.code,
+          spotifyErrorMessage: String(error.body ?? "").slice(0, 300),
+          marketUsed: args.market,
+        },
+      });
       if (error.status === 429) {
         throw new RecommendationsServiceError({
           status: 429,
@@ -468,6 +517,20 @@ async function fetchRecommendations(args: {
         });
       }
       if (error.status === 400 || error.status === 404) {
+        const body = String(error.body ?? "").trim().toLowerCase();
+        const endpointUnavailable =
+          error.status === 404 &&
+          (body === "not_found" || body.includes("not found") || body.includes("endpoint"));
+        if (endpointUnavailable) {
+          recommendationsUnavailableUntilByUser.set(
+            args.userId,
+            nowMs() + RECOMMENDATIONS_UNAVAILABLE_TTL_MS
+          );
+          return {
+            tracks: [],
+            status: "endpoint_unavailable" as const,
+          };
+        }
         return {
           tracks: [],
           status: "seed_invalid" as const,
@@ -576,6 +639,31 @@ export async function getPlaylistOnlyRecommendations(args: {
   forceRefresh?: boolean;
 }) {
   cleanupCaches();
+  const blockedUntil = recommendationsUnavailableUntilByUser.get(args.userId) ?? 0;
+  if (blockedUntil > nowMs()) {
+    return {
+      status: "error",
+      playlistId: args.playlistId,
+      market: "US",
+      seed: {
+        trackIds: [],
+        seedHash: hashText(""),
+        poolSize: 0,
+      },
+      tracks: [],
+      meta: {
+        requestedLimit: args.limit,
+        returnedRaw: 0,
+        afterFilter: 0,
+        topUpUsed: false,
+        filteredReasons: {},
+      },
+      code: "RECOMMENDATIONS_NOT_FOUND",
+      requestId: args.correlationId,
+      legacyItems: [],
+      legacyReason: "upstream_fallback",
+    } satisfies PlaylistOnlyRecommendationsResponse;
+  }
   const inflightKey = `reco-run:${args.userId}:${args.playlistId}:${args.mode}:${args.limit}`;
   if (inflightReco.has(inflightKey)) {
     return await inflightReco.get(inflightKey)!;
@@ -733,7 +821,10 @@ export async function getPlaylistOnlyRecommendations(args: {
             hints: ["PLAYLIST_TOO_SMALL_OR_NICHE", "MARKET_RESTRICTIONS"],
             requestId: args.correlationId,
             legacyItems: filtered.items,
-            legacyReason: firstReco.status === "seed_invalid" ? "seed_rejected" : "no_results",
+            legacyReason:
+              firstReco.status === "seed_invalid" || firstReco.status === "endpoint_unavailable"
+                ? "seed_rejected"
+                : "no_results",
           };
 
     logEvent({

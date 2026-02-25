@@ -308,6 +308,13 @@ async function spotifyFetchWithTrace<T>(args: {
       timeoutMs: args.timeoutMs,
       maxAttempts: args.maxAttempts,
       correlationId: args.correlationId,
+      priority:
+        args.op === "spotify_recommendations" ? "interactive" : args.op.includes("fallback")
+          ? "background"
+          : "interactive",
+      requestClass: "read",
+      cacheTtlMs: args.op === "spotify_recommendations" ? 3_000 : 800,
+      staleWhileRevalidateMs: args.op === "spotify_recommendations" ? 10_000 : 2000,
     });
     args.trace("spotify_request_success", {
       status: 200,

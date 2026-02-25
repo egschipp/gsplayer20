@@ -5,6 +5,7 @@ import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { createCorrelationId } from "@/lib/observability/correlation";
 import { getValidAccessTokenForUser } from "@/lib/spotify/tokenManager";
 import { SpotifyApiError, spotifyApiRequest } from "@/lib/spotify/spotifyApiClient";
+import type { SpotifyRequestClass, SpotifyRequestPriority } from "@/lib/spotify/requestPolicy";
 
 const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000");
 
@@ -30,6 +31,11 @@ export async function spotifyFetch<T>(args: {
   correlationId?: string;
   timeoutMs?: number;
   maxAttempts?: number;
+  priority?: SpotifyRequestPriority;
+  requestClass?: SpotifyRequestClass;
+  cacheTtlMs?: number;
+  staleWhileRevalidateMs?: number;
+  circuitBreakerProtected?: boolean;
 }) {
   const {
     url,
@@ -39,6 +45,11 @@ export async function spotifyFetch<T>(args: {
     correlationId = createCorrelationId(),
     timeoutMs = FETCH_TIMEOUT_MS,
     maxAttempts,
+    priority,
+    requestClass,
+    cacheTtlMs,
+    staleWhileRevalidateMs,
+    circuitBreakerProtected,
   } = args;
 
   try {
@@ -52,6 +63,12 @@ export async function spotifyFetch<T>(args: {
         timeoutMs,
         maxAttempts,
         correlationId,
+        userKey: "app",
+        priority,
+        requestClass,
+        cacheTtlMs,
+        staleWhileRevalidateMs,
+        circuitBreakerProtected,
       });
     }
 
@@ -97,6 +114,12 @@ export async function spotifyFetch<T>(args: {
         timeoutMs,
         maxAttempts,
         correlationId,
+        userKey: appUserId,
+        priority,
+        requestClass,
+        cacheTtlMs,
+        staleWhileRevalidateMs,
+        circuitBreakerProtected,
       });
     } catch (error) {
       if (error instanceof SpotifyApiError && error.status === 401) {
@@ -119,6 +142,12 @@ export async function spotifyFetch<T>(args: {
           timeoutMs,
           maxAttempts,
           correlationId,
+          userKey: appUserId,
+          priority,
+          requestClass,
+          cacheTtlMs,
+          staleWhileRevalidateMs,
+          circuitBreakerProtected,
         });
       }
       throw error;

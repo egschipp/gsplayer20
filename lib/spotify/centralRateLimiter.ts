@@ -6,6 +6,12 @@ type EndpointState = {
   lastDispatchAt: number;
 };
 
+type UserState = {
+  blockedUntil: number;
+  inflight: number;
+  lastDispatchAt: number;
+};
+
 type LimiterState = {
   blockedUntil: number;
   inflight: number;
@@ -14,6 +20,8 @@ type LimiterState = {
   totalAcquires: number;
   totalWaitMs: number;
   endpoints: Map<string, EndpointState>;
+  users: Map<string, UserState>;
+  inflightByPriority: Record<"ui_critical" | "interactive" | "background", number>;
 };
 
 const MAX_BACKOFF_MS = Number(process.env.SPOTIFY_RETRY_AFTER_MAX_MS || "120000");
@@ -36,6 +44,14 @@ const ENDPOINT_MIN_INTERVAL_MS = clampInt(
   0,
   1500
 );
+const USER_MAX_CONCURRENT = clampInt(process.env.SPOTIFY_USER_MAX_CONCURRENT, 2, 1, 8);
+const USER_MIN_INTERVAL_MS = clampInt(process.env.SPOTIFY_USER_MIN_INTERVAL_MS, 80, 0, 1000);
+const BACKGROUND_MAX_CONCURRENT = clampInt(
+  process.env.SPOTIFY_BACKGROUND_MAX_CONCURRENT,
+  1,
+  1,
+  6
+);
 const DEFAULT_429_BACKOFF_MS = clampInt(
   process.env.SPOTIFY_DEFAULT_429_BACKOFF_MS,
   8_000,
@@ -51,6 +67,12 @@ const state: LimiterState = {
   totalAcquires: 0,
   totalWaitMs: 0,
   endpoints: new Map<string, EndpointState>(),
+  users: new Map<string, UserState>(),
+  inflightByPriority: {
+    ui_critical: 0,
+    interactive: 0,
+    background: 0,
+  },
 };
 
 function clampInt(
@@ -105,18 +127,50 @@ function cleanupEndpointStates(now = Date.now()) {
   }
 }
 
+function getUserState(userKey: string) {
+  const key = userKey || "anonymous";
+  let entry = state.users.get(key);
+  if (!entry) {
+    entry = {
+      blockedUntil: 0,
+      inflight: 0,
+      lastDispatchAt: 0,
+    };
+    state.users.set(key, entry);
+  }
+  return entry;
+}
+
+function cleanupUserStates(now = Date.now()) {
+  for (const [key, entry] of state.users.entries()) {
+    const inactive =
+      entry.inflight <= 0 &&
+      entry.blockedUntil < now - 60_000 &&
+      entry.lastDispatchAt < now - 300_000;
+    if (inactive) {
+      state.users.delete(key);
+    }
+  }
+}
+
 export async function acquireSpotifyRequestSlot(args: {
   endpointGroup: string;
   method: string;
+  userKey?: string;
+  priority?: "ui_critical" | "interactive" | "background";
 }) {
+  const priority = args.priority ?? "interactive";
   const endpoint = `${args.method}:${args.endpointGroup || "unknown"}`;
+  const userKey = args.userKey || "anonymous";
   const started = Date.now();
   let waitedMs = 0;
 
   for (;;) {
     const now = Date.now();
     cleanupEndpointStates(now);
+    cleanupUserStates(now);
     const endpointState = getEndpointState(endpoint);
+    const userState = getUserState(userKey);
 
     const dynFactor = Math.min(3, 1 + state.consecutive429 * 0.2);
     const globalGapMs = Math.floor(GLOBAL_MIN_INTERVAL_MS * dynFactor);
@@ -125,25 +179,37 @@ export async function acquireSpotifyRequestSlot(args: {
     const blockWait = Math.max(
       0,
       state.blockedUntil - now,
-      endpointState.blockedUntil - now
+      endpointState.blockedUntil - now,
+      userState.blockedUntil - now
     );
     const spacingWait = Math.max(
       0,
       state.lastDispatchAt + globalGapMs - now,
-      endpointState.lastDispatchAt + endpointGapMs - now
+      endpointState.lastDispatchAt + endpointGapMs - now,
+      userState.lastDispatchAt + USER_MIN_INTERVAL_MS - now
     );
     const concurrencyWait =
-      state.inflight >= GLOBAL_MAX_CONCURRENT || endpointState.inflight >= ENDPOINT_MAX_CONCURRENT
+      state.inflight >= GLOBAL_MAX_CONCURRENT ||
+      endpointState.inflight >= ENDPOINT_MAX_CONCURRENT ||
+      userState.inflight >= USER_MAX_CONCURRENT
         ? 35
         : 0;
+    const priorityWait =
+      priority === "background" &&
+      state.inflightByPriority.background >= BACKGROUND_MAX_CONCURRENT
+        ? 45
+        : 0;
 
-    const sleepMs = Math.max(blockWait, spacingWait, concurrencyWait);
+    const sleepMs = Math.max(blockWait, spacingWait, concurrencyWait, priorityWait);
     if (sleepMs <= 0) {
       state.inflight += 1;
       endpointState.inflight += 1;
+      userState.inflight += 1;
+      state.inflightByPriority[priority] += 1;
       const dispatchNow = Date.now();
       state.lastDispatchAt = dispatchNow;
       endpointState.lastDispatchAt = dispatchNow;
+      userState.lastDispatchAt = dispatchNow;
       state.totalAcquires += 1;
       break;
     }
@@ -165,9 +231,13 @@ export async function acquireSpotifyRequestSlot(args: {
     if (released) return;
     released = true;
     const endpointState = getEndpointState(endpoint);
+    const userState = getUserState(userKey);
     state.inflight = Math.max(0, state.inflight - 1);
     endpointState.inflight = Math.max(0, endpointState.inflight - 1);
+    userState.inflight = Math.max(0, userState.inflight - 1);
+    state.inflightByPriority[priority] = Math.max(0, state.inflightByPriority[priority] - 1);
     cleanupEndpointStates();
+    cleanupUserStates();
     const holdMs = Date.now() - started;
     observeHistogram("spotify_rate_limiter_hold_ms", holdMs, {
       endpoint: args.endpointGroup || "unknown",
@@ -201,6 +271,7 @@ export function registerSpotifyRequestOutcome(args: { status: number }) {
 
 export function getSpotifyCentralRateLimitSnapshot(now = Date.now()) {
   cleanupEndpointStates(now);
+  cleanupUserStates(now);
   const backoffRemainingMs = Math.max(0, state.blockedUntil - now);
   return {
     globalBackoffRemainingMs: backoffRemainingMs,
@@ -211,8 +282,13 @@ export function getSpotifyCentralRateLimitSnapshot(now = Date.now()) {
     minIntervalGlobalMs: GLOBAL_MIN_INTERVAL_MS,
     minIntervalPerEndpointMs: ENDPOINT_MIN_INTERVAL_MS,
     endpointStates: state.endpoints.size,
+    userStates: state.users.size,
+    userMaxConcurrent: USER_MAX_CONCURRENT,
+    userMinIntervalMs: USER_MIN_INTERVAL_MS,
+    backgroundMaxConcurrent: BACKGROUND_MAX_CONCURRENT,
     consecutive429: state.consecutive429,
     totalAcquires: state.totalAcquires,
     totalWaitMs: normalizeWaitMs(state.totalWaitMs),
+    inflightByPriority: { ...state.inflightByPriority },
   };
 }

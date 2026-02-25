@@ -59,6 +59,10 @@ export async function GET(req: NextRequest) {
       url: "https://api.spotify.com/v1/me/player",
       userLevel: true,
       correlationId,
+      priority: "ui_critical",
+      requestClass: "read",
+      cacheTtlMs: 300,
+      staleWhileRevalidateMs: 1000,
     });
 
     if (!data) {
@@ -247,6 +251,10 @@ export async function PUT(req: NextRequest) {
         url: "https://api.spotify.com/v1/me/player",
         userLevel: true,
         correlationId,
+        priority: "ui_critical",
+        requestClass: "read",
+        cacheTtlMs: 300,
+        staleWhileRevalidateMs: 1000,
       });
       const currentDeviceId =
         typeof current?.device?.id === "string" ? current.device.id : null;
@@ -293,6 +301,9 @@ export async function PUT(req: NextRequest) {
       body: { device_ids: deviceIds, play },
       userLevel: true,
       correlationId,
+      priority: "ui_critical",
+      requestClass: "write",
+      maxAttempts: 1,
     });
     return jsonNoStore({ ok: true, deviceIds, play });
   } catch (error) {

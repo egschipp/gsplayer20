@@ -42,6 +42,10 @@ export async function GET(req: Request) {
       url: "https://api.spotify.com/v1/me/player/devices",
       userLevel: true,
       correlationId,
+      priority: "ui_critical",
+      requestClass: "read",
+      cacheTtlMs: 500,
+      staleWhileRevalidateMs: 1500,
     });
     const devices = Array.isArray(data?.devices) ? data.devices : [];
 

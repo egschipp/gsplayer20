@@ -2793,9 +2793,17 @@ export default function PlaylistBrowser() {
         });
         if (!isCurrentRequest()) return;
         setRecommendations(filtered);
-        if (!filtered.length && data.reason === "seed_rejected") {
-          setRecommendationsError("Voor deze playlist kon Spotify geen recommendations genereren.");
-          recommendationsRequestKeyRef.current = null;
+        if (!filtered.length) {
+          if (data.reason === "seed_rejected") {
+            setRecommendationsError("Voor deze playlist kon Spotify geen recommendations genereren.");
+            recommendationsRequestKeyRef.current = null;
+          } else if (data.reason === "upstream_fallback") {
+            setRecommendationsError("Spotify is tijdelijk niet bereikbaar. Probeer het later opnieuw.");
+            recommendationsRequestKeyRef.current = null;
+            scheduleRecommendationsRetry(15_000);
+          } else {
+            setRecommendationsError(null);
+          }
         } else {
           setRecommendationsError(null);
         }

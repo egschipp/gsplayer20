@@ -22,7 +22,7 @@ export type PlaylistRecommendationsPayload = {
   items: RecommendationItem[];
   totalCount: number;
   asOf: number;
-  reason?: "no_results" | "seed_rejected";
+  reason?: "no_results" | "seed_rejected" | "upstream_fallback";
   playlistId: string;
   snapshotId: string | null;
   seedTrackCount: number;

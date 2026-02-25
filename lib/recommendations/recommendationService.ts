@@ -1,5 +1,8 @@
+import { inArray } from "drizzle-orm";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
+import { getDb } from "@/lib/db/client";
+import { trackArtists } from "@/lib/db/schema";
 import { getCachedValue } from "@/lib/recommendations/cache";
 import { getPlaylistSeedSource } from "@/lib/recommendations/playlistSeedSource";
 import {
@@ -41,6 +44,7 @@ type CachedRecommendationsPayload = Omit<PlaylistRecommendationsPayload, "cacheS
 
 type SeedAttempt = {
   seedTracks: string[];
+  seedArtists: string[];
   key: string;
 };
 
@@ -140,6 +144,18 @@ function normalizePlaylistId(value: unknown) {
   if (raw.startsWith("spotify:playlist:")) {
     const id = raw.split(":").pop() ?? "";
     return PLAYLIST_ID_REGEX.test(id) ? id : null;
+  }
+  return null;
+}
+
+function normalizeArtistId(value: unknown) {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  if (/^[A-Za-z0-9]{22}$/.test(raw)) return raw;
+  if (raw.startsWith("spotify:artist:")) {
+    const id = raw.split(":").pop() ?? "";
+    return /^[A-Za-z0-9]{22}$/.test(id) ? id : null;
   }
   return null;
 }
@@ -273,12 +289,13 @@ function createNoResultsPayload(args: {
   playlistId: string;
   snapshotId: string | null;
   cacheState: "miss" | "stale";
+  reason?: "no_results" | "upstream_fallback";
 }): PlaylistRecommendationsPayload {
   return {
     items: [],
     totalCount: 0,
     asOf: Date.now(),
-    reason: "no_results",
+    reason: args.reason ?? "no_results",
     playlistId: args.playlistId,
     snapshotId: args.snapshotId,
     seedTrackCount: 0,
@@ -294,34 +311,78 @@ function markRecommendationsUnavailable(reason: string) {
   recommendationsCapabilityState.reason = reason.slice(0, 160);
 }
 
-function createSeedAttemptKey(seedTracks: string[]) {
-  return `t:${[...seedTracks].sort().join(",")}`;
+function createSeedAttemptKey(seedTracks: string[], seedArtists: string[]) {
+  return `t:${[...seedTracks].sort().join(",")}|a:${[...seedArtists].sort().join(",")}`;
 }
 
 function addSeedAttempt(
   attempts: SeedAttempt[],
   seen: Set<string>,
-  next: { seedTracks: string[] }
+  next: { seedTracks?: string[]; seedArtists?: string[] }
 ) {
-  const tracks = uniqueIds(next.seedTracks, [], 5);
-  if (tracks.length === 0) return;
-  const key = createSeedAttemptKey(tracks);
+  const tracks = uniqueIds(next.seedTracks ?? [], [], 5);
+  const artists = uniqueIds(next.seedArtists ?? [], [], 5);
+  const trackCount = tracks.length;
+  const artistSlots = Math.max(0, 5 - trackCount);
+  const selectedArtists = artists.slice(0, artistSlots);
+  if (tracks.length === 0 && selectedArtists.length === 0) return;
+  const key = createSeedAttemptKey(tracks, selectedArtists);
   if (seen.has(key)) return;
   seen.add(key);
-  attempts.push({ seedTracks: tracks, key });
+  attempts.push({ seedTracks: tracks, seedArtists: selectedArtists, key });
 }
 
 function buildDeterministicSeedAttempts(args: {
   seedTrackPool: string[];
+  seedArtistPool: string[];
   maxAttempts: number;
 }) {
   const attempts: SeedAttempt[] = [];
   const seen = new Set<string>();
   const tracks = uniqueIds(args.seedTrackPool, [], 30);
+  const artists = uniqueIds(args.seedArtistPool, [], 25);
   const maxAttempts = Math.max(1, Math.floor(args.maxAttempts));
+  const mid = Math.floor(tracks.length / 2);
+  const tail = Math.max(0, tracks.length - 5);
 
-  if (tracks.length > 0) {
-    for (let start = 0; start < tracks.length && attempts.length < maxAttempts; start += 1) {
+  addSeedAttempt(attempts, seen, { seedTracks: tracks.slice(0, 5) });
+  if (attempts.length < maxAttempts) {
+    addSeedAttempt(attempts, seen, { seedTracks: tracks.slice(mid, mid + 5) });
+  }
+  if (attempts.length < maxAttempts) {
+    addSeedAttempt(attempts, seen, { seedTracks: tracks.slice(tail, tail + 5) });
+  }
+  if (attempts.length < maxAttempts) {
+    addSeedAttempt(attempts, seen, {
+      seedTracks: tracks.slice(0, 3),
+      seedArtists: artists.slice(0, 2),
+    });
+  }
+  if (attempts.length < maxAttempts) {
+    addSeedAttempt(attempts, seen, {
+      seedTracks: tracks.slice(mid, mid + 2),
+      seedArtists: artists.slice(2, 5),
+    });
+  }
+  if (attempts.length < maxAttempts) {
+    addSeedAttempt(attempts, seen, {
+      seedTracks: tracks.slice(0, 1),
+      seedArtists: artists.slice(0, 4),
+    });
+  }
+  if (attempts.length < maxAttempts) {
+    addSeedAttempt(attempts, seen, {
+      seedArtists: artists.slice(0, 5),
+    });
+  }
+  if (attempts.length < maxAttempts) {
+    addSeedAttempt(attempts, seen, { seedTracks: tracks.slice(0, 3) });
+  }
+  if (attempts.length < maxAttempts) {
+    addSeedAttempt(attempts, seen, { seedTracks: tracks.slice(mid, mid + 3) });
+  }
+  if (attempts.length < maxAttempts) {
+    for (let start = 0; start < tracks.length && attempts.length < maxAttempts; start += 2) {
       addSeedAttempt(attempts, seen, {
         seedTracks: tracks.slice(start, start + 5),
       });
@@ -431,8 +492,54 @@ type RecommendationsContext = {
   snapshotId: string | null;
   snapshotToken: string;
   seedTrackPool: string[];
+  seedArtistPool: string[];
   blockedTrackIds: Set<string>;
 };
+
+async function loadArtistSeedsFromTrackPool(seedTrackPool: string[]) {
+  const seedTracks = uniqueIds(seedTrackPool, [], 50);
+  if (!seedTracks.length) return [] as string[];
+  const db = getDb();
+  try {
+    const rows = await db
+      .select({
+        artistId: trackArtists.artistId,
+      })
+      .from(trackArtists)
+      .where(inArray(trackArtists.trackId, seedTracks));
+    const artistIds = uniqueIds(
+      rows
+        .map((row) => normalizeArtistId(row.artistId))
+        .filter((value): value is string => Boolean(value)),
+      []
+    );
+    if (artistIds.length) return artistIds.slice(0, 25);
+  } catch {
+    // fall through to live fallback
+  }
+
+  const fallbackArtists: string[] = [];
+  for (const trackId of seedTracks.slice(0, 5)) {
+    try {
+      const data = await spotifyFetch<{
+        artists?: Array<{ id?: string | null }>;
+      }>({
+        url: `https://api.spotify.com/v1/tracks/${encodeURIComponent(trackId)}?market=from_token`,
+        userLevel: true,
+        timeoutMs: RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS,
+        maxAttempts: 1,
+      });
+      for (const artist of Array.isArray(data?.artists) ? data.artists : []) {
+        const artistId = normalizeArtistId(artist?.id ?? null);
+        if (!artistId) continue;
+        fallbackArtists.push(artistId);
+      }
+    } catch {
+      // ignore fallback errors
+    }
+  }
+  return uniqueIds(fallbackArtists, [], 25);
+}
 
 async function prepareRecommendationsContext(args: {
   userId: string;
@@ -457,12 +564,15 @@ async function prepareRecommendationsContext(args: {
     });
   }
 
+  const seedArtistPool = await loadArtistSeedsFromTrackPool(seedSelection.seedTrackPool);
+
   const context: RecommendationsContext = {
     playlistId: args.playlistId,
     limit: args.limit,
     snapshotId: seedSource.snapshotId,
     snapshotToken: seedSelection.snapshotToken,
     seedTrackPool: seedSelection.seedTrackPool,
+    seedArtistPool,
     blockedTrackIds: seedSelection.blockedTrackIds,
   };
   return context;
@@ -496,6 +606,7 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
   const primarySeedTracks = context.seedTrackPool.slice(0, 5);
   const seedAttempts = buildDeterministicSeedAttempts({
     seedTrackPool: context.seedTrackPool,
+    seedArtistPool: context.seedArtistPool,
     maxAttempts: RECOMMENDATIONS_MAX_ATTEMPTS,
   });
   if (seedAttempts.length === 0) {
@@ -517,6 +628,9 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
       const params = new URLSearchParams();
       if (seedAttempt.seedTracks.length > 0) {
         params.set("seed_tracks", seedAttempt.seedTracks.join(","));
+      }
+      if (seedAttempt.seedArtists.length > 0) {
+        params.set("seed_artists", seedAttempt.seedArtists.join(","));
       }
       params.set("limit", String(context.limit));
       params.set("market", "from_token");
@@ -595,7 +709,7 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
       playlistId: context.playlistId,
       snapshotId: context.snapshotId,
       seedTrackCount: primarySeedTracks.length,
-      seedArtistCount: 0,
+      seedArtistCount: context.seedArtistPool.length,
     };
     return payload;
   }
@@ -630,7 +744,7 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
     playlistId: context.playlistId,
     snapshotId: context.snapshotId,
     seedTrackCount: primarySeedTracks.length,
-    seedArtistCount: 0,
+    seedArtistCount: context.seedArtistPool.length,
   };
   return payload;
 }
@@ -675,6 +789,7 @@ export async function getPlaylistRecommendations(args: {
         playlistId,
         snapshotId: null,
         cacheState: "miss",
+        reason: "upstream_fallback",
       });
     }
     throw error;
@@ -709,6 +824,7 @@ export async function getPlaylistRecommendations(args: {
         playlistId,
         snapshotId: context.snapshotId,
         cacheState: "miss",
+        reason: "upstream_fallback",
       });
     }
     throw error;

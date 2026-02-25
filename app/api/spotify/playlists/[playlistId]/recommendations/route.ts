@@ -6,12 +6,12 @@ import {
   requireAppUser,
 } from "@/lib/api/guards";
 import {
-  getPlaylistRecommendations,
   parseRecommendationsLimit,
   parseRecommendationsSeedTracks,
 } from "@/lib/recommendations/recommendationService";
 import { RecommendationsServiceError } from "@/lib/recommendations/types";
 import { createRecommendationsTraceLogger } from "@/lib/recommendations/troubleshootingLog";
+import { getPlaylistOnlyRecommendations } from "@/lib/recommendations/playlistOnlyRecommendations";
 
 export const runtime = "nodejs";
 
@@ -97,14 +97,44 @@ export async function GET(
   }
 
   try {
-    const payload = await getPlaylistRecommendations({
+    const statusPayload = await getPlaylistOnlyRecommendations({
       userId: session.appUserId as string,
       playlistId,
       limit,
       forceRefresh: shouldForceRefresh(req),
       preferredSeedTracks,
       correlationId,
+      mode: shouldForceRefresh(req) ? "refresh" : "initial",
     });
+    const payload = {
+      status: statusPayload.status,
+      items: statusPayload.legacyItems,
+      totalCount: statusPayload.legacyItems.length,
+      asOf: Date.now(),
+      reason: statusPayload.legacyReason,
+      playlistId,
+      snapshotId: null,
+      seedTrackCount: statusPayload.seed.trackIds.length,
+      seedArtistCount: 0,
+      cacheState: "miss" as const,
+      diagnostics: {
+        seedSource: "live" as const,
+        candidateTrackCount: statusPayload.seed.poolSize,
+        validatedTrackCount: statusPayload.seed.poolSize,
+        seedTrackPoolCount: statusPayload.seed.poolSize,
+        preferredSeedTrackCount: preferredSeedTracks.length,
+        seedArtistPoolCount: 0,
+        attemptsPlanned: statusPayload.meta.topUpUsed ? 2 : 1,
+        attemptsUsed: statusPayload.meta.topUpUsed ? 2 : 1,
+        fallbackUsed: "none" as const,
+      },
+      market: statusPayload.market,
+      seed: statusPayload.seed,
+      tracks: statusPayload.tracks,
+      meta: statusPayload.meta,
+      hints: statusPayload.hints ?? [],
+      requestId: statusPayload.requestId,
+    };
     trace("request_succeeded", {
       status: 200,
       durationMs: Date.now() - started,
@@ -172,6 +202,114 @@ export async function GET(
       {
         error: "INTERNAL_ERROR",
         message: "Recommendations laden lukt nu niet.",
+      },
+      500,
+      { "x-correlation-id": correlationId }
+    );
+  }
+}
+
+export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ playlistId: string }> }
+) {
+  const correlationId = getCorrelationId(req);
+  const { session, response } = await requireAppUser();
+  if (response) return response;
+
+  const { playlistId } = await ctx.params;
+  if (!playlistId) {
+    return jsonNoStore(
+      {
+        status: "error",
+        code: "MISSING_PLAYLIST_ID",
+        requestId: correlationId,
+      },
+      400,
+      { "x-correlation-id": correlationId }
+    );
+  }
+
+  const body = (await req.json().catch(() => ({}))) as {
+    mode?: "initial" | "refresh";
+    limit?: number;
+    seedTracks?: string[];
+  };
+  const mode = body.mode === "refresh" ? "refresh" : "initial";
+  let limit = 25;
+  try {
+    limit = Number.isFinite(body.limit) ? parseRecommendationsLimit(String(body.limit)) : 25;
+  } catch {
+    limit = 25;
+  }
+  const preferredSeedTracks = Array.isArray(body.seedTracks)
+    ? parseRecommendationsSeedTracks(body.seedTracks.join(","))
+    : [];
+
+  try {
+    const payload = await getPlaylistOnlyRecommendations({
+      userId: session.appUserId as string,
+      playlistId,
+      limit,
+      mode,
+      forceRefresh: mode === "refresh",
+      preferredSeedTracks,
+      correlationId,
+    });
+    if (payload.status === "success" || payload.status === "empty") {
+      return jsonNoStore(payload, 200, { "x-correlation-id": correlationId });
+    }
+    if (payload.status === "rate_limited") {
+      const retryAfter = Math.max(1, Math.floor(payload.retryAfterSeconds ?? 5));
+      return jsonNoStore(payload, 429, {
+        "Retry-After": String(retryAfter),
+        "x-correlation-id": correlationId,
+      });
+    }
+    if (payload.status === "auth_required") {
+      return jsonNoStore(payload, 401, { "x-correlation-id": correlationId });
+    }
+    return jsonNoStore(payload, 502, { "x-correlation-id": correlationId });
+  } catch (error) {
+    if (error instanceof RecommendationsServiceError) {
+      if (error.code === "RATE_LIMIT") {
+        const retryAfter = Math.max(1, Math.floor(error.retryAfterSec ?? 5));
+        return jsonNoStore(
+          {
+            status: "rate_limited",
+            retryAfterSeconds: retryAfter,
+          },
+          429,
+          {
+            "Retry-After": String(retryAfter),
+            "x-correlation-id": error.correlationId ?? correlationId,
+          }
+        );
+      }
+      if (error.code === "UNAUTHENTICATED") {
+        return jsonNoStore(
+          {
+            status: "auth_required",
+          },
+          401,
+          { "x-correlation-id": error.correlationId ?? correlationId }
+        );
+      }
+      return jsonNoStore(
+        {
+          status: "error",
+          code: error.code,
+          requestId: error.correlationId ?? correlationId,
+        },
+        error.status >= 400 && error.status < 600 ? error.status : 500,
+        { "x-correlation-id": error.correlationId ?? correlationId }
+      );
+    }
+    return jsonNoStore(
+      {
+        status: "error",
+        code: "INTERNAL_ERROR",
+        requestId: correlationId,
       },
       500,
       { "x-correlation-id": correlationId }

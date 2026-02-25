@@ -2814,9 +2814,14 @@ export default function PlaylistBrowser() {
         const body = (await res.json().catch(() => null)) as
           | (CursorResponse<TrackRow> & {
               error?: string;
+              status?: "success" | "empty" | "rate_limited" | "auth_required" | "error";
               reason?: string;
+              hints?: string[];
               retryAfter?: number;
               message?: string;
+              meta?: {
+                afterFilter?: number;
+              };
               diagnostics?: {
                 validatedTrackCount?: number;
                 seedTrackPoolCount?: number;
@@ -2893,6 +2898,18 @@ export default function PlaylistBrowser() {
         if (!isCurrentRequest()) return;
         setRecommendations(rowsForUi);
         if (!rowsForUi.length) {
+          if (data.status === "empty") {
+            const hasMarketHint = Array.isArray(data.hints)
+              ? data.hints.includes("MARKET_RESTRICTIONS")
+              : false;
+            setRecommendationsError(
+              hasMarketHint
+                ? "Geen aanbevelingen gevonden op basis van deze playlist. Mogelijk door regionale beschikbaarheid."
+                : "Geen aanbevelingen gevonden op basis van deze playlist. Deze playlist is mogelijk te klein of niche."
+            );
+            recommendationsRequestKeyRef.current = null;
+            return;
+          }
           if (data.reason === "seed_rejected") {
             setRecommendationsError("Voor deze playlist kon Spotify geen recommendations genereren.");
             recommendationsRequestKeyRef.current = null;
@@ -4042,6 +4059,9 @@ export default function PlaylistBrowser() {
                   </button>
                 </div>
               </div>
+              <p className="text-subtle" style={{ marginTop: 0, marginBottom: 10 }}>
+                Gebaseerd op 5 willekeurige nummers uit deze playlist.
+              </p>
               {recommendationsLoading ? (
                 <p className="text-body" role="status">
                   Recommendations laden...

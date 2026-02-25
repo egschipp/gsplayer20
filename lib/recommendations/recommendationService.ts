@@ -173,6 +173,23 @@ const RECOMMENDATIONS_SEED_VALIDATION_STALE_MS = clampInt(
   3_600_000
 );
 
+const RECOMMENDATIONS_ENABLE_PREVALIDATION =
+  String(process.env.SPOTIFY_RECOMMENDATIONS_ENABLE_PREVALIDATION ?? "false")
+    .trim()
+    .toLowerCase() === "true";
+
+const RECOMMENDATIONS_ENABLE_ARTIST_FALLBACK =
+  String(process.env.SPOTIFY_RECOMMENDATIONS_ENABLE_ARTIST_FALLBACK ?? "false")
+    .trim()
+    .toLowerCase() === "true";
+
+const RECOMMENDATIONS_REQUEST_MAX_ATTEMPTS = clampInt(
+  Number(process.env.SPOTIFY_RECOMMENDATIONS_REQUEST_MAX_ATTEMPTS ?? "1"),
+  1,
+  1,
+  2
+);
+
 type LastSuccessEntry = {
   payload: CachedRecommendationsPayload;
   expiresAt: number;
@@ -443,7 +460,6 @@ function getLastSuccess(args: { userId: string; playlistId: string; limit: numbe
 function isSoftFallbackError(error: RecommendationsServiceError) {
   return (
     error.code === "SPOTIFY_UPSTREAM" ||
-    error.code === "RATE_LIMIT" ||
     error.code === "RECOMMENDATIONS_UNAVAILABLE"
   );
 }
@@ -926,22 +942,28 @@ async function prepareRecommendationsContext(args: {
   }
 
   let validatedSeeds: ValidatedSeedBundle | null = null;
-  try {
-    validatedSeeds = await getCachedValidatedSeedBundle({
-      userId: args.userId,
-      playlistId: args.playlistId,
-      snapshotToken: seedSelection.snapshotToken,
-      seedTrackPool: seedSelection.seedTrackPool,
-      correlationId: args.correlationId,
-      trace: args.trace,
-      forceRefresh: args.forceRefresh,
-    });
-  } catch (error) {
-    if (error instanceof RecommendationsServiceError) {
-      throw error;
+  if (RECOMMENDATIONS_ENABLE_PREVALIDATION) {
+    try {
+      validatedSeeds = await getCachedValidatedSeedBundle({
+        userId: args.userId,
+        playlistId: args.playlistId,
+        snapshotToken: seedSelection.snapshotToken,
+        seedTrackPool: seedSelection.seedTrackPool,
+        correlationId: args.correlationId,
+        trace: args.trace,
+        forceRefresh: args.forceRefresh,
+      });
+    } catch (error) {
+      if (error instanceof RecommendationsServiceError) {
+        throw error;
+      }
+      // Keep raw playlist-derived seeds when validation itself is transiently unavailable.
+      validatedSeeds = null;
     }
-    // Keep raw playlist-derived seeds when validation itself is transiently unavailable.
-    validatedSeeds = null;
+  } else {
+    args.trace("seed_prevalidation_skipped", {
+      data: { enabled: false },
+    });
   }
 
   const validatedTrackPool = uniqueIds(validatedSeeds?.trackIds ?? [], [], 25);
@@ -966,7 +988,7 @@ async function prepareRecommendationsContext(args: {
   const effectiveSeedTrackPool = uniqueIds(preferredSeedTracks, baseSeedTrackPool, 25);
 
   let seedArtistPool = uniqueIds(validatedSeeds?.artistIds ?? [], [], 25);
-  if (!seedArtistPool.length) {
+  if (seedArtistPool.length === 0) {
     seedArtistPool = await loadArtistSeedsFromTrackPool({
       seedTrackPool: effectiveSeedTrackPool,
       correlationId: args.correlationId,
@@ -1164,7 +1186,7 @@ async function loadRecommendationsFromSpotify(
         url: `https://api.spotify.com/v1/recommendations?${params.toString()}`,
         userLevel: true,
         timeoutMs: RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS,
-        maxAttempts: RECOMMENDATIONS_UPSTREAM_MAX_ATTEMPTS,
+        maxAttempts: RECOMMENDATIONS_REQUEST_MAX_ATTEMPTS,
       });
       const items = mapRecommendationTracks(data, context.blockedTrackIds);
       for (const item of items) {
@@ -1269,23 +1291,29 @@ async function loadRecommendationsFromSpotify(
     return payload;
   }
 
-  const artistFallbackItems = await loadArtistTopTracksFallback(context, args);
-  if (artistFallbackItems.length > 0) {
-    return {
-      items: artistFallbackItems.slice(0, context.limit),
-      totalCount: artistFallbackItems.length,
-      asOf: Date.now(),
-      playlistId: context.playlistId,
-      snapshotId: context.snapshotId,
-      seedTrackCount: primarySeedTracks.length,
-      seedArtistCount: context.seedArtistPool.length,
-      diagnostics: buildSeedDiagnostics({
-        context,
-        attemptsPlanned,
-        attemptsUsed,
-        fallbackUsed: "artist_top_tracks",
-      }),
-    } satisfies CachedRecommendationsPayload;
+  if (RECOMMENDATIONS_ENABLE_ARTIST_FALLBACK) {
+    const artistFallbackItems = await loadArtistTopTracksFallback(context, args);
+    if (artistFallbackItems.length > 0) {
+      return {
+        items: artistFallbackItems.slice(0, context.limit),
+        totalCount: artistFallbackItems.length,
+        asOf: Date.now(),
+        playlistId: context.playlistId,
+        snapshotId: context.snapshotId,
+        seedTrackCount: primarySeedTracks.length,
+        seedArtistCount: context.seedArtistPool.length,
+        diagnostics: buildSeedDiagnostics({
+          context,
+          attemptsPlanned,
+          attemptsUsed,
+          fallbackUsed: "artist_top_tracks",
+        }),
+      } satisfies CachedRecommendationsPayload;
+    }
+  } else {
+    args.trace("artist_fallback_skipped", {
+      data: { enabled: false },
+    });
   }
 
   if (unavailableReason) {

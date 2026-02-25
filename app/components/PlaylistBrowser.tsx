@@ -1015,6 +1015,11 @@ export default function PlaylistBrowser() {
   const hydratingPlaylistTargetsRef = useRef(false);
   const recommendationsRequestKeyRef = useRef<string | null>(null);
   const recommendationsRetryTimerRef = useRef<number | null>(null);
+  const recommendationsAbortRef = useRef<AbortController | null>(null);
+  const recommendationsSeedSelectionRef = useRef<{
+    key: string;
+    seeds: string[];
+  } | null>(null);
   const lastRecommendationsSeedKeyRef = useRef<string>("");
   const comboMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setOpen(false),
@@ -1036,6 +1041,12 @@ export default function PlaylistBrowser() {
     recommendationsRetryTimerRef.current = null;
   }, []);
 
+  const abortRecommendationsRequest = useCallback(() => {
+    if (!recommendationsAbortRef.current) return;
+    recommendationsAbortRef.current.abort();
+    recommendationsAbortRef.current = null;
+  }, []);
+
   const scheduleRecommendationsRetry = useCallback(
     (delayMs: number) => {
       if (typeof window === "undefined") return;
@@ -1044,24 +1055,28 @@ export default function PlaylistBrowser() {
       recommendationsRetryTimerRef.current = window.setTimeout(() => {
         recommendationsRetryTimerRef.current = null;
         recommendationsRequestKeyRef.current = null;
+        abortRecommendationsRequest();
         setRecommendationsRetryNonce((prev) => prev + 1);
       }, safeDelay);
     },
-    [clearRecommendationsRetryTimer]
+    [abortRecommendationsRequest, clearRecommendationsRetryTimer]
   );
 
   const refreshRecommendationsSeeds = useCallback(() => {
     clearRecommendationsRetryTimer();
+    abortRecommendationsRequest();
     recommendationsRequestKeyRef.current = null;
+    recommendationsSeedSelectionRef.current = null;
     setRecommendationsError(null);
     setRecommendationsSeedRefreshNonce((prev) => prev + 1);
-  }, [clearRecommendationsRetryTimer]);
+  }, [abortRecommendationsRequest, clearRecommendationsRetryTimer]);
 
   useEffect(() => {
     return () => {
       clearRecommendationsRetryTimer();
+      abortRecommendationsRequest();
     };
-  }, [clearRecommendationsRetryTimer]);
+  }, [abortRecommendationsRequest, clearRecommendationsRetryTimer]);
 
   const applyAllMyMusicTotal = useCallback((nextTotal: number | null) => {
     setAllMyMusicTotal(nextTotal);
@@ -2701,7 +2716,9 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     clearRecommendationsRetryTimer();
+    abortRecommendationsRequest();
     recommendationsRequestKeyRef.current = null;
+    recommendationsSeedSelectionRef.current = null;
     lastRecommendationsSeedKeyRef.current = "";
     if (
       mode === "playlists" &&
@@ -2714,6 +2731,7 @@ export default function PlaylistBrowser() {
     setRecommendationsError(null);
     setRecommendationsLoading(false);
   }, [
+    abortRecommendationsRequest,
     clearRecommendationsRetryTimer,
     mode,
     selectedPlaylist?.id,
@@ -2736,10 +2754,26 @@ export default function PlaylistBrowser() {
     );
     if (loadingTracks || isSwitchingContext) return;
     const selectedPlaylistId = selectedPlaylist.id;
-    const seedTracks = selectRecommendationSeedTracksFromList(
-      tracks,
-      lastRecommendationsSeedKeyRef.current
-    );
+    const seedSelectionKey = [
+      selectedPlaylistId,
+      tracksContextKey ?? "no-context",
+      String(tracksRefreshToken),
+      String(recommendationsSeedRefreshNonce),
+      String(tracks.length),
+    ].join(":");
+    let seedTracks: string[] = [];
+    if (recommendationsSeedSelectionRef.current?.key === seedSelectionKey) {
+      seedTracks = recommendationsSeedSelectionRef.current.seeds;
+    } else {
+      seedTracks = selectRecommendationSeedTracksFromList(
+        tracks,
+        lastRecommendationsSeedKeyRef.current
+      );
+      recommendationsSeedSelectionRef.current = {
+        key: seedSelectionKey,
+        seeds: seedTracks,
+      };
+    }
     const seedTracksKey = seedTracks.join(",");
     lastRecommendationsSeedKeyRef.current = seedTracksKey;
 
@@ -2747,6 +2781,7 @@ export default function PlaylistBrowser() {
       tracksContextKey ?? "no-context"
     }:${tracksRefreshToken}:${recommendationsRetryNonce}:seeds:${seedTracksKey || "none"}`;
     if (recommendationsRequestKeyRef.current === requestKey) return;
+    abortRecommendationsRequest();
     recommendationsRequestKeyRef.current = requestKey;
 
     const isCurrentRequest = () => recommendationsRequestKeyRef.current === requestKey;
@@ -2762,6 +2797,8 @@ export default function PlaylistBrowser() {
       clearRecommendationsRetryTimer();
       setRecommendationsLoading(true);
       setRecommendationsError(null);
+      const controller = new AbortController();
+      recommendationsAbortRef.current = controller;
       const requestCorrelationId =
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
           ? crypto.randomUUID()
@@ -2769,6 +2806,7 @@ export default function PlaylistBrowser() {
       try {
         const res = await fetch(recommendationsUrl, {
           cache: "no-store",
+          signal: controller.signal,
           headers: {
             "x-correlation-id": requestCorrelationId,
           },
@@ -2884,6 +2922,9 @@ export default function PlaylistBrowser() {
         recommendationsRequestKeyRef.current = null;
         scheduleRecommendationsRetry(15_000);
       } finally {
+        if (recommendationsAbortRef.current === controller) {
+          recommendationsAbortRef.current = null;
+        }
         const activeKey = recommendationsRequestKeyRef.current;
         if (activeKey && activeKey !== requestKey) return;
         setRecommendationsLoading(false);
@@ -2893,8 +2934,10 @@ export default function PlaylistBrowser() {
     void loadRecommendations();
     return () => {
       clearRecommendationsRetryTimer();
+      abortRecommendationsRequest();
     };
   }, [
+    abortRecommendationsRequest,
     loadingTracks,
     mode,
     pendingTracksContextKey,

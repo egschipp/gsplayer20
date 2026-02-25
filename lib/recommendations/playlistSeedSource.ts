@@ -4,6 +4,8 @@ import { playlistItems, playlists, tracks, userPlaylists } from "@/lib/db/schema
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { RecommendationsServiceError } from "@/lib/recommendations/types";
+import { type RecommendationsTraceEntry } from "@/lib/recommendations/troubleshootingLog";
+import { createCorrelationId } from "@/lib/observability/correlation";
 import {
   normalizeTrackId,
   type PlaylistSeedCandidate,
@@ -33,6 +35,89 @@ function clampInt(value: number, fallback: number, min: number, max: number) {
 
 const SAFE_FETCH_TIMEOUT_MS = clampInt(FETCH_TIMEOUT_MS, 8_000, 2_000, 20_000);
 const SAFE_FETCH_MAX_ATTEMPTS = clampInt(FETCH_MAX_ATTEMPTS, 2, 1, 3);
+
+type RecommendationsTraceFn = (
+  stage: string,
+  details?: {
+    level?: RecommendationsTraceEntry["level"];
+    status?: number;
+    durationMs?: number;
+    code?: string;
+    message?: string;
+    data?: Record<string, unknown>;
+    playlistId?: string;
+  }
+) => void;
+
+const traceNoop: RecommendationsTraceFn = () => undefined;
+
+function summarizeUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    const raw = `${parsed.pathname}${parsed.search}`;
+    if (raw.length <= 512) return raw;
+    return `${raw.slice(0, 512)}...[truncated]`;
+  } catch {
+    return value.slice(0, 512);
+  }
+}
+
+async function spotifyFetchWithTrace<T>(args: {
+  trace: RecommendationsTraceFn;
+  correlationId: string;
+  op: string;
+  url: string;
+  timeoutMs: number;
+  maxAttempts: number;
+}) {
+  const started = Date.now();
+  args.trace("spotify_request_start", {
+    data: {
+      op: args.op,
+      method: "GET",
+      url: summarizeUrl(args.url),
+      timeoutMs: args.timeoutMs,
+      maxAttempts: args.maxAttempts,
+    },
+  });
+  try {
+    const data = await spotifyFetch<T>({
+      url: args.url,
+      userLevel: true,
+      timeoutMs: args.timeoutMs,
+      maxAttempts: args.maxAttempts,
+      correlationId: args.correlationId,
+    });
+    args.trace("spotify_request_success", {
+      status: 200,
+      durationMs: Date.now() - started,
+      data: {
+        op: args.op,
+        method: "GET",
+        url: summarizeUrl(args.url),
+      },
+    });
+    return data;
+  } catch (error) {
+    if (error instanceof SpotifyFetchError) {
+      args.trace("spotify_request_error", {
+        level: error.status >= 500 || error.status === 0 ? "error" : "warn",
+        status: error.status,
+        code: error.code,
+        message: error.body.slice(0, 240),
+        durationMs: Date.now() - started,
+        data: {
+          op: args.op,
+          method: "GET",
+          url: summarizeUrl(args.url),
+          retryAfterMs: error.retryAfterMs,
+          upstreamCorrelationId: error.correlationId,
+        },
+      });
+    }
+    throw error;
+  }
+}
 
 function parseSpotifyScopeError(body: string) {
   const raw = String(body || "").toLowerCase();
@@ -122,6 +207,8 @@ async function loadLiveCandidates(args: {
   maxCandidates: number;
   snapshotId: string | null;
   totalCount: number | null;
+  correlationId: string;
+  trace: RecommendationsTraceFn;
 }) {
   let offset = 0;
   let next = true;
@@ -132,14 +219,16 @@ async function loadLiveCandidates(args: {
 
   if (!snapshotId || totalCount === null) {
     try {
-      const playlistMeta = await spotifyFetch<{
+      const playlistMeta = await spotifyFetchWithTrace<{
         snapshot_id?: string | null;
         tracks?: { total?: number | null };
       }>({
+        trace: args.trace,
+        correlationId: args.correlationId,
+        op: "playlist_meta",
         url: `https://api.spotify.com/v1/playlists/${encodeURIComponent(
           args.playlistId
         )}?fields=snapshot_id,tracks(total)`,
-        userLevel: true,
         timeoutMs: SAFE_FETCH_TIMEOUT_MS,
         maxAttempts: SAFE_FETCH_MAX_ATTEMPTS,
       });
@@ -165,7 +254,7 @@ async function loadLiveCandidates(args: {
       args.playlistId
     )}/tracks?limit=${limit}&offset=${offset}&fields=${encodeURIComponent(fields)}`;
 
-    const data = await spotifyFetch<{
+    const data = await spotifyFetchWithTrace<{
       items?: Array<{
         track?: {
           type?: string | null;
@@ -178,8 +267,10 @@ async function loadLiveCandidates(args: {
       next?: string | null;
       total?: number;
     }>({
+      trace: args.trace,
+      correlationId: args.correlationId,
+      op: "playlist_tracks_page",
       url,
-      userLevel: true,
       timeoutMs: SAFE_FETCH_TIMEOUT_MS,
       maxAttempts: SAFE_FETCH_MAX_ATTEMPTS,
     });
@@ -243,9 +334,13 @@ function countEligibleCandidates(candidates: PlaylistSeedCandidate[]) {
 export async function getPlaylistSeedSource(args: {
   userId: string;
   playlistId: string;
+  correlationId?: string;
+  trace?: RecommendationsTraceFn;
   maxDbCandidates?: number;
   maxLiveCandidates?: number;
 }) {
+  const correlationId = String(args.correlationId ?? "").trim() || createCorrelationId();
+  const trace = args.trace ?? traceNoop;
   const maxDbCandidates = clampInt(args.maxDbCandidates ?? DEFAULT_MAX_DB_CANDIDATES, 1200, 100, 3000);
   const maxLiveCandidates = clampInt(
     args.maxLiveCandidates ?? DEFAULT_MAX_LIVE_CANDIDATES,
@@ -264,6 +359,13 @@ export async function getPlaylistSeedSource(args: {
     maxCandidates: maxDbCandidates,
   });
   const dbEligible = countEligibleCandidates(dbCandidates);
+  trace("seed_source_db_loaded", {
+    data: {
+      source: "db",
+      candidateCount: dbCandidates.length,
+      eligibleCount: dbEligible,
+    },
+  });
   if (dbEligible > 0) {
     const result: PlaylistSeedSourceResult = {
       playlistId: args.playlistId,
@@ -281,8 +383,17 @@ export async function getPlaylistSeedSource(args: {
       maxCandidates: maxLiveCandidates,
       snapshotId: access.snapshotId,
       totalCount: access.tracksTotal,
+      correlationId,
+      trace,
     });
     const liveEligible = countEligibleCandidates(live.candidates);
+    trace("seed_source_live_loaded", {
+      data: {
+        source: "live",
+        candidateCount: live.candidates.length,
+        eligibleCount: liveEligible,
+      },
+    });
     if (liveEligible <= 0) {
       return {
         playlistId: args.playlistId,

@@ -7,6 +7,10 @@ import { trackArtists } from "@/lib/db/schema";
 import { getCachedValue } from "@/lib/recommendations/cache";
 import { getPlaylistSeedSource } from "@/lib/recommendations/playlistSeedSource";
 import {
+  createRecommendationsTraceLogger,
+  type RecommendationsTraceEntry,
+} from "@/lib/recommendations/troubleshootingLog";
+import {
   normalizeTrackId,
   selectDeterministicPlaylistSeedPool,
 } from "@/lib/recommendations/seedSelector";
@@ -70,6 +74,21 @@ type ValidatedSeedBundle = {
   artistIds: string[];
   hadValidationFailure: boolean;
 };
+
+type RecommendationsTraceFn = (
+  stage: string,
+  details?: {
+    level?: RecommendationsTraceEntry["level"];
+    status?: number;
+    durationMs?: number;
+    code?: string;
+    message?: string;
+    data?: Record<string, unknown>;
+    playlistId?: string;
+  }
+) => void;
+
+const traceNoop: RecommendationsTraceFn = () => undefined;
 
 function clampInt(value: number, fallback: number, min: number, max: number) {
   if (!Number.isFinite(value)) return fallback;
@@ -229,6 +248,92 @@ function parseSeedTracks(value: string | null | undefined) {
     .map((part) => normalizeTrackId(part))
     .filter((id): id is string => Boolean(id));
   return uniqueIds(ids, [], 5);
+}
+
+function summarizeUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    const raw = `${parsed.pathname}${parsed.search}`;
+    if (raw.length <= 512) return raw;
+    return `${raw.slice(0, 512)}...[truncated]`;
+  } catch {
+    return value.slice(0, 512);
+  }
+}
+
+async function spotifyFetchWithTrace<T>(args: {
+  trace: RecommendationsTraceFn;
+  correlationId: string;
+  op: string;
+  url: string;
+  method?: string;
+  body?: unknown;
+  userLevel?: boolean;
+  timeoutMs?: number;
+  maxAttempts?: number;
+}) {
+  const started = Date.now();
+  args.trace("spotify_request_start", {
+    data: {
+      op: args.op,
+      method: args.method ?? "GET",
+      url: summarizeUrl(args.url),
+      timeoutMs: args.timeoutMs ?? null,
+      maxAttempts: args.maxAttempts ?? null,
+    },
+  });
+  try {
+    const data = await spotifyFetch<T>({
+      url: args.url,
+      method: args.method,
+      body: args.body,
+      userLevel: args.userLevel,
+      timeoutMs: args.timeoutMs,
+      maxAttempts: args.maxAttempts,
+      correlationId: args.correlationId,
+    });
+    args.trace("spotify_request_success", {
+      status: 200,
+      durationMs: Date.now() - started,
+      data: {
+        op: args.op,
+        method: args.method ?? "GET",
+        url: summarizeUrl(args.url),
+      },
+    });
+    return data;
+  } catch (error) {
+    if (error instanceof SpotifyFetchError) {
+      args.trace("spotify_request_error", {
+        level: error.status >= 500 || error.status === 0 ? "error" : "warn",
+        status: error.status,
+        code: error.code,
+        message: error.body.slice(0, 240),
+        durationMs: Date.now() - started,
+        data: {
+          op: args.op,
+          method: args.method ?? "GET",
+          url: summarizeUrl(args.url),
+          retryAfterMs: error.retryAfterMs,
+          upstreamCorrelationId: error.correlationId,
+        },
+      });
+      throw error;
+    }
+    args.trace("spotify_request_error", {
+      level: "error",
+      status: 500,
+      code: "SPOTIFY_FETCH_UNKNOWN",
+      message: String(error),
+      durationMs: Date.now() - started,
+      data: {
+        op: args.op,
+        method: args.method ?? "GET",
+        url: summarizeUrl(args.url),
+      },
+    });
+    throw error;
+  }
 }
 
 function extractSpotifyErrorMessage(body: string) {
@@ -537,8 +642,12 @@ type RecommendationsContext = {
   preferredSeedTrackCount: number;
 };
 
-async function loadArtistSeedsFromTrackPool(seedTrackPool: string[]) {
-  const seedTracks = uniqueIds(seedTrackPool, [], 50);
+async function loadArtistSeedsFromTrackPool(args: {
+  seedTrackPool: string[];
+  correlationId: string;
+  trace: RecommendationsTraceFn;
+}) {
+  const seedTracks = uniqueIds(args.seedTrackPool, [], 50);
   if (!seedTracks.length) return [] as string[];
   const db = getDb();
   try {
@@ -562,9 +671,12 @@ async function loadArtistSeedsFromTrackPool(seedTrackPool: string[]) {
   const fallbackArtists: string[] = [];
   for (const trackId of seedTracks.slice(0, 5)) {
     try {
-      const data = await spotifyFetch<{
+      const data = await spotifyFetchWithTrace<{
         artists?: Array<{ id?: string | null }>;
       }>({
+        trace: args.trace,
+        correlationId: args.correlationId,
+        op: "track_artist_lookup",
         url: `https://api.spotify.com/v1/tracks/${encodeURIComponent(trackId)}?market=from_token`,
         userLevel: true,
         timeoutMs: RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS,
@@ -611,8 +723,12 @@ function toValidatedTrackCandidate(track: TracksLookupItem | null | undefined) {
   };
 }
 
-async function loadValidatedSeedBundle(seedTrackPool: string[]): Promise<ValidatedSeedBundle> {
-  const trackIds = uniqueIds(seedTrackPool, [], 50);
+async function loadValidatedSeedBundle(args: {
+  seedTrackPool: string[];
+  correlationId: string;
+  trace: RecommendationsTraceFn;
+}): Promise<ValidatedSeedBundle> {
+  const trackIds = uniqueIds(args.seedTrackPool, [], 50);
   if (!trackIds.length) {
     return {
       trackIds: [],
@@ -646,7 +762,10 @@ async function loadValidatedSeedBundle(seedTrackPool: string[]): Promise<Validat
   for (const chunk of chunkIds(trackIds, 50)) {
     if (validatedTrackIds.length >= 25) break;
     try {
-      const data = await spotifyFetch<TracksLookupResponse>({
+      const data = await spotifyFetchWithTrace<TracksLookupResponse>({
+        trace: args.trace,
+        correlationId: args.correlationId,
+        op: "seed_validation_batch",
         url: `https://api.spotify.com/v1/tracks?ids=${encodeURIComponent(
           chunk.join(",")
         )}&market=from_token`,
@@ -693,13 +812,16 @@ async function loadValidatedSeedBundle(seedTrackPool: string[]): Promise<Validat
     // Fallback to per-track validation when batched lookup rejects the input set.
     for (const trackId of chunk.slice(0, 25)) {
       try {
-        const data = await spotifyFetch<{
+        const data = await spotifyFetchWithTrace<{
           id?: string | null;
           type?: string | null;
           is_playable?: boolean;
           restrictions?: { reason?: string | null } | null;
           artists?: Array<{ id?: string | null }>;
         }>({
+          trace: args.trace,
+          correlationId: args.correlationId,
+          op: "seed_validation_single",
           url: `https://api.spotify.com/v1/tracks/${encodeURIComponent(trackId)}?market=from_token`,
           userLevel: true,
           timeoutMs: RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS,
@@ -744,6 +866,8 @@ async function getCachedValidatedSeedBundle(args: {
   playlistId: string;
   snapshotToken: string;
   seedTrackPool: string[];
+  correlationId: string;
+  trace: RecommendationsTraceFn;
   forceRefresh?: boolean;
 }) {
   const key = `playlist-recommendations:seed-validation:v1:${args.userId}:${args.playlistId}:${args.snapshotToken}`;
@@ -753,7 +877,11 @@ async function getCachedValidatedSeedBundle(args: {
     staleMs: RECOMMENDATIONS_SEED_VALIDATION_STALE_MS,
     forceRefresh: Boolean(args.forceRefresh),
     loader: async () => {
-      return await loadValidatedSeedBundle(args.seedTrackPool);
+      return await loadValidatedSeedBundle({
+        seedTrackPool: args.seedTrackPool,
+        correlationId: args.correlationId,
+        trace: args.trace,
+      });
     },
   });
   return cached.value;
@@ -763,12 +891,16 @@ async function prepareRecommendationsContext(args: {
   userId: string;
   playlistId: string;
   limit: number;
+  correlationId: string;
+  trace: RecommendationsTraceFn;
   forceRefresh?: boolean;
   preferredSeedTracks?: string[];
 }) {
   const seedSource = await getPlaylistSeedSource({
     userId: args.userId,
     playlistId: args.playlistId,
+    correlationId: args.correlationId,
+    trace: args.trace,
   });
   const seedSelection = selectDeterministicPlaylistSeedPool({
     playlistId: args.playlistId,
@@ -777,6 +909,15 @@ async function prepareRecommendationsContext(args: {
     maxSeedPoolSize: 25,
   });
   if (seedSelection.seedTrackPool.length === 0) {
+    args.trace("seed_selection_empty", {
+      level: "warn",
+      status: 422,
+      code: "INSUFFICIENT_PLAYLIST_SEEDS",
+      message: "Geen seed tracks na selectie.",
+      data: {
+        candidateTrackCount: seedSelection.eligibleCount,
+      },
+    });
     throw new RecommendationsServiceError({
       status: 422,
       code: "INSUFFICIENT_PLAYLIST_SEEDS",
@@ -791,6 +932,8 @@ async function prepareRecommendationsContext(args: {
       playlistId: args.playlistId,
       snapshotToken: seedSelection.snapshotToken,
       seedTrackPool: seedSelection.seedTrackPool,
+      correlationId: args.correlationId,
+      trace: args.trace,
       forceRefresh: args.forceRefresh,
     });
   } catch (error) {
@@ -824,7 +967,11 @@ async function prepareRecommendationsContext(args: {
 
   let seedArtistPool = uniqueIds(validatedSeeds?.artistIds ?? [], [], 25);
   if (!seedArtistPool.length) {
-    seedArtistPool = await loadArtistSeedsFromTrackPool(effectiveSeedTrackPool);
+    seedArtistPool = await loadArtistSeedsFromTrackPool({
+      seedTrackPool: effectiveSeedTrackPool,
+      correlationId: args.correlationId,
+      trace: args.trace,
+    });
   }
 
   const blockedTrackIds = new Set<string>(effectiveSeedTrackPool);
@@ -843,10 +990,24 @@ async function prepareRecommendationsContext(args: {
     validatedTrackCount: validatedTrackPool.length,
     preferredSeedTrackCount: preferredSeedTracks.length,
   };
+  args.trace("context_prepared", {
+    data: {
+      seedSource: context.seedSource,
+      candidateTrackCount: context.candidateTrackCount,
+      validatedTrackCount: context.validatedTrackCount,
+      seedTrackPoolCount: context.seedTrackPool.length,
+      preferredSeedTrackCount: context.preferredSeedTrackCount,
+      seedArtistPoolCount: context.seedArtistPool.length,
+      snapshotId: context.snapshotId,
+    },
+  });
   return context;
 }
 
-async function loadArtistTopTracksFallback(context: RecommendationsContext) {
+async function loadArtistTopTracksFallback(
+  context: RecommendationsContext,
+  args: { correlationId: string; trace: RecommendationsTraceFn }
+) {
   const artistIds = uniqueIds(
     context.seedArtistPool,
     [],
@@ -859,7 +1020,10 @@ async function loadArtistTopTracksFallback(context: RecommendationsContext) {
   for (const artistId of artistIds) {
     let data: { tracks?: RecommendationsResponse["tracks"] } | undefined;
     try {
-      data = await spotifyFetch<{ tracks?: RecommendationsResponse["tracks"] }>({
+      data = await spotifyFetchWithTrace<{ tracks?: RecommendationsResponse["tracks"] }>({
+        trace: args.trace,
+        correlationId: args.correlationId,
+        op: "artist_top_tracks_fallback",
         url: `https://api.spotify.com/v1/artists/${encodeURIComponent(
           artistId
         )}/top-tracks?market=from_token`,
@@ -926,7 +1090,10 @@ function buildSeedDiagnostics(args: {
   };
 }
 
-async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
+async function loadRecommendationsFromSpotify(
+  context: RecommendationsContext,
+  args: { correlationId: string; trace: RecommendationsTraceFn }
+) {
   if (RECOMMENDATIONS_MODE === "off") {
     throw new RecommendationsServiceError({
       status: 503,
@@ -974,6 +1141,14 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
 
   for (const seedAttempt of seedAttempts) {
     attemptsUsed += 1;
+    args.trace("recommendations_attempt_start", {
+      data: {
+        attempt: attemptsUsed,
+        attemptsPlanned,
+        seedTracks: seedAttempt.seedTracks,
+        seedArtists: seedAttempt.seedArtists,
+      },
+    });
     try {
       const params = new URLSearchParams();
       if (seedAttempt.seedTracks.length > 0) {
@@ -982,7 +1157,10 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
       params.set("limit", String(context.limit));
       params.set("market", "from_token");
 
-      const data = await spotifyFetch<RecommendationsResponse>({
+      const data = await spotifyFetchWithTrace<RecommendationsResponse>({
+        trace: args.trace,
+        correlationId: args.correlationId,
+        op: "spotify_recommendations",
         url: `https://api.spotify.com/v1/recommendations?${params.toString()}`,
         userLevel: true,
         timeoutMs: RECOMMENDATIONS_UPSTREAM_TIMEOUT_MS,
@@ -999,6 +1177,13 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
         collected.push(item);
         if (collected.length >= context.limit) break;
       }
+      args.trace("recommendations_attempt_success", {
+        data: {
+          attempt: attemptsUsed,
+          itemCount: items.length,
+          collectedCount: collected.length,
+        },
+      });
       if (collected.length >= context.limit) break;
     } catch (error) {
       if (error instanceof SpotifyFetchError) {
@@ -1021,6 +1206,16 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
         }
         if (isRejectedSeedError(error)) {
           hadRejectedSeedAttempt = true;
+          args.trace("recommendations_attempt_seed_rejected", {
+            level: "warn",
+            status: error.status,
+            code: error.code,
+            message: extractSpotifyErrorMessage(error.body).slice(0, 240),
+            data: {
+              attempt: attemptsUsed,
+              seedTracks: seedAttempt.seedTracks,
+            },
+          });
           continue;
         }
         if (isRecommendationsUnavailableError(error)) {
@@ -1039,6 +1234,13 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
         }
         if (isTransientUpstreamError(error)) {
           lastUpstreamError = error;
+          args.trace("recommendations_attempt_transient_error", {
+            level: "warn",
+            status: error.status,
+            code: error.code,
+            message: extractSpotifyErrorMessage(error.body).slice(0, 240),
+            data: { attempt: attemptsUsed },
+          });
           continue;
         }
         lastUpstreamError = error;
@@ -1067,7 +1269,7 @@ async function loadRecommendationsFromSpotify(context: RecommendationsContext) {
     return payload;
   }
 
-  const artistFallbackItems = await loadArtistTopTracksFallback(context);
+  const artistFallbackItems = await loadArtistTopTracksFallback(context, args);
   if (artistFallbackItems.length > 0) {
     return {
       items: artistFallbackItems.slice(0, context.limit),
@@ -1133,13 +1335,36 @@ export async function getPlaylistRecommendations(args: {
   limit: number;
   forceRefresh?: boolean;
   preferredSeedTracks?: string[];
+  correlationId?: string;
 }) {
+  const correlationId = String(args.correlationId ?? "").trim() || crypto.randomUUID();
   const playlistId = normalizePlaylistId(args.playlistId);
+  const trace = createRecommendationsTraceLogger({
+    correlationId,
+    route: "recommendationService",
+    method: "GET",
+    playlistId: args.playlistId,
+  });
+  trace("service_request_start", {
+    data: {
+      playlistId: args.playlistId,
+      limit: args.limit,
+      forceRefresh: Boolean(args.forceRefresh),
+      preferredSeedTracks: uniqueIds(args.preferredSeedTracks ?? [], [], 5),
+    },
+  });
   if (!playlistId) {
+    trace("service_request_failed", {
+      level: "warn",
+      status: 400,
+      code: "INVALID_PLAYLIST_ID",
+      message: "Ongeldige playlist id.",
+    });
     throw new RecommendationsServiceError({
       status: 400,
       code: "INVALID_PLAYLIST_ID",
       message: "Ongeldige playlist id.",
+      correlationId,
     });
   }
   const limit = parseLimit(String(args.limit));
@@ -1149,6 +1374,8 @@ export async function getPlaylistRecommendations(args: {
       userId: args.userId,
       playlistId,
       limit,
+      correlationId,
+      trace,
       forceRefresh: Boolean(args.forceRefresh),
       preferredSeedTracks: args.preferredSeedTracks ?? [],
     });
@@ -1160,12 +1387,26 @@ export async function getPlaylistRecommendations(args: {
         limit,
       });
       if (fallback) {
+        trace("service_context_soft_fallback_stale", {
+          level: "warn",
+          status: 200,
+          code: error.code,
+          message: error.message,
+          data: { cacheState: "stale" },
+        });
         return {
           ...fallback,
           asOf: Date.now(),
           cacheState: "stale",
         };
       }
+      trace("service_context_soft_fallback_empty", {
+        level: "warn",
+        status: 200,
+        code: error.code,
+        message: error.message,
+        data: { cacheState: "miss", reason: "upstream_fallback" },
+      });
       return createNoResultsPayload({
         playlistId,
         snapshotId: null,
@@ -1184,7 +1425,7 @@ export async function getPlaylistRecommendations(args: {
       staleMs: RECOMMENDATIONS_CACHE_STALE_MS,
       forceRefresh: Boolean(args.forceRefresh),
       loader: async () => {
-        return await loadRecommendationsFromSpotify(context);
+        return await loadRecommendationsFromSpotify(context, { correlationId, trace });
       },
     });
   } catch (error) {
@@ -1195,12 +1436,26 @@ export async function getPlaylistRecommendations(args: {
         limit,
       });
       if (fallback) {
+        trace("service_loader_soft_fallback_stale", {
+          level: "warn",
+          status: 200,
+          code: error.code,
+          message: error.message,
+          data: { cacheState: "stale" },
+        });
         return {
           ...fallback,
           asOf: Date.now(),
           cacheState: "stale",
         };
       }
+      trace("service_loader_soft_fallback_empty", {
+        level: "warn",
+        status: 200,
+        code: error.code,
+        message: error.message,
+        data: { cacheState: "miss", reason: "upstream_fallback" },
+      });
       return createNoResultsPayload({
         playlistId,
         snapshotId: context.snapshotId,
@@ -1221,6 +1476,16 @@ export async function getPlaylistRecommendations(args: {
     ...cached.value,
     cacheState: cached.cacheState,
   };
+  trace("service_request_success", {
+    status: 200,
+    data: {
+      cacheState: payload.cacheState,
+      totalCount: payload.totalCount,
+      reason: payload.reason ?? null,
+      seedTrackCount: payload.seedTrackCount,
+      seedArtistCount: payload.seedArtistCount,
+    },
+  });
   if (payload.items.length > 0) {
     setLastSuccess({
       userId: args.userId,

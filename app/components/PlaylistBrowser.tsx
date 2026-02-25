@@ -2762,9 +2762,16 @@ export default function PlaylistBrowser() {
       clearRecommendationsRetryTimer();
       setRecommendationsLoading(true);
       setRecommendationsError(null);
+      const requestCorrelationId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `rec-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       try {
         const res = await fetch(recommendationsUrl, {
           cache: "no-store",
+          headers: {
+            "x-correlation-id": requestCorrelationId,
+          },
         });
         const body = (await res.json().catch(() => null)) as
           | (CursorResponse<TrackRow> & {

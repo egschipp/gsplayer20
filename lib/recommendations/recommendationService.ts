@@ -1299,7 +1299,8 @@ async function loadRecommendationsFromSpotify(
     return payload;
   }
 
-  const shouldUseArtistFallback = RECOMMENDATIONS_ENABLE_ARTIST_FALLBACK || hadRejectedSeedAttempt;
+  // Hard requirement: recommendations must stay track-seed-only from selected playlist.
+  const shouldUseArtistFallback = false;
   if (shouldUseArtistFallback) {
     const artistFallbackItems = await loadArtistTopTracksFallback(context, args);
     if (artistFallbackItems.length > 0) {
@@ -1321,7 +1322,7 @@ async function loadRecommendationsFromSpotify(
     }
   } else {
     args.trace("artist_fallback_skipped", {
-      data: { enabled: false },
+      data: { enabled: false, reason: "track_only_policy" },
     });
   }
 

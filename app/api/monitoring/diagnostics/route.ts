@@ -5,6 +5,7 @@ import {
   createCorrelationId,
   readCorrelationId,
 } from "@/lib/observability/correlation";
+import { getSpotifyCentralRateLimitSnapshot } from "@/lib/spotify/centralRateLimiter";
 
 export const runtime = "nodejs";
 
@@ -42,6 +43,7 @@ export async function GET(req: Request) {
       }),
       latency: histogramQuantiles("spotify_api_latency_ms"),
     },
+    centralRateLimiter: getSpotifyCentralRateLimitSnapshot(),
     recentErrors: getRecentErrors(50).map((entry) => ({
       ts: entry.ts,
       level: entry.level,
@@ -55,4 +57,3 @@ export async function GET(req: Request) {
 
   return jsonNoStore(payload, 200, { "x-correlation-id": correlationId });
 }
-

@@ -2,6 +2,11 @@ import { incCounter, observeHistogram } from "@/lib/observability/metrics";
 import { logEvent } from "@/lib/observability/logger";
 import { createCorrelationId } from "@/lib/observability/correlation";
 import { recordSpotifyRateLimitBackoff } from "@/lib/observability/rateLimit";
+import {
+  acquireSpotifyRequestSlot,
+  registerSpotifyRateLimitHit,
+  registerSpotifyRequestOutcome,
+} from "@/lib/spotify/centralRateLimiter";
 
 const RETRY_AFTER_MIN_MS = 1_000;
 const RETRY_AFTER_MAX_MS = Number(
@@ -184,6 +189,10 @@ export async function spotifyApiRequest<T>(params: {
     const started = Date.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const releaseSlot = await acquireSpotifyRequestSlot({
+      endpointGroup: group,
+      method,
+    });
     try {
       const res = await fetch(params.url, {
         method,
@@ -197,6 +206,7 @@ export async function spotifyApiRequest<T>(params: {
       });
 
       const durationMs = Date.now() - started;
+      registerSpotifyRequestOutcome({ status: res.status });
       observeHistogram("spotify_api_latency_ms", durationMs, { endpoint: group, method });
       incCounter("spotify_api_requests_total", {
         endpoint: group,
@@ -257,6 +267,11 @@ export async function spotifyApiRequest<T>(params: {
             ? waitWithRetryAfterJitter(retryWaitMs)
             : jitterMs(retryWaitMs);
         if (res.status === 429) {
+          registerSpotifyRateLimitHit({
+            endpointGroup: group,
+            method,
+            retryAfterMs: retryAfterMs ?? retryWaitMs,
+          });
           recordSpotifyRateLimitBackoff(waitMs);
         }
         incCounter("spotify_api_retries_total", {
@@ -267,6 +282,11 @@ export async function spotifyApiRequest<T>(params: {
         continue;
       }
       if (res.status === 429) {
+        registerSpotifyRateLimitHit({
+          endpointGroup: group,
+          method,
+          retryAfterMs: retryAfterMs ?? retryWaitMs,
+        });
         recordSpotifyRateLimitBackoff(retryWaitMs);
       }
 
@@ -325,6 +345,7 @@ export async function spotifyApiRequest<T>(params: {
         correlationId,
       });
     } finally {
+      releaseSlot();
       clearTimeout(timeout);
     }
   }

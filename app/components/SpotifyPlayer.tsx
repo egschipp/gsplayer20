@@ -39,6 +39,21 @@ const PROGRESS_MAX_STEP_MS = 250;
 const REMOTE_TAKEOVER_CONFIRM_MS = 1200;
 const REMOTE_TAKEOVER_MIN_SAMPLES = 2;
 const PLAYBACK_RESTRICTION_COOLDOWN_MS = 4_000;
+const PLAYER_TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
+const PLAYER_LIKED_PLAYLIST_ID = "liked";
+
+type PlayerPlaylistOption = {
+  id: string;
+  name: string;
+  type: "liked" | "playlist";
+};
+
+const LEADING_EMOJI_PATTERN =
+  /^[\s\u200B-\u200D\u200E\u200F\u2060\uFEFF]*(?:\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)/u;
+
+function startsWithEmoji(value: string | null | undefined) {
+  return LEADING_EMOJI_PATTERN.test(String(value ?? ""));
+}
 
 type PlaybackSource =
   | "sdk"
@@ -221,6 +236,19 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [currentTrackLiked, setCurrentTrackLiked] = useState<boolean | null>(null);
   const [likedStateLoading, setLikedStateLoading] = useState(false);
   const [likedStateSaving, setLikedStateSaving] = useState(false);
+  const [trackPlaylistMenuOpen, setTrackPlaylistMenuOpen] = useState(false);
+  const [trackPlaylistOptions, setTrackPlaylistOptions] = useState<PlayerPlaylistOption[]>([
+    { id: PLAYER_LIKED_PLAYLIST_ID, name: "Liked Songs", type: "liked" },
+  ]);
+  const [trackPlaylistSelectedIds, setTrackPlaylistSelectedIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [trackPlaylistInitialIds, setTrackPlaylistInitialIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [trackPlaylistLoading, setTrackPlaylistLoading] = useState(false);
+  const [trackPlaylistSaving, setTrackPlaylistSaving] = useState(false);
+  const [trackPlaylistActionKey, setTrackPlaylistActionKey] = useState<string | null>(null);
   const [shuffleOn, setShuffleOn] = useState(false);
   const [shufflePending, setShufflePending] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
@@ -316,6 +344,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const lastNonZeroVolumeRef = useRef(0.5);
   const likedCacheRef = useRef<Map<string, boolean>>(new Map());
   const likedRequestIdRef = useRef(0);
+  const trackPlaylistOptionsLoadedRef = useRef(false);
+  const trackPlaylistRequestIdRef = useRef(0);
+  const trackPlaylistWasOpenRef = useRef(false);
   const lastSdkStateRef = useRef<any>(null);
   const playPauseOptimisticTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastIsPlayingRef = useRef(false);
@@ -335,6 +366,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const playbackRecoveryRef = useRef(false);
   const deviceMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setDeviceMenuOpen(false),
+  });
+  const trackPlaylistMenu = useStableMenu<HTMLDivElement>({
+    onClose: () => setTrackPlaylistMenuOpen(false),
   });
 
   function formatPlayerError(message?: string | null) {
@@ -1060,6 +1094,18 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     return false;
   }
 
+  async function waitForKnownDeviceId(timeoutMs = 1200) {
+    const start = Date.now();
+    let candidate =
+      activeDeviceIdRef.current || deviceIdRef.current || sdkDeviceIdRef.current;
+    while (!candidate && Date.now() - start < timeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      candidate =
+        activeDeviceIdRef.current || deviceIdRef.current || sdkDeviceIdRef.current;
+    }
+    return candidate;
+  }
+
   function resolveTrackIdFromUri(uri?: string | null) {
     if (!uri) return null;
     const id = uri.split(":").pop();
@@ -1383,7 +1429,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (deviceId === sdkDeviceIdRef.current) {
       await playerRef.current?.activateElement?.();
     }
-    const ready = await ensureActiveDevice(deviceId, token, false);
+    const ready = await ensureActiveDevice(deviceId, token, true);
     if (!ready) {
       setError("Spotify‑apparaat is nog niet klaar. Probeer opnieuw.");
       return;
@@ -1857,6 +1903,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     if (!accessToken || !currentTrackIdState) {
       setCurrentTrackLiked(null);
       setLikedStateLoading(false);
+      setTrackPlaylistMenuOpen(false);
+      setTrackPlaylistSelectedIds(new Set());
+      setTrackPlaylistInitialIds(new Set());
+      setTrackPlaylistLoading(false);
       return;
     }
 
@@ -1917,6 +1967,151 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     []
   );
 
+  const ensureTrackPlaylistOptionsLoaded = useCallback(async () => {
+    if (trackPlaylistOptionsLoadedRef.current) return;
+    const res = await fetch("/api/spotify/me/playlists?limit=100", { cache: "no-store" });
+    if (!res.ok) {
+      throw new Error(`PLAYLIST_OPTIONS_${res.status}`);
+    }
+    const payload = (await res.json().catch(() => null)) as
+      | { items?: Array<{ playlistId?: string; name?: string }> }
+      | null;
+    const rows = Array.isArray(payload?.items) ? payload.items : [];
+    const mapped = rows
+      .map((item) => {
+        const id = String(item?.playlistId ?? "").trim();
+        const name = String(item?.name ?? "").trim();
+        if (!id || !name) return null;
+        if (!startsWithEmoji(name)) return null;
+        return { id, name, type: "playlist" as const };
+      })
+      .filter(
+        (item): item is { id: string; name: string; type: "playlist" } =>
+          Boolean(item)
+      )
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, "nl", {
+          sensitivity: "base",
+          ignorePunctuation: true,
+          numeric: true,
+        })
+      );
+    setTrackPlaylistOptions([
+      { id: PLAYER_LIKED_PLAYLIST_ID, name: "Liked Songs", type: "liked" },
+      ...mapped,
+    ]);
+    trackPlaylistOptionsLoadedRef.current = true;
+  }, []);
+
+  const syncCurrentTrackPlaylistSelection = useCallback(
+    async (trackId: string) => {
+      const requestId = ++trackPlaylistRequestIdRef.current;
+      setTrackPlaylistLoading(true);
+      try {
+        const res = await fetch(
+          `/api/spotify/me/tracks/playlists?trackId=${encodeURIComponent(trackId)}`,
+          { cache: "no-store" }
+        );
+        if (!res.ok) throw new Error(`TRACK_PLAYLISTS_${res.status}`);
+        const payload = (await res.json().catch(() => null)) as
+          | { playlistIds?: string[]; liked?: boolean }
+          | null;
+        if (trackPlaylistRequestIdRef.current !== requestId) return;
+        const ids = new Set<string>();
+        for (const playlistId of Array.isArray(payload?.playlistIds)
+          ? payload?.playlistIds
+          : []) {
+          const id = String(playlistId ?? "").trim();
+          if (id) ids.add(id);
+        }
+        const liked = Boolean(payload?.liked);
+        if (liked) {
+          ids.add(PLAYER_LIKED_PLAYLIST_ID);
+          likedCacheRef.current.set(trackId, true);
+          setCurrentTrackLiked(true);
+        } else {
+          likedCacheRef.current.set(trackId, false);
+          setCurrentTrackLiked(false);
+          ids.delete(PLAYER_LIKED_PLAYLIST_ID);
+        }
+        setTrackPlaylistSelectedIds(ids);
+        setTrackPlaylistInitialIds(new Set(ids));
+      } finally {
+        if (trackPlaylistRequestIdRef.current === requestId) {
+          setTrackPlaylistLoading(false);
+        }
+      }
+    },
+    []
+  );
+
+  const applyTrackPlaylistDraft = useCallback(async () => {
+    if (!currentTrackIdState) return;
+    if (trackPlaylistSaving) return;
+    const changed = trackPlaylistOptions.filter((option) => {
+      const selected = trackPlaylistSelectedIds.has(option.id);
+      const initial = trackPlaylistInitialIds.has(option.id);
+      return selected !== initial;
+    });
+    if (!changed.length) return;
+
+    setTrackPlaylistSaving(true);
+    let hadFailures = false;
+    try {
+      for (const option of changed) {
+        const shouldInclude = trackPlaylistSelectedIds.has(option.id);
+        const opKey = `${currentTrackIdState}:${option.id}`;
+        setTrackPlaylistActionKey(opKey);
+        try {
+          let res: Response;
+          if (option.type === "liked") {
+            res = await fetch("/api/spotify/me/tracks/liked", {
+              method: shouldInclude ? "POST" : "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trackId: currentTrackIdState }),
+            });
+            if (res.ok) {
+              likedCacheRef.current.set(currentTrackIdState, shouldInclude);
+              setCurrentTrackLiked(shouldInclude);
+              emitLikedTracksUpdated(
+                currentTrackIdState,
+                shouldInclude ? "added" : "removed"
+              );
+            }
+          } else {
+            res = await fetch(`/api/spotify/playlists/${option.id}/items`, {
+              method: shouldInclude ? "POST" : "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trackId: currentTrackIdState }),
+            });
+          }
+          if (!res.ok) {
+            hadFailures = true;
+          }
+        } catch {
+          hadFailures = true;
+        } finally {
+          setTrackPlaylistActionKey(null);
+        }
+      }
+      if (hadFailures) {
+        setError("Niet alle playlist-wijzigingen konden worden opgeslagen.");
+      } else {
+        setError(null);
+      }
+      setTrackPlaylistInitialIds(new Set(trackPlaylistSelectedIds));
+    } finally {
+      setTrackPlaylistSaving(false);
+    }
+  }, [
+    currentTrackIdState,
+    emitLikedTracksUpdated,
+    trackPlaylistInitialIds,
+    trackPlaylistOptions,
+    trackPlaylistSaving,
+    trackPlaylistSelectedIds,
+  ]);
+
   const handleLikeCurrentTrack = useCallback(async () => {
     if (!currentTrackIdState) return;
     if (likedStateSaving || likedStateLoading) return;
@@ -1963,6 +2158,30 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     likedStateLoading,
     likedStateSaving,
   ]);
+
+  useEffect(() => {
+    if (!trackPlaylistMenuOpen || !currentTrackIdState || !accessToken) return;
+    void ensureTrackPlaylistOptionsLoaded().catch(() => {
+      setError("Playlist-doelen laden lukt nu niet.");
+    });
+    void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(() => {
+      setError("Track-playlists laden lukt nu niet.");
+    });
+  }, [
+    accessToken,
+    currentTrackIdState,
+    ensureTrackPlaylistOptionsLoaded,
+    syncCurrentTrackPlaylistSelection,
+    trackPlaylistMenuOpen,
+  ]);
+
+  useEffect(() => {
+    const wasOpen = trackPlaylistWasOpenRef.current;
+    if (wasOpen && !trackPlaylistMenuOpen) {
+      void applyTrackPlaylistDraft();
+    }
+    trackPlaylistWasOpenRef.current = trackPlaylistMenuOpen;
+  }, [applyTrackPlaylistDraft, trackPlaylistMenuOpen]);
 
   const applySdkState = useCallback(
     (state: any) => {
@@ -2854,6 +3073,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             setActiveDevice(currentDevice, localWebplayerName);
           }
           if (!currentDevice) {
+            const awaitedDevice = await waitForKnownDeviceId();
+            if (awaitedDevice) {
+              currentDevice = awaitedDevice;
+              if (awaitedDevice === sdkDeviceIdRef.current) {
+                setActiveDevice(awaitedDevice, localWebplayerName);
+              }
+            }
+          }
+          if (!currentDevice) {
             raisePlaybackCommandError(
               404,
               "NO_ACTIVE_DEVICE",
@@ -2892,7 +3120,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           };
           const startIndex = Math.max(0, Math.min(resolvedIndex, uris.length - 1));
 
-          const ready = await ensureActiveDevice(currentDevice as string, token, false);
+          const ready = await ensureActiveDevice(currentDevice as string, token, true);
           if (!ready) {
             raisePlaybackCommandError(
               404,
@@ -3028,6 +3256,15 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             setActiveDevice(currentDevice, localWebplayerName);
           }
           if (!currentDevice) {
+            const awaitedDevice = await waitForKnownDeviceId();
+            if (awaitedDevice) {
+              currentDevice = awaitedDevice;
+              if (awaitedDevice === sdkDeviceIdRef.current) {
+                setActiveDevice(awaitedDevice, localWebplayerName);
+              }
+            }
+          }
+          if (!currentDevice) {
             raisePlaybackCommandError(
               404,
               "NO_ACTIVE_DEVICE",
@@ -3044,7 +3281,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             await playerRef.current?.activateElement?.();
           }
 
-          const ready = await ensureActiveDevice(currentDevice as string, token, false);
+          const ready = await ensureActiveDevice(currentDevice as string, token, true);
           if (!ready) {
             raisePlaybackCommandError(
               404,
@@ -4054,24 +4291,103 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               (activeDeviceName ? `Afspelen op ${activeDeviceName}` : "Ready to play")}
           </div>
           {accessToken && currentTrackIdState ? (
-            <button
-              type="button"
-              className={`player-like-btn${currentTrackLiked ? " active" : ""}`}
-              aria-label={
-                currentTrackLiked
-                  ? "Verwijderen uit Liked Songs"
-                  : "Toevoegen aan Liked Songs"
-              }
-              title={
-                currentTrackLiked
-                  ? "Verwijderen uit Liked Songs"
-                  : "Toevoegen aan Liked Songs"
-              }
-              disabled={likedStateSaving || likedStateLoading}
-              onClick={handleLikeCurrentTrack}
+            <div
+              ref={trackPlaylistMenu.rootRef}
+              style={{ position: "relative", display: "inline-flex", gap: 8 }}
+              onPointerDownCapture={trackPlaylistMenu.markInteraction}
+              onTouchStartCapture={trackPlaylistMenu.markInteraction}
             >
-              {likedStateSaving ? "…" : currentTrackLiked ? "−" : "+"}
-            </button>
+              <button
+                type="button"
+                className={`player-like-btn${currentTrackLiked ? " active" : ""}`}
+                aria-label={
+                  currentTrackLiked
+                    ? "Verwijderen uit Liked Songs"
+                    : "Toevoegen aan Liked Songs"
+                }
+                title={
+                  currentTrackLiked
+                    ? "Verwijderen uit Liked Songs"
+                    : "Toevoegen aan Liked Songs"
+                }
+                disabled={likedStateSaving || likedStateLoading || trackPlaylistSaving}
+                onClick={handleLikeCurrentTrack}
+              >
+                {likedStateSaving ? "…" : currentTrackLiked ? "−" : "+"}
+              </button>
+              <button
+                type="button"
+                className="player-like-btn"
+                aria-label="Toevoegen aan playlists"
+                title="Playlist-selectie voor huidige track"
+                disabled={trackPlaylistSaving}
+                onClick={() =>
+                  setTrackPlaylistMenuOpen((prev) => {
+                    const next = !prev;
+                    if (next && currentTrackIdState && accessToken) {
+                      void ensureTrackPlaylistOptionsLoaded().catch(() => {
+                        setError("Playlist-doelen laden lukt nu niet.");
+                      });
+                      void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(() => {
+                        setError("Track-playlists laden lukt nu niet.");
+                      });
+                    }
+                    return next;
+                  })
+                }
+                onBlur={trackPlaylistMenu.handleBlur}
+              >
+                {trackPlaylistSaving ? "…" : "+"}
+              </button>
+              {trackPlaylistMenuOpen ? (
+                <div
+                  className="combo-list"
+                  role="menu"
+                  style={{ right: 0, left: "auto", width: 280 }}
+                >
+                  {trackPlaylistLoading ? (
+                    <div className="combo-empty">Playlists laden...</div>
+                  ) : trackPlaylistOptions.length === 0 ? (
+                    <div className="combo-empty">Geen playlist-doelen.</div>
+                  ) : (
+                    trackPlaylistOptions.map((option) => {
+                      const opKey = `${currentTrackIdState}:${option.id}`;
+                      const busy =
+                        trackPlaylistSaving || trackPlaylistActionKey === opKey;
+                      const checked = trackPlaylistSelectedIds.has(option.id);
+                      return (
+                        <label
+                          key={option.id}
+                          role="menuitem"
+                          className="combo-item"
+                          style={{ gap: 10, justifyContent: "flex-start" }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={busy}
+                            onChange={() => {
+                              if (busy) return;
+                              setTrackPlaylistSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(option.id)) {
+                                  next.delete(option.id);
+                                } else {
+                                  next.add(option.id);
+                                }
+                                return next;
+                              });
+                            }}
+                            onClick={(event) => event.stopPropagation()}
+                          />
+                          <span>{option.name}</span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </div>
         <div className="text-body">

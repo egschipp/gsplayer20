@@ -24,13 +24,23 @@ function normalizeVersionTag(input: unknown): string | null {
 }
 
 async function readPackageVersion(): Promise<{ name: string; version: string }> {
-  const pkgPath = path.join(process.cwd(), "package.json");
-  const raw = await readFile(pkgPath, "utf8");
-  const pkg = JSON.parse(raw) as { version?: string; name?: string };
-  return {
-    name: pkg.name ?? "app",
-    version: normalizeVersionTag(pkg.version) ?? "0.0.0",
-  };
+  try {
+    const pkgPath = path.join(process.cwd(), "package.json");
+    const raw = await readFile(pkgPath, "utf8");
+    const pkg = JSON.parse(raw) as { version?: string; name?: string };
+    return {
+      name: pkg.name ?? process.env.APP_NAME ?? "gsplayer20",
+      version:
+        normalizeVersionTag(pkg.version) ??
+        normalizeVersionTag(process.env.APP_RELEASE_VERSION) ??
+        "0.0.0",
+    };
+  } catch {
+    return {
+      name: process.env.APP_NAME ?? "gsplayer20",
+      version: normalizeVersionTag(process.env.APP_RELEASE_VERSION) ?? "0.0.0",
+    };
+  }
 }
 
 async function fetchLatestReleaseVersion(repo: string): Promise<string | null> {

@@ -2837,47 +2837,88 @@ export default function PlaylistBrowser() {
     [mode, selectedPlaylist?.id, selectedPlaylist?.type]
   );
 
-  const handleAddTrackToPlaylist = useCallback(
-    async (track: TrackRow | TrackItem, target: PlaylistOption) => {
+  const setTrackPlaylistMembership = useCallback(
+    async (
+      track: TrackRow | TrackItem,
+      target: PlaylistOption,
+      shouldInclude: boolean
+    ) => {
       const trackId = resolveTrackId(track);
-      if (!trackId) return;
+      if (!trackId) return false;
       const opKey = `${trackId}:${target.id}`;
       setAddingTargetKey(opKey);
       setError(null);
+      let success = true;
       try {
-        if (target.type === "liked") {
-          const likedRes = await fetch("/api/spotify/me/tracks/liked", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ trackId }),
-          });
-          if (!likedRes.ok) {
-            const data = await likedRes.json().catch(() => null);
-            const code = typeof data?.error === "string" ? data.error : "UNKNOWN";
-            throw new Error(`ADD_LIKED_FAILED_${likedRes.status}_${code}`);
+        if (shouldInclude) {
+          if (target.type === "liked") {
+            const likedRes = await fetch("/api/spotify/me/tracks/liked", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trackId }),
+            });
+            if (!likedRes.ok) {
+              const data = await likedRes.json().catch(() => null);
+              const code = typeof data?.error === "string" ? data.error : "UNKNOWN";
+              throw new Error(`ADD_LIKED_FAILED_${likedRes.status}_${code}`);
+            }
+            emitLikedTracksUpdated(trackId, "added");
+            bumpLikedTracksTotal(1);
+            setLikedRefreshNonce((prev) => prev + 1);
+          } else {
+            const playlistRes = await fetch(`/api/spotify/playlists/${target.id}/items`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trackId }),
+            });
+            if (!playlistRes.ok) {
+              const data = await playlistRes.json().catch(() => null);
+              const code = typeof data?.error === "string" ? data.error : "UNKNOWN";
+              throw new Error(`ADD_PLAYLIST_FAILED_${playlistRes.status}_${code}`);
+            }
+            void requestPlaylistItemsSync(target.id);
           }
-          emitLikedTracksUpdated(trackId, "added");
-          bumpLikedTracksTotal(1);
-          setLikedRefreshNonce((prev) => prev + 1);
         } else {
-          const playlistRes = await fetch(`/api/spotify/playlists/${target.id}/items`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ trackId }),
-          });
-          if (!playlistRes.ok) {
-            const data = await playlistRes.json().catch(() => null);
-            const code = typeof data?.error === "string" ? data.error : "UNKNOWN";
-            throw new Error(`ADD_PLAYLIST_FAILED_${playlistRes.status}_${code}`);
+          if (target.type === "liked") {
+            const likedRes = await fetch("/api/spotify/me/tracks/liked", {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trackId }),
+            });
+            if (!likedRes.ok) {
+              const data = await likedRes.json().catch(() => null);
+              const code = typeof data?.error === "string" ? data.error : "UNKNOWN";
+              throw new Error(`REMOVE_LIKED_FAILED_${likedRes.status}_${code}`);
+            }
+            emitLikedTracksUpdated(trackId, "removed");
+            bumpLikedTracksTotal(-1);
+            setLikedRefreshNonce((prev) => prev + 1);
+          } else {
+            const playlistRes = await fetch(`/api/spotify/playlists/${target.id}/items`, {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trackId }),
+            });
+            if (!playlistRes.ok) {
+              const data = await playlistRes.json().catch(() => null);
+              const code = typeof data?.error === "string" ? data.error : "UNKNOWN";
+              throw new Error(`REMOVE_PLAYLIST_FAILED_${playlistRes.status}_${code}`);
+            }
+            void requestPlaylistItemsSync(target.id);
           }
-          void requestPlaylistItemsSync(target.id);
         }
-
-        const playlistLink = toPlaylistLink(target);
-        upsertPlaylistOnTrack(trackId, playlistLink);
-        appendTrackToSelectedPlaylist(track, target);
-        if (target.type === "playlist") {
-          triggerSelectedPlaylistLiveRefresh(target.id);
+        if (shouldInclude) {
+          const playlistLink = toPlaylistLink(target);
+          upsertPlaylistOnTrack(trackId, playlistLink);
+          appendTrackToSelectedPlaylist(track, target);
+          if (target.type === "playlist") {
+            triggerSelectedPlaylistLiveRefresh(target.id);
+          }
+        } else {
+          removePlaylistOnTrack(trackId, target.id);
+          if (target.type === "playlist") {
+            triggerSelectedPlaylistLiveRefresh(target.id);
+          }
         }
 
         if (
@@ -2889,6 +2930,7 @@ export default function PlaylistBrowser() {
           void requestPlaylistItemsSync(selectedPlaylist.id);
         }
       } catch (error) {
+        success = false;
         const message = String(error);
         if (
           message.includes("_403_") ||
@@ -2903,13 +2945,18 @@ export default function PlaylistBrowser() {
         } else {
           setError(
             target.type === "liked"
-              ? "Track toevoegen aan Liked Songs lukt nu niet."
-              : "Track toevoegen aan playlist lukt nu niet."
+              ? shouldInclude
+                ? "Track toevoegen aan Liked Songs lukt nu niet."
+                : "Track verwijderen uit Liked Songs lukt nu niet."
+              : shouldInclude
+              ? "Track toevoegen aan playlist lukt nu niet."
+              : "Track verwijderen uit playlist lukt nu niet."
           );
         }
       } finally {
         setAddingTargetKey(null);
       }
+      return success;
     },
     [
       appendTrackToSelectedPlaylist,
@@ -2920,8 +2967,32 @@ export default function PlaylistBrowser() {
       selectedPlaylist?.id,
       selectedPlaylist?.type,
       triggerSelectedPlaylistLiveRefresh,
+      removePlaylistOnTrack,
       upsertPlaylistOnTrack,
     ]
+  );
+
+  const handleApplyTrackPlaylistChanges = useCallback(
+    async (
+      track: TrackRow | TrackItem,
+      payload: { toAdd: PlaylistOption[]; toRemove: PlaylistOption[] }
+    ) => {
+      const toAdd = payload.toAdd ?? [];
+      const toRemove = payload.toRemove ?? [];
+      let hadFailures = false;
+      for (const target of toAdd) {
+        const ok = await setTrackPlaylistMembership(track, target, true);
+        if (!ok) hadFailures = true;
+      }
+      for (const target of toRemove) {
+        const ok = await setTrackPlaylistMembership(track, target, false);
+        if (!ok) hadFailures = true;
+      }
+      if (hadFailures) {
+        throw new Error("PLAYLIST_MEMBERSHIP_PARTIAL_FAILURE");
+      }
+    },
+    [setTrackPlaylistMembership]
   );
 
   const handleRemoveTrackFromPlaylist = useCallback(
@@ -3599,10 +3670,10 @@ export default function PlaylistBrowser() {
                 openDetailFromRow,
                 handlePlayTrack,
                 addTrackToQueue: handleAddTrackToQueue,
-                addTrackToPlaylist: handleAddTrackToPlaylist,
+                applyTrackPlaylistChanges: handleApplyTrackPlaylistChanges,
                 selectPlaylistInMyMusic,
                 addTargetOptions,
-                addingTargetKey,
+                activeTargetKey: addingTargetKey || removingTargetKey,
                 ensureAllPlaylistOptionsLoaded,
                 allPlaylistNames,
                 MAX_PLAYLIST_CHIPS,
@@ -3656,10 +3727,10 @@ export default function PlaylistBrowser() {
                 openDetailFromItem,
                 handlePlayTrack,
                 addTrackToQueue: handleAddTrackToQueue,
-                addTrackToPlaylist: handleAddTrackToPlaylist,
+                applyTrackPlaylistChanges: handleApplyTrackPlaylistChanges,
                 selectPlaylistInMyMusic,
                 addTargetOptions,
-                addingTargetKey,
+                activeTargetKey: addingTargetKey || removingTargetKey,
                 ensureAllPlaylistOptionsLoaded,
                 allPlaylistNames,
                 MAX_PLAYLIST_CHIPS,
@@ -4134,22 +4205,61 @@ type TrackApiItem = {
 type AddToPlaylistMenuProps = {
   track: TrackRow | TrackItem;
   options: PlaylistOption[];
-  addingTargetKey: string | null;
-  onAdd: (track: TrackRow | TrackItem, target: PlaylistOption) => Promise<void>;
+  activeTargetKey: string | null;
+  onApply: (
+    track: TrackRow | TrackItem,
+    payload: { toAdd: PlaylistOption[]; toRemove: PlaylistOption[] }
+  ) => Promise<void>;
   onOpen?: () => void;
 };
 
 function AddToPlaylistMenu({
   track,
   options,
-  addingTargetKey,
-  onAdd,
+  activeTargetKey,
+  onApply,
   onOpen,
 }: AddToPlaylistMenuProps) {
   const trackId = resolveTrackId(track);
   const [open, setOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [initialSelectedIds, setInitialSelectedIds] = useState<Set<string>>(new Set());
+  const [submitting, setSubmitting] = useState(false);
+  const buildSelectedFromTrack = useCallback(
+    (value: TrackRow | TrackItem) =>
+      new Set(
+        (Array.isArray(value.playlists) ? value.playlists : [])
+          .map((playlist) => String(playlist?.id ?? "").trim())
+          .filter(Boolean)
+      ),
+    []
+  );
+  const applyChanges = useCallback(async () => {
+    if (!trackId) return;
+    if (submitting) return;
+    const toAdd = options.filter(
+      (option) => selectedIds.has(option.id) && !initialSelectedIds.has(option.id)
+    );
+    const toRemove = options.filter(
+      (option) => !selectedIds.has(option.id) && initialSelectedIds.has(option.id)
+    );
+    if (!toAdd.length && !toRemove.length) return;
+    setSubmitting(true);
+    try {
+      await onApply(track, { toAdd, toRemove });
+      const next = new Set(selectedIds);
+      setInitialSelectedIds(next);
+    } catch {
+      // Error state is handled by the parent handlers; keep menu close flow stable.
+    } finally {
+      setSubmitting(false);
+    }
+  }, [initialSelectedIds, onApply, options, selectedIds, submitting, track, trackId]);
   const { rootRef, markInteraction, handleBlur } = useStableMenu<HTMLDivElement>({
-    onClose: () => setOpen(false),
+    onClose: () => {
+      setOpen(false);
+      void applyChanges();
+    },
   });
 
   return (
@@ -4166,13 +4276,21 @@ function AddToPlaylistMenu({
         aria-label="Toevoegen aan playlist"
         title="Toevoegen aan playlist"
         disabled={!trackId || options.length === 0}
-        onClick={() =>
+        onClick={() => {
+          if (!trackId || options.length === 0) return;
           setOpen((prev) => {
             const next = !prev;
-            if (next) onOpen?.();
-            return next;
-          })
-        }
+            if (next) {
+              const selected = buildSelectedFromTrack(track);
+              setSelectedIds(selected);
+              setInitialSelectedIds(selected);
+              onOpen?.();
+              return true;
+            }
+            void applyChanges();
+            return false;
+          });
+        }}
         onBlur={handleBlur}
       >
         ＋
@@ -4184,22 +4302,35 @@ function AddToPlaylistMenu({
           ) : (
             options.map((option) => {
               const opKey = `${trackId}:${option.id}`;
-              const busy = addingTargetKey === opKey;
+              const busy = submitting || activeTargetKey === opKey;
+              const checked = selectedIds.has(option.id);
               return (
-                <button
+                <label
                   key={option.id}
-                  type="button"
                   role="menuitem"
                   className="combo-item"
-                  disabled={!trackId || busy}
-                  onClick={async () => {
-                    if (!trackId || busy) return;
-                    await onAdd(track, option);
-                    setOpen(false);
-                  }}
+                  style={{ gap: 10, justifyContent: "flex-start" }}
                 >
-                  {busy ? "Bezig..." : option.name}
-                </button>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={!trackId || busy}
+                    onChange={() => {
+                      if (!trackId || busy) return;
+                      setSelectedIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(option.id)) {
+                          next.delete(option.id);
+                        } else {
+                          next.add(option.id);
+                        }
+                        return next;
+                      });
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                  <span>{option.name}</span>
+                </label>
               );
             })
           )}
@@ -4249,10 +4380,13 @@ type TrackRowData = {
   openDetailFromRow: (track: TrackRow, trigger?: HTMLElement | null) => void;
   handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
   addTrackToQueue: (track: TrackRow | TrackItem) => void;
-  addTrackToPlaylist: (track: TrackRow | TrackItem, target: PlaylistOption) => Promise<void>;
+  applyTrackPlaylistChanges: (
+    track: TrackRow | TrackItem,
+    payload: { toAdd: PlaylistOption[]; toRemove: PlaylistOption[] }
+  ) => Promise<void>;
   selectPlaylistInMyMusic: (playlistId: string) => void;
   addTargetOptions: PlaylistOption[];
-  addingTargetKey: string | null;
+  activeTargetKey: string | null;
   ensureAllPlaylistOptionsLoaded: () => void;
   allPlaylistNames: string[];
   MAX_PLAYLIST_CHIPS: number;
@@ -4380,8 +4514,8 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
           <AddToPlaylistMenu
             track={track}
             options={data.addTargetOptions}
-            addingTargetKey={data.addingTargetKey}
-            onAdd={data.addTrackToPlaylist}
+            activeTargetKey={data.activeTargetKey}
+            onApply={data.applyTrackPlaylistChanges}
             onOpen={data.ensureAllPlaylistOptionsLoaded}
           />
           <ChatGptButton
@@ -4438,10 +4572,13 @@ type TrackItemData = {
   openDetailFromItem: (track: TrackItem, trigger?: HTMLElement | null) => void;
   handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
   addTrackToQueue: (track: TrackRow | TrackItem) => void;
-  addTrackToPlaylist: (track: TrackRow | TrackItem, target: PlaylistOption) => Promise<void>;
+  applyTrackPlaylistChanges: (
+    track: TrackRow | TrackItem,
+    payload: { toAdd: PlaylistOption[]; toRemove: PlaylistOption[] }
+  ) => Promise<void>;
   selectPlaylistInMyMusic: (playlistId: string) => void;
   addTargetOptions: PlaylistOption[];
-  addingTargetKey: string | null;
+  activeTargetKey: string | null;
   ensureAllPlaylistOptionsLoaded: () => void;
   allPlaylistNames: string[];
   MAX_PLAYLIST_CHIPS: number;
@@ -4570,8 +4707,8 @@ function TrackItemRenderer({
           <AddToPlaylistMenu
             track={track}
             options={data.addTargetOptions}
-            addingTargetKey={data.addingTargetKey}
-            onAdd={data.addTrackToPlaylist}
+            activeTargetKey={data.activeTargetKey}
+            onApply={data.applyTrackPlaylistChanges}
             onOpen={data.ensureAllPlaylistOptionsLoaded}
           />
           <ChatGptButton

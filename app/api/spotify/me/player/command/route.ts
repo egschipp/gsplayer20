@@ -176,6 +176,9 @@ export async function POST(req: NextRequest) {
         url: "https://api.spotify.com/v1/me/player",
         userLevel: true,
         correlationId,
+        priority: "foreground",
+        cacheTtlMs: 0,
+        dedupeWindowMs: 200,
       });
       const currentDeviceId =
         typeof current?.device?.id === "string" ? current.device.id : null;
@@ -208,6 +211,10 @@ export async function POST(req: NextRequest) {
       body: method === "GET" ? undefined : payload,
       userLevel: true,
       correlationId,
+      priority: method === "GET" ? "foreground" : "foreground",
+      cacheTtlMs: method === "GET" ? 0 : 0,
+      dedupeWindowMs: method === "GET" ? 200 : 200,
+      bypassCache: method !== "GET",
     });
     if (method === "GET") {
       return jsonNoStore(data ?? {});

@@ -311,7 +311,7 @@ export async function spotifyApiRequest<T>(params: {
         });
 
         if (result.ok) {
-          registerSpotifyRequestSuccess(userKey);
+          await registerSpotifyRequestSuccess(userKey);
 
           if (result.status === 204 || result.status === 205) {
             return undefined as T;
@@ -365,9 +365,9 @@ export async function spotifyApiRequest<T>(params: {
         if (result.status === 429) {
           const waitMs = retryAfterMs ?? retryWaitMs;
           recordSpotifyRateLimitBackoff(waitMs);
-          registerSpotifyRateLimit(userKey, waitMs, group);
+          await registerSpotifyRateLimit(userKey, waitMs, group);
         } else if (result.status >= 500) {
-          registerSpotifyRequestFailure(userKey, group);
+          await registerSpotifyRequestFailure(userKey, group);
         }
 
         if (retryable && attempt < maxAttempts) {
@@ -432,7 +432,7 @@ export async function spotifyApiRequest<T>(params: {
           data: { attempt },
         });
 
-        registerSpotifyRequestFailure(userKey, group);
+        await registerSpotifyRequestFailure(userKey, group);
 
         if (retryable && attempt < maxAttempts) {
           incCounter("spotify_api_retries_total", {

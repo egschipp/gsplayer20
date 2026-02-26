@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
 import { getRecentErrors } from "@/lib/observability/logger";
 import { counterTotal, histogramQuantiles } from "@/lib/observability/metrics";
@@ -15,6 +16,18 @@ export async function GET(req: Request) {
 
   const correlationId = readCorrelationId(req.headers) || createCorrelationId();
 
+  const sessionHash =
+    typeof session.appUserId === "string" && session.appUserId.trim()
+      ? crypto.createHash("sha256").update(session.appUserId).digest("hex").slice(0, 16)
+      : null;
+  const scopeCount =
+    typeof session.scope === "string"
+      ? session.scope
+          .split(/\s+/)
+          .map((value) => value.trim())
+          .filter(Boolean).length
+      : 0;
+
   const payload = {
     generatedAt: Date.now(),
     correlationId,
@@ -27,9 +40,9 @@ export async function GET(req: Request) {
       authLogEnabled: process.env.AUTH_LOG_ENABLED === "true",
     },
     session: {
-      appUserId: session.appUserId ?? null,
-      spotifyUserId: session.spotifyUserId ?? null,
-      scope: session.scope ?? null,
+      appUserHash: sessionHash,
+      hasSpotifyUser: Boolean(session.spotifyUserId),
+      scopeCount,
     },
     metrics: {
       requests2xx: counterTotal("spotify_api_requests_total", {

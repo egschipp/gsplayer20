@@ -1,6 +1,7 @@
 import { incCounter, observeHistogram } from "@/lib/observability/metrics";
 import { logEvent } from "@/lib/observability/logger";
 import { type SpotifyRequestPriority } from "@/lib/spotify/requestPriority";
+import { Redis } from "@upstash/redis";
 
 type BucketState = {
   tokens: number;
@@ -63,10 +64,48 @@ const queueByPriority: Record<SpotifyRequestPriority, Array<QueueTask<unknown>>>
 const bucketByUser = new Map<string, BucketState>();
 const inFlightByUser = new Map<string, number>();
 const circuitByUser = new Map<string, CircuitState>();
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+let redis: Redis | null = null;
 
 let globalInFlight = 0;
 let taskSeq = 0;
 let drainScheduled = false;
+
+function getRedis() {
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) return null;
+  if (!redis) {
+    redis = new Redis({ url: UPSTASH_URL, token: UPSTASH_TOKEN });
+  }
+  return redis;
+}
+
+function circuitKey(userKey: string) {
+  return `spotify:circuit:${userKey}`;
+}
+
+async function readSharedCircuit(userKey: string): Promise<CircuitState | null> {
+  const client = getRedis();
+  if (!client) return null;
+  const data = await client.hgetall<Record<string, string | number>>(circuitKey(userKey));
+  if (!data) return null;
+  const consecutiveFailures = Number(data.consecutiveFailures ?? 0);
+  const openUntil = Number(data.openUntil ?? 0);
+  if (!Number.isFinite(consecutiveFailures) || !Number.isFinite(openUntil)) return null;
+  return { consecutiveFailures, openUntil };
+}
+
+async function writeSharedCircuit(userKey: string, state: CircuitState): Promise<void> {
+  const client = getRedis();
+  if (!client) return;
+  const key = circuitKey(userKey);
+  const ttlSec = Math.max(60, Math.ceil((Math.max(0, state.openUntil - nowMs()) + 300_000) / 1000));
+  await client.hset(key, {
+    consecutiveFailures: state.consecutiveFailures,
+    openUntil: state.openUntil,
+  });
+  await client.expire(key, ttlSec);
+}
 
 function nowMs(): number {
   return Date.now();
@@ -207,12 +246,21 @@ async function drainQueue(): Promise<void> {
   });
 }
 
-function checkCircuit(userKey: string): void {
+async function checkCircuit(userKey: string): Promise<void> {
   const state = circuitByUser.get(userKey);
-  if (!state) return;
+  const shared = await readSharedCircuit(userKey);
+  const merged: CircuitState | null =
+    state && shared
+      ? {
+          consecutiveFailures: Math.max(state.consecutiveFailures, shared.consecutiveFailures),
+          openUntil: Math.max(state.openUntil, shared.openUntil),
+        }
+      : state || shared || null;
+  if (!merged) return;
+  circuitByUser.set(userKey, merged);
   const now = nowMs();
-  if (state.openUntil > now) {
-    const retryAfterMs = state.openUntil - now;
+  if (merged.openUntil > now) {
+    const retryAfterMs = merged.openUntil - now;
     throw new SpotifyRateLimitError("CIRCUIT_OPEN", retryAfterMs);
   }
 }
@@ -223,7 +271,7 @@ export async function scheduleSpotifyRequest<T>(args: {
   priority: SpotifyRequestPriority;
   run: () => Promise<T>;
 }): Promise<T> {
-  checkCircuit(args.userKey);
+  await checkCircuit(args.userKey);
 
   if (totalQueueDepth() >= config.maxQueueSize) {
     incCounter("spotify_queue_rejected_total", { reason: "queue_full", priority: args.priority });
@@ -250,7 +298,11 @@ export async function scheduleSpotifyRequest<T>(args: {
   });
 }
 
-export function registerSpotifyRateLimit(userKey: string, retryAfterMs: number, endpoint: string): void {
+export async function registerSpotifyRateLimit(
+  userKey: string,
+  retryAfterMs: number,
+  endpoint: string
+): Promise<void> {
   const now = nowMs();
   const current = circuitByUser.get(userKey) || {
     consecutiveFailures: 0,
@@ -262,6 +314,7 @@ export function registerSpotifyRateLimit(userKey: string, retryAfterMs: number, 
     now + Math.max(1_000, Math.min(120_000, Math.floor(retryAfterMs)))
   );
   circuitByUser.set(userKey, current);
+  await writeSharedCircuit(userKey, current);
 
   incCounter("spotify_rate_limit_events_total", { endpoint });
   logEvent({
@@ -277,18 +330,24 @@ export function registerSpotifyRateLimit(userKey: string, retryAfterMs: number, 
   });
 }
 
-export function registerSpotifyRequestSuccess(userKey: string): void {
+export async function registerSpotifyRequestSuccess(userKey: string): Promise<void> {
   const current = circuitByUser.get(userKey);
   if (!current) return;
   current.consecutiveFailures = 0;
   if (current.openUntil <= nowMs()) {
     circuitByUser.delete(userKey);
+    const client = getRedis();
+    if (client) await client.del(circuitKey(userKey));
   } else {
     circuitByUser.set(userKey, current);
+    await writeSharedCircuit(userKey, current);
   }
 }
 
-export function registerSpotifyRequestFailure(userKey: string, endpoint: string): void {
+export async function registerSpotifyRequestFailure(
+  userKey: string,
+  endpoint: string
+): Promise<void> {
   const now = nowMs();
   const current = circuitByUser.get(userKey) || {
     consecutiveFailures: 0,
@@ -311,6 +370,7 @@ export function registerSpotifyRequestFailure(userKey: string, endpoint: string)
   }
 
   circuitByUser.set(userKey, current);
+  await writeSharedCircuit(userKey, current);
 }
 
 export function getSpotifyRateLimiterSnapshot() {

@@ -2,7 +2,8 @@ import { getDb } from "@/lib/db/client";
 import { artists, trackArtists } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
-import { getAppAccessToken } from "@/lib/spotify/tokens";
+import { spotifyFetch } from "@/lib/spotify/client";
+import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { upsertArtist } from "@/lib/db/queries";
 
 export const runtime = "nodejs";
@@ -34,57 +35,77 @@ function parseStoredGenres(raw: string | null | undefined) {
 }
 
 async function fetchArtistFromSpotify(artistId: string) {
+  const data = (await spotifyFetch<SpotifyArtistPayload>({
+    url: `https://api.spotify.com/v1/artists/${encodeURIComponent(artistId)}`,
+    userLevel: false,
+    priority: "background",
+    cacheTtlMs: 30_000,
+    dedupeWindowMs: 2_000,
+  })) as SpotifyArtistPayload | undefined;
+  if (!data) return null;
+  const name = typeof data?.name === "string" ? data.name.trim() : "";
+  if (!name) return null;
+  const genres = Array.isArray(data?.genres)
+    ? data.genres
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean)
+    : [];
+  const popularityRaw = data?.popularity;
+  const popularity =
+    typeof popularityRaw === "number" && Number.isFinite(popularityRaw)
+      ? Math.max(0, Math.min(100, Math.floor(popularityRaw)))
+      : null;
+  const followersRaw = data?.followers?.total;
+  const followersTotal =
+    typeof followersRaw === "number" && Number.isFinite(followersRaw)
+      ? Math.max(0, Math.floor(followersRaw))
+      : null;
+  const imageCandidate = Array.isArray(data?.images)
+    ? data.images.find(
+        (image): image is { url: string } => typeof image?.url === "string"
+      ) ?? null
+    : null;
+  const imageUrl = imageCandidate?.url ?? null;
+  return {
+    artistId:
+      typeof data?.id === "string" && data.id.trim() ? data.id : artistId,
+    name,
+    genres,
+    popularity,
+    followersTotal,
+    imageUrl,
+  };
+}
+
+function isRetryableFetchError(error: unknown) {
+  if (!(error instanceof SpotifyFetchError)) return false;
+  return (
+    error.status === 429 ||
+    error.status === 500 ||
+    error.status === 502 ||
+    error.status === 503 ||
+    error.status === 504
+  );
+}
+
+async function fetchArtistWithOneRetry(artistId: string) {
   try {
-    const token = await getAppAccessToken();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    return await fetchArtistFromSpotify(artistId);
+  } catch (error) {
+    if (!isRetryableFetchError(error)) return null;
+    await new Promise((resolve) => setTimeout(resolve, 400));
     try {
-      const res = await fetch(
-        `https://api.spotify.com/v1/artists/${encodeURIComponent(artistId)}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-          signal: controller.signal,
-        }
-      );
-      if (!res.ok) return null;
-      const data = (await res.json()) as SpotifyArtistPayload;
-      const name = typeof data?.name === "string" ? data.name.trim() : "";
-      if (!name) return null;
-      const genres = Array.isArray(data?.genres)
-        ? data.genres
-            .filter((value): value is string => typeof value === "string")
-            .map((value) => value.trim())
-            .filter(Boolean)
-        : [];
-      const popularityRaw = data?.popularity;
-      const popularity =
-        typeof popularityRaw === "number" && Number.isFinite(popularityRaw)
-          ? Math.max(0, Math.min(100, Math.floor(popularityRaw)))
-          : null;
-      const followersRaw = data?.followers?.total;
-      const followersTotal =
-        typeof followersRaw === "number" && Number.isFinite(followersRaw)
-          ? Math.max(0, Math.floor(followersRaw))
-          : null;
-      const imageCandidate = Array.isArray(data?.images)
-        ? data.images.find(
-            (image): image is { url: string } => typeof image?.url === "string"
-          ) ?? null
-        : null;
-      const imageUrl = imageCandidate?.url ?? null;
-      return {
-        artistId:
-          typeof data?.id === "string" && data.id.trim() ? data.id : artistId,
-        name,
-        genres,
-        popularity,
-        followersTotal,
-        imageUrl,
-      };
-    } finally {
-      clearTimeout(timeout);
+      return await fetchArtistFromSpotify(artistId);
+    } catch {
+      return null;
     }
+  }
+}
+
+async function enrichArtistIfNeeded(artistId: string) {
+  try {
+    return await fetchArtistWithOneRetry(artistId);
   } catch {
     return null;
   }
@@ -141,7 +162,7 @@ export async function GET(
     !row || genres.length === 0 || popularity === null || followersTotal === null;
 
   if (needsEnrichment) {
-    const live = await fetchArtistFromSpotify(artistId);
+    const live = await enrichArtistIfNeeded(artistId);
     if (live) {
       resolvedArtistId = live.artistId;
       name = live.name;

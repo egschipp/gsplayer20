@@ -38,7 +38,7 @@ export async function POST(req: Request) {
   });
   if (rl) return rl;
 
-  const lock = getPinLock(ip);
+  const lock = await getPinLock(ip);
   if (lock.locked) {
     return NextResponse.json(
       { error: "PIN_LOCKED", retryAfter: lock.retryAfterSec },
@@ -56,11 +56,11 @@ export async function POST(req: Request) {
   }
 
   if (!pin || pin !== expected) {
-    recordPinFailure(ip);
+    await recordPinFailure(ip);
     return NextResponse.json({ error: "INVALID_PIN" }, { status: 401 });
   }
 
-  clearPinLock(ip);
+  await clearPinLock(ip);
   const ua = req.headers.get("user-agent") || "";
   const payload = JSON.stringify({
     iat: Date.now(),

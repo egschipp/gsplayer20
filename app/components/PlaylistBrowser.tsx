@@ -1937,7 +1937,7 @@ export default function PlaylistBrowser() {
     stableTrackClearTimerRef.current = window.setTimeout(() => {
       setStableCurrentTrackId(null);
       stableTrackClearTimerRef.current = null;
-    }, 2200);
+    }, 12000);
     return () => {
       if (stableTrackClearTimerRef.current) {
         window.clearTimeout(stableTrackClearTimerRef.current);
@@ -3884,7 +3884,7 @@ export default function PlaylistBrowser() {
               itemData={{
                 items: tracks,
                 mode,
-                currentTrackId,
+                currentTrackId: stableCurrentTrackId,
                 activeTrackIndex: activeTrackIndexInRows,
                 openDetailFromRow,
                 handlePlayTrack,
@@ -3944,7 +3944,7 @@ export default function PlaylistBrowser() {
               }}
               itemData={{
                 items: localFilteredTrackItems,
-                currentTrackId,
+                currentTrackId: stableCurrentTrackId,
                 activeTrackIndex: activeTrackIndexInItems,
                 openDetailFromItem,
                 handlePlayTrack,
@@ -4520,7 +4520,7 @@ function AddToPlaylistMenu({
       </button>
       {open ? (
         <div
-          className="combo-list"
+          className="combo-list track-playlist-menu"
           role="menu"
           style={{ right: 0, left: "auto", width: "min(560px, calc(100vw - 32px))" }}
         >
@@ -4647,7 +4647,8 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
       .map((value) => value.trim())
       .filter(Boolean)[0] ?? "";
   const albumLine = String(track.albumName ?? "").trim();
-  const isPlaying = index === data.activeTrackIndex;
+  const isPlaying =
+    isCurrentTrackMatch(track, data.currentTrackId) || index === data.activeTrackIndex;
   const rowColumnsStyle = {
     ["--track-row-height" as const]: `${TRACK_ROW_HEIGHT}px`,
     ["--track-row-columns" as const]: isGrid
@@ -4844,7 +4845,8 @@ function TrackItemRenderer({
   data,
 }: ListChildComponentProps<TrackItemData>) {
   const track = data.items[index];
-  const isPlaying = index === data.activeTrackIndex;
+  const isPlaying =
+    isCurrentTrackMatch(track, data.currentTrackId) || index === data.activeTrackIndex;
   const coverUrl = track.album?.images?.[0]?.url ?? null;
   const artistNames = track.artists
     .map((artist) => artist?.name)

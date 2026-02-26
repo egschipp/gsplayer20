@@ -35,7 +35,6 @@ import {
 export const runtime = "nodejs";
 
 const CACHE_TTL_MS = 60_000;
-const STALE_CACHE_TTL_MS = 10 * 60_000;
 const DEFAULT_LIMIT = 20;
 const DEFAULT_SEED_COUNT_MAX = 5;
 const MAX_TUNING_KEYS = 12;
@@ -426,65 +425,33 @@ export async function POST(req: Request) {
 
   try {
     let marketUsed = marketInput.market;
-    let omitMarketParam = false;
     if (marketInput.fromToken) {
-      try {
-        const profile = await spotifyFetch<{ country?: string }>({
-          url: "https://api.spotify.com/v1/me",
-          userLevel: true,
+      const profile = await spotifyFetch<{ country?: string }>({
+        url: "https://api.spotify.com/v1/me",
+        userLevel: true,
+        correlationId,
+        priority: "default",
+        cacheTtlMs: 60_000,
+        dedupeWindowMs: 2_000,
+      });
+      const tokenCountry = String(profile?.country ?? "")
+        .trim()
+        .toUpperCase();
+      if (!MARKET_PATTERN.test(tokenCountry)) {
+        return errorResponse({
+          status: 400,
+          code: "MARKET_REQUIRED",
+          message:
+            "Geen market bepaald uit token. Geef market mee of log opnieuw in.",
           correlationId,
-          priority: "default",
-          cacheTtlMs: 60_000,
-          dedupeWindowMs: 2_000,
-        });
-        const tokenCountry = String(profile?.country ?? "")
-          .trim()
-          .toUpperCase();
-        if (MARKET_PATTERN.test(tokenCountry)) {
-          marketUsed = tokenCountry;
-        } else {
-          marketUsed = "from_token";
-          omitMarketParam = true;
-        }
-      } catch (error) {
-        if (error instanceof SpotifyFetchError) {
-          if (error.status === 401) {
-            return errorResponse({
-              status: 401,
-              code: "AUTH_REQUIRED",
-              message: "Log opnieuw in om recommendations te laden.",
-              correlationId,
-            });
-          }
-          if (error.status === 403) {
-            return errorResponse({
-              status: 403,
-              code: "FORBIDDEN",
-              message: "Onvoldoende rechten om recommendations te laden.",
-              correlationId,
-            });
-          }
-        }
-        marketUsed = "from_token";
-        omitMarketParam = true;
-        logEvent({
-          level: "warn",
-          event: "recommendations_market_resolution_fallback",
-          correlationId,
-          route: "/api/spotify/recommendations",
-          method: "POST",
-          appUserId,
-          data: {
-            reason: error instanceof SpotifyFetchError ? error.code : "UNKNOWN",
-          },
         });
       }
+      marketUsed = tokenCountry;
     }
 
     const tuningHash = createHash(stableStringify(tuningValidation.params)).slice(0, 24);
     const sortedSeeds = [...seedTrackIds].sort().join(",");
     const cacheKey = `rec:v1:u=${appUserId}:seeds=${sortedSeeds}:market=${marketUsed}:limit=${limit}:tuning=${tuningHash}:nonce=${seedNonce ?? ""}:sel=${selectionHash.slice(0, 16)}`;
-    const staleCacheKey = `rec:stale:v1:u=${appUserId}:sel=${selectionHash.slice(0, 24)}:market=${marketUsed}:limit=${limit}:tuning=${tuningHash}`;
     const cached = getCachedValue<RecommendationsSuccessResponse>(cacheKey);
     if (cached) {
       const payload: RecommendationsSuccessResponse = {
@@ -515,9 +482,7 @@ export async function POST(req: Request) {
         const params = new URLSearchParams();
         params.set("seed_tracks", seedTrackIds.join(","));
         params.set("limit", String(limit));
-        if (!omitMarketParam && marketUsed !== "from_token") {
-          params.set("market", marketUsed);
-        }
+        params.set("market", marketUsed);
         for (const [key, value] of Object.entries(tuningValidation.params)) {
           params.set(key, String(value));
         }
@@ -557,7 +522,6 @@ export async function POST(req: Request) {
         };
 
         setCachedValue(cacheKey, mapped, CACHE_TTL_MS);
-        setCachedValue(staleCacheKey, mapped, STALE_CACHE_TTL_MS);
         return mapped;
       }
     );
@@ -596,40 +560,6 @@ export async function POST(req: Request) {
 
     if (error instanceof SpotifyFetchError) {
       const mapped = mapSpotifyError(error, correlationId);
-      if (mapped.code === "SPOTIFY_UNAVAILABLE" || mapped.code === "RATE_LIMITED") {
-        const stale = getCachedValue<RecommendationsSuccessResponse>(staleCacheKey);
-        if (stale) {
-          const fallbackPayload: RecommendationsSuccessResponse = {
-            ...stale,
-            meta: {
-              ...stale.meta,
-              correlationId,
-              cache: {
-                hit: true,
-                ttlSeconds: Math.floor(STALE_CACHE_TTL_MS / 1000),
-              },
-            },
-          };
-          logEvent({
-            level: "warn",
-            event: "recommendations_stale_fallback_served",
-            correlationId,
-            route: "/api/spotify/recommendations",
-            method: "POST",
-            appUserId,
-            data: {
-              reason: mapped.code,
-              seedCount: seedTrackIds.length,
-              itemCount: fallbackPayload.items.length,
-            },
-          });
-          return jsonNoStore(fallbackPayload, 200, {
-            "x-correlation-id": correlationId,
-            "x-recommendations-cache": "stale",
-          });
-        }
-      }
-
       logEvent({
         level: mapped.status >= 500 ? "error" : "warn",
         event: "recommendations_request_failed",

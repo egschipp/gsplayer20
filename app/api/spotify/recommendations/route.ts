@@ -424,9 +424,6 @@ export async function POST(req: Request) {
     });
   }
 
-  const staleTuningHash = createHash(stableStringify(tuningValidation.params)).slice(0, 24);
-  const staleCacheKey = `rec:stale:v1:u=${appUserId}:sel=${selectionHash.slice(0, 24)}:market=${marketInput.market}:limit=${limit}:tuning=${staleTuningHash}`;
-
   try {
     let marketUsed = marketInput.market;
     let omitMarketParam = false;
@@ -484,10 +481,10 @@ export async function POST(req: Request) {
       }
     }
 
-    const tuningHash = staleTuningHash;
+    const tuningHash = createHash(stableStringify(tuningValidation.params)).slice(0, 24);
     const sortedSeeds = [...seedTrackIds].sort().join(",");
     const cacheKey = `rec:v1:u=${appUserId}:seeds=${sortedSeeds}:market=${marketUsed}:limit=${limit}:tuning=${tuningHash}:nonce=${seedNonce ?? ""}:sel=${selectionHash.slice(0, 16)}`;
-    const effectiveStaleCacheKey = `rec:stale:v1:u=${appUserId}:sel=${selectionHash.slice(0, 24)}:market=${marketUsed}:limit=${limit}:tuning=${tuningHash}`;
+    const staleCacheKey = `rec:stale:v1:u=${appUserId}:sel=${selectionHash.slice(0, 24)}:market=${marketUsed}:limit=${limit}:tuning=${tuningHash}`;
     const cached = getCachedValue<RecommendationsSuccessResponse>(cacheKey);
     if (cached) {
       const payload: RecommendationsSuccessResponse = {
@@ -560,7 +557,7 @@ export async function POST(req: Request) {
         };
 
         setCachedValue(cacheKey, mapped, CACHE_TTL_MS);
-        setCachedValue(effectiveStaleCacheKey, mapped, STALE_CACHE_TTL_MS);
+        setCachedValue(staleCacheKey, mapped, STALE_CACHE_TTL_MS);
         return mapped;
       }
     );

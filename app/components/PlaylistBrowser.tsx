@@ -52,11 +52,28 @@ function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
 function normalizeSpotifyTrackId(value: string | null | undefined) {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
+  if (/^[0-9A-Za-z]{22}$/.test(raw)) return raw;
   if (raw.startsWith("spotify:track:")) {
-    const id = raw.split(":").pop();
-    return id ? id.trim() || null : null;
+    const segment = raw.split(":").pop() ?? "";
+    const id = segment.split("?")[0]?.trim() ?? "";
+    return /^[0-9A-Za-z]{22}$/.test(id) ? id : null;
   }
-  return raw;
+  if (
+    raw.includes("open.spotify.com/track/") ||
+    raw.includes("api.spotify.com/v1/tracks/")
+  ) {
+    try {
+      const url = new URL(raw);
+      const segment = (url.pathname.split("/").filter(Boolean).pop() ?? "")
+        .split("?")[0]
+        .trim();
+      return /^[0-9A-Za-z]{22}$/.test(segment) ? segment : null;
+    } catch {
+      return null;
+    }
+  }
+  const embedded = raw.match(/([0-9A-Za-z]{22})/);
+  return embedded?.[1] ?? null;
 }
 
 function isCurrentTrackMatch(
@@ -710,11 +727,7 @@ function mergeTrackRows(existing: TrackRow, incoming: TrackRow): TrackRow {
 function normalizeTrackIdentity(value: string | null | undefined) {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
-  if (raw.startsWith("spotify:track:")) {
-    const id = raw.split(":").pop();
-    return id ? id.trim() || null : null;
-  }
-  return raw;
+  return normalizeSpotifyTrackId(raw);
 }
 
 function resolveTrackRowCanonicalId(row: TrackRow) {

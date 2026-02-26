@@ -41,6 +41,7 @@ const REMOTE_TAKEOVER_MIN_SAMPLES = 2;
 const PLAYBACK_RESTRICTION_COOLDOWN_MS = 4_000;
 const PLAYER_TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
 const PLAYER_LIKED_PLAYLIST_ID = "liked";
+const CONNECT_DOCK_PIN_KEY = "gs_connect_dock_pinned_v1";
 
 type PlayerPlaylistOption = {
   id: string;
@@ -164,27 +165,39 @@ function normalizePlaybackTrackId(value: unknown) {
   if (typeof value !== "string") return null;
   const raw = value.trim();
   if (!raw) return null;
+  if (/^[0-9A-Za-z]{22}$/.test(raw)) return raw;
   if (raw.startsWith("spotify:track:")) {
-    const id = raw.split(":").pop();
-    return id ? id.trim() || null : null;
+    const segment = raw.split(":").pop() ?? "";
+    const id = segment.split("?")[0]?.trim() ?? "";
+    return /^[0-9A-Za-z]{22}$/.test(id) ? id : null;
   }
-  if (raw.includes("open.spotify.com/track/")) {
+  if (
+    raw.includes("open.spotify.com/track/") ||
+    raw.includes("api.spotify.com/v1/tracks/")
+  ) {
     try {
       const url = new URL(raw);
-      const segment = url.pathname.split("/").filter(Boolean).pop() ?? "";
-      return segment || null;
+      const segment = (url.pathname.split("/").filter(Boolean).pop() ?? "")
+        .split("?")[0]
+        .trim();
+      return /^[0-9A-Za-z]{22}$/.test(segment) ? segment : null;
     } catch {
       return null;
     }
   }
-  return raw;
+  const embedded = raw.match(/([0-9A-Za-z]{22})/);
+  return embedded?.[1] ?? null;
 }
 
 function resolvePlaybackTrackId(item: any) {
   return (
     normalizePlaybackTrackId(item?.id) ??
     normalizePlaybackTrackId(item?.uri) ??
-    normalizePlaybackTrackId(item?.linked_from?.id)
+    normalizePlaybackTrackId(item?.href) ??
+    normalizePlaybackTrackId(item?.linked_from?.id) ??
+    normalizePlaybackTrackId(item?.linked_from?.uri) ??
+    normalizePlaybackTrackId(item?.linked_from?.href) ??
+    normalizePlaybackTrackId(item?.external_urls?.spotify)
   );
 }
 
@@ -330,6 +343,9 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [devicesLoaded, setDevicesLoaded] = useState(false);
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
   const [connectSelectorOpen, setConnectSelectorOpen] = useState(false);
+  const [connectDockPinned, setConnectDockPinned] = useState(false);
+  const [connectDockHovered, setConnectDockHovered] = useState(false);
+  const [connectDockManualOpen, setConnectDockManualOpen] = useState(false);
   const lastDeviceSelectRef = useRef(0);
   const pendingDeviceIdRef = useRef<string | null>(null);
   const preferSdkDeviceRef = useRef(true);
@@ -388,6 +404,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const queuePosRef = useRef(0);
   const queueModeRef = useRef<"queue" | "context" | null>(null);
   const shuffleInitDoneRef = useRef(false);
+  const connectDockOpenDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectDockCloseDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [deviceReady, setDeviceReady] = useState(false);
   const { enqueue: enqueueCommand, busy: commandBusy } = usePlaybackCommandQueue();
   const lastCommandAtRef = useRef(0);
@@ -753,10 +771,57 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       icon: resolveDeviceTypeIcon(type),
     };
   }, [activeDeviceId, activeDeviceName, deviceId, devices]);
+  const connectDockOpen =
+    connectDockPinned ||
+    connectDockManualOpen ||
+    connectDockHovered ||
+    connectSelectorOpen ||
+    deviceMenuOpen;
 
   useEffect(() => {
     playerStateRef.current = playerState;
   }, [playerState]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem(CONNECT_DOCK_PIN_KEY);
+      if (stored === "1") {
+        setConnectDockPinned(true);
+      } else if (stored === "0") {
+        setConnectDockPinned(false);
+      }
+    } catch {
+      // ignore storage issues
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(CONNECT_DOCK_PIN_KEY, connectDockPinned ? "1" : "0");
+    } catch {
+      // ignore storage issues
+    }
+  }, [connectDockPinned]);
+
+  useEffect(() => {
+    if (!connectDockOpen) {
+      setConnectSelectorOpen(false);
+      setDeviceMenuOpen(false);
+    }
+  }, [connectDockOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (connectDockOpenDelayTimerRef.current) {
+        clearTimeout(connectDockOpenDelayTimerRef.current);
+      }
+      if (connectDockCloseDelayTimerRef.current) {
+        clearTimeout(connectDockCloseDelayTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     activeDeviceNameRef.current = activeDeviceName;
@@ -2456,9 +2521,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     }
 
     setDevicesLoaded(true);
-    if (!data && !playbackState?.device) {
-      return;
-    }
     const list = Array.isArray(data?.devices) ? data.devices : [];
     const mergedList = [...list];
     if (playbackState?.device) {
@@ -2582,6 +2644,19 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     spotifyApiFetch,
   ]);
 
+  useEffect(() => {
+    if (!accessToken) return;
+    void refreshDevices(true);
+  }, [accessToken, refreshDevices]);
+
+  useEffect(() => {
+    if (!connectDockOpen) return;
+    const timer = window.setInterval(() => {
+      void refreshDevices(false);
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [connectDockOpen, refreshDevices]);
+
   const startLocalWebPlayerFromConnect = useCallback(() => {
     preferSdkDeviceRef.current = true;
     setSdkLifecycle("connecting");
@@ -2590,6 +2665,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     window.setTimeout(() => refreshDevices(true), 900);
     window.setTimeout(() => refreshDevices(true), 2200);
   }, [kickstartLocalPlayer, refreshDevices]);
+
+  useEffect(() => {
+    if (!connectDockOpen) return;
+    refreshDevices(true);
+  }, [connectDockOpen, refreshDevices]);
 
   useEffect(() => {
     if (!canUseSdk || !accessToken) return;
@@ -4391,7 +4471,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 <div
                   className="combo-list track-playlist-menu"
                   role="menu"
-                  style={{ right: 0, left: "auto", width: 280 }}
+                  style={{ right: 0, left: "auto", width: "min(560px, calc(100vw - 32px))" }}
                 >
                   {trackPlaylistLoading ? (
                     <div className="combo-empty">Playlists laden...</div>
@@ -4408,7 +4488,12 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                           key={option.id}
                           role="menuitem"
                           className="combo-item"
-                          style={{ gap: 10, justifyContent: "flex-start" }}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            justifyContent: "flex-start",
+                          }}
                         >
                           <input
                             type="checkbox"
@@ -4428,7 +4513,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                             }}
                             onClick={(event) => event.stopPropagation()}
                           />
-                          <span>{option.name}</span>
+                          <span style={{ whiteSpace: "nowrap" }}>{option.name}</span>
                         </label>
                       );
                     })
@@ -4678,7 +4763,61 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           </div>
         </div>
       </div>
-      <div className="player-connect">
+      <div
+        className="player-connect"
+        data-open={connectDockOpen ? "true" : "false"}
+        onMouseEnter={() => {
+          if (connectDockCloseDelayTimerRef.current) {
+            clearTimeout(connectDockCloseDelayTimerRef.current);
+            connectDockCloseDelayTimerRef.current = null;
+          }
+          if (connectDockOpenDelayTimerRef.current) {
+            clearTimeout(connectDockOpenDelayTimerRef.current);
+          }
+          connectDockOpenDelayTimerRef.current = setTimeout(() => {
+            setConnectDockHovered(true);
+            connectDockOpenDelayTimerRef.current = null;
+          }, 45);
+        }}
+        onMouseLeave={() => {
+          if (connectDockOpenDelayTimerRef.current) {
+            clearTimeout(connectDockOpenDelayTimerRef.current);
+            connectDockOpenDelayTimerRef.current = null;
+          }
+          if (connectDockCloseDelayTimerRef.current) {
+            clearTimeout(connectDockCloseDelayTimerRef.current);
+          }
+          connectDockCloseDelayTimerRef.current = setTimeout(() => {
+            if (!connectSelectorOpen && !deviceMenuOpen) {
+              setConnectDockHovered(false);
+            }
+            connectDockCloseDelayTimerRef.current = null;
+          }, 190);
+        }}
+        onFocusCapture={() => {
+          if (connectDockCloseDelayTimerRef.current) {
+            clearTimeout(connectDockCloseDelayTimerRef.current);
+            connectDockCloseDelayTimerRef.current = null;
+          }
+          setConnectDockHovered(true);
+        }}
+        onBlurCapture={(event) => {
+          const nextTarget = event.relatedTarget;
+          if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+            return;
+          }
+          if (connectSelectorOpen || deviceMenuOpen) return;
+          if (connectDockCloseDelayTimerRef.current) {
+            clearTimeout(connectDockCloseDelayTimerRef.current);
+          }
+          connectDockCloseDelayTimerRef.current = setTimeout(() => {
+            if (!connectSelectorOpen && !deviceMenuOpen) {
+              setConnectDockHovered(false);
+            }
+            connectDockCloseDelayTimerRef.current = null;
+          }, 190);
+        }}
+      >
         <div className="player-device-row">
           <span>Spotify Connect</span>
           <span className="player-connect-row-actions">
@@ -4695,28 +4834,44 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             ) : null}
             <button
               type="button"
-              className="detail-btn"
-              aria-label={connectSelectorOpen ? "Verberg apparaatselectie" : "Toon apparaatselectie"}
-              title={connectSelectorOpen ? "Verberg apparaatselectie" : "Toon apparaatselectie"}
-              aria-expanded={connectSelectorOpen}
+              className="player-library-dock-chevron-btn"
+              aria-label={connectDockOpen ? "Verberg apparaatselectie" : "Toon apparaatselectie"}
+              title={connectDockOpen ? "Verberg apparaatselectie" : "Toon apparaatselectie"}
+              aria-expanded={connectDockOpen}
               onClick={() => {
-                setConnectSelectorOpen((prev) => {
+                setConnectDockManualOpen((prev) => {
                   const next = !prev;
+                  setConnectSelectorOpen(next);
                   if (!next) {
                     setDeviceMenuOpen(false);
-                  } else {
-                    refreshDevices(true);
                   }
                   return next;
                 });
               }}
             >
               <span
-                className={`player-library-dock-chevron${connectSelectorOpen ? " open" : ""}`}
+                className={`player-library-dock-chevron${connectDockOpen ? " open" : ""}`}
                 aria-hidden="true"
               >
                 ⌄
               </span>
+            </button>
+            <button
+              type="button"
+              className={`player-library-dock-pin${connectDockPinned ? " active" : ""}`}
+              aria-pressed={connectDockPinned}
+              aria-label={connectDockPinned ? "Connect-balk losmaken" : "Connect-balk vastzetten"}
+              title={connectDockPinned ? "Connect-balk losmaken" : "Connect-balk vastzetten"}
+              onClick={() => setConnectDockPinned((prev) => !prev)}
+            >
+              <svg
+                className="player-library-dock-pin-icon"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M14 3l7 7-2 2-2-2-3 3v4l-2 2-2-6-3-3-2 2-2-2 7-7 2 2 3-3z" />
+              </svg>
             </button>
           </span>
         </div>
@@ -4728,7 +4883,10 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             {activeConnectDevice.name}
           </span>
         </div>
-        {connectSelectorOpen ? (
+        <div
+          className={`player-library-dock-body${connectDockOpen ? " open" : ""}`}
+          aria-hidden={!connectDockOpen}
+        >
           <div className="player-device-select">
             <div className="player-device-select-row">
               <div
@@ -4818,7 +4976,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               </button>
             </div>
           </div>
-        ) : null}
+        </div>
         {sdkSupported &&
         !sdkReadyState &&
         (!activeDeviceId || activeDeviceId === sdkDeviceIdRef.current) ? (

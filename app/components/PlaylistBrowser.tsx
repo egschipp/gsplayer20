@@ -5,6 +5,8 @@ import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState }
 import { createPortal } from "react-dom";
 import { FixedSizeList as List, type ListChildComponentProps } from "react-window";
 import { usePlayer } from "./player/PlayerProvider";
+import RecommendationsPanel from "./RecommendationsPanel";
+import SelectedListPanel, { type SelectedTrackListItem } from "./SelectedListPanel";
 import ChatGptButton from "./playlist/ChatGptButton";
 import PlaylistChips from "./playlist/PlaylistChips";
 import {
@@ -37,6 +39,7 @@ import {
   TRACK_GRID_COLUMNS_FULL,
   TRACK_ROW_HEIGHT,
 } from "@/lib/ui/trackLayout";
+import type { RecommendationItem } from "@/lib/recommendations/types";
 
 function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   if (!track) return null;
@@ -164,6 +167,70 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
         : 0,
     artworkUrl,
     playlists,
+  };
+}
+
+function createSelectedTrackListItem(track: TrackRow | TrackItem): SelectedTrackListItem | null {
+  const id = resolveTrackId(track);
+  if (!id) return null;
+
+  const name = String(track.name ?? "Onbekend").trim() || "Onbekend";
+  const artists =
+    "artists" in track
+      ? Array.isArray(track.artists)
+        ? dedupeArtistText(
+            track.artists.map((artist) => artist?.name).filter(Boolean).join(", ")
+          ) || "Onbekende artiest"
+        : dedupeArtistText(track.artists || "") || "Onbekende artiest"
+      : "Onbekende artiest";
+
+  const imageUrl =
+    "album" in track
+      ? track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null
+      : track.coverUrl ?? track.albumImageUrl ?? null;
+  const albumName =
+    "album" in track
+      ? track.album?.name ?? null
+      : track.albumName ?? null;
+
+  return {
+    id,
+    name,
+    artists,
+    albumName,
+    imageUrl,
+    durationMs:
+      typeof track.durationMs === "number" && Number.isFinite(track.durationMs)
+        ? track.durationMs
+        : null,
+  };
+}
+
+function recommendationToTrackItem(item: RecommendationItem): TrackItem {
+  return {
+    id: item.id,
+    trackId: item.id,
+    name: item.name,
+    artists: item.artists,
+    album: {
+      id: item.album.id,
+      name: item.album.name,
+      images: item.album.images
+        .map((image) =>
+          typeof image.url === "string" && image.url.trim() ? { url: image.url } : null
+        )
+        .filter((image): image is { url: string } => Boolean(image)),
+      release_date: null,
+    },
+    releaseYear: null,
+    durationMs: item.durationMs,
+    explicit: item.explicit ? 1 : 0,
+    isLocal: 0,
+    restrictionsReason: null,
+    linkedFromTrackId: null,
+    popularity: item.popularity,
+    albumImageUrl: item.album.images[0]?.url ?? null,
+    playlists: [],
   };
 }
 
@@ -912,6 +979,11 @@ export default function PlaylistBrowser() {
   const [selectedArtistId, setSelectedArtistId] = useState<string>("");
   const [selectedTrackId, setSelectedTrackId] = useState<string>("");
   const [selectedAlbumId, setSelectedAlbumId] = useState<string>("");
+  const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
+  const [selectedTrackMetaById, setSelectedTrackMetaById] = useState<
+    Record<string, SelectedTrackListItem>
+  >({});
+  const [selectedListCollapsed, setSelectedListCollapsed] = useState(false);
   const [query, setQuery] = useState<string>("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -959,6 +1031,13 @@ export default function PlaylistBrowser() {
   const [pendingTracksContextKey, setPendingTracksContextKey] = useState<string | null>(
     null
   );
+  const recommendationsEnabled =
+    String(process.env.NEXT_PUBLIC_FEATURE_RECOMMENDATIONS ?? "")
+      .trim()
+      .toLowerCase() !== "0" &&
+    String(process.env.NEXT_PUBLIC_FEATURE_RECOMMENDATIONS ?? "")
+      .trim()
+      .toLowerCase() !== "false";
   const [likedRefreshNonce, setLikedRefreshNonce] = useState(0);
   const [cacheHydrated, setCacheHydrated] = useState(false);
   const hasCachedPlaylistsRef = useRef(false);
@@ -3123,6 +3202,68 @@ export default function PlaylistBrowser() {
     }
   }
 
+  const selectedTrackIdSet = useMemo(() => new Set(selectedTrackIds), [selectedTrackIds]);
+
+  const toggleTrackSelection = useCallback((track: TrackRow | TrackItem) => {
+    const trackId = resolveTrackId(track);
+    if (!trackId) return;
+    const selectedItem = createSelectedTrackListItem(track);
+    setSelectedTrackIds((prev) => {
+      if (prev.includes(trackId)) {
+        return prev.filter((id) => id !== trackId);
+      }
+      return [...prev, trackId];
+    });
+    if (selectedItem) {
+      setSelectedTrackMetaById((prev) => {
+        if (prev[trackId]) return prev;
+        return { ...prev, [trackId]: selectedItem };
+      });
+    }
+  }, []);
+
+  const removeSelectedTrackId = useCallback((trackId: string) => {
+    setSelectedTrackIds((prev) => prev.filter((id) => id !== trackId));
+    setSelectedTrackMetaById((prev) => {
+      if (!prev[trackId]) return prev;
+      const next = { ...prev };
+      delete next[trackId];
+      return next;
+    });
+  }, []);
+
+  const clearSelectedTrackIds = useCallback(() => {
+    setSelectedTrackIds([]);
+    setSelectedTrackMetaById({});
+  }, []);
+
+  useEffect(() => {
+    clearSelectedTrackIds();
+    setSelectedListCollapsed(false);
+  }, [clearSelectedTrackIds, tracksContextKey]);
+
+  const selectedTrackListItems = useMemo(() => {
+    return selectedTrackIds
+      .map((id) => selectedTrackMetaById[id] ?? null)
+      .filter((item): item is SelectedTrackListItem => Boolean(item));
+  }, [selectedTrackIds, selectedTrackMetaById]);
+
+  const selectedSeedLabels = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const item of selectedTrackListItems) {
+      out[item.id] = item.name;
+    }
+    return out;
+  }, [selectedTrackListItems]);
+
+  const handlePlayRecommendation = (item: RecommendationItem) => {
+    void handlePlayTrack(recommendationToTrackItem(item));
+  };
+
+  const handleQueueRecommendation = (item: RecommendationItem) => {
+    handleAddTrackToQueue(recommendationToTrackItem(item));
+  };
+
   const hasTrackContext =
     mode === "tracks"
       ? Boolean(selectedTrackId)
@@ -3596,8 +3737,10 @@ export default function PlaylistBrowser() {
                 items: tracks,
                 mode,
                 currentTrackId,
+                selectedTrackIdSet,
                 openDetailFromRow,
                 handlePlayTrack,
+                toggleTrackSelection,
                 addTrackToQueue: handleAddTrackToQueue,
                 addTrackToPlaylist: handleAddTrackToPlaylist,
                 selectPlaylistInMyMusic,
@@ -3653,8 +3796,10 @@ export default function PlaylistBrowser() {
               itemData={{
                 items: localFilteredTrackItems,
                 currentTrackId,
+                selectedTrackIdSet,
                 openDetailFromItem,
                 handlePlayTrack,
+                toggleTrackSelection,
                 addTrackToQueue: handleAddTrackToQueue,
                 addTrackToPlaylist: handleAddTrackToPlaylist,
                 selectPlaylistInMyMusic,
@@ -3683,6 +3828,25 @@ export default function PlaylistBrowser() {
           <span className="text-body">Tracks laden...</span>
         ) : null}
       </div>
+
+      {recommendationsEnabled ? (
+        <div className="recommendations-stack">
+          <SelectedListPanel
+            items={selectedTrackListItems}
+            collapsed={selectedListCollapsed}
+            onToggleCollapsed={() => setSelectedListCollapsed((prev) => !prev)}
+            onRemove={removeSelectedTrackId}
+            onClear={clearSelectedTrackIds}
+          />
+          <RecommendationsPanel
+            enabled={recommendationsEnabled}
+            selectedTrackIds={selectedTrackIds}
+            seedLabelByTrackId={selectedSeedLabels}
+            onPlayTrack={handlePlayRecommendation}
+            onQueueTrack={handleQueueRecommendation}
+          />
+        </div>
+      ) : null}
 
       {selectedTrackDetail && !selectedArtistDetail ? (
         <div
@@ -4214,6 +4378,37 @@ type AddToQueueButtonProps = {
   onAdd: (track: TrackRow | TrackItem) => void;
 };
 
+type TrackSelectButtonProps = {
+  track: TrackRow | TrackItem;
+  selectedTrackIds: Set<string>;
+  onToggle: (track: TrackRow | TrackItem) => void;
+};
+
+function TrackSelectButton({
+  track,
+  selectedTrackIds,
+  onToggle,
+}: TrackSelectButtonProps) {
+  const trackId = resolveTrackId(track);
+  const selected = Boolean(trackId && selectedTrackIds.has(trackId));
+  return (
+    <button
+      type="button"
+      className={`queue-row-btn track-select-btn${selected ? " selected" : ""}`}
+      aria-label={selected ? "Track uit selectie verwijderen" : "Track selecteren"}
+      title={selected ? "Uit selectie verwijderen" : "Selecteren"}
+      disabled={!trackId}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (!trackId) return;
+        onToggle(track);
+      }}
+    >
+      {selected ? "✓" : "+"}
+    </button>
+  );
+}
+
 function AddToQueueButton({ track, onAdd }: AddToQueueButtonProps) {
   const trackId = resolveTrackId(track);
   return (
@@ -4246,8 +4441,10 @@ type TrackRowData = {
   items: TrackRow[];
   mode: Mode;
   currentTrackId: string | null;
+  selectedTrackIdSet: Set<string>;
   openDetailFromRow: (track: TrackRow, trigger?: HTMLElement | null) => void;
   handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
+  toggleTrackSelection: (track: TrackRow | TrackItem) => void;
   addTrackToQueue: (track: TrackRow | TrackItem) => void;
   addTrackToPlaylist: (track: TrackRow | TrackItem, target: PlaylistOption) => Promise<void>;
   selectPlaylistInMyMusic: (playlistId: string) => void;
@@ -4376,6 +4573,11 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
           <div className="text-subtle track-col-duration">{formatDuration(track.durationMs)}</div>
         ) : null}
         <div className="track-col-actions track-actions-group">
+          <TrackSelectButton
+            track={track}
+            selectedTrackIds={data.selectedTrackIdSet}
+            onToggle={data.toggleTrackSelection}
+          />
           <AddToQueueButton track={track} onAdd={data.addTrackToQueue} />
           <AddToPlaylistMenu
             track={track}
@@ -4435,8 +4637,10 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
 type TrackItemData = {
   items: TrackItem[];
   currentTrackId: string | null;
+  selectedTrackIdSet: Set<string>;
   openDetailFromItem: (track: TrackItem, trigger?: HTMLElement | null) => void;
   handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
+  toggleTrackSelection: (track: TrackRow | TrackItem) => void;
   addTrackToQueue: (track: TrackRow | TrackItem) => void;
   addTrackToPlaylist: (track: TrackRow | TrackItem, target: PlaylistOption) => Promise<void>;
   selectPlaylistInMyMusic: (playlistId: string) => void;
@@ -4566,6 +4770,11 @@ function TrackItemRenderer({
         </div>
         <div className="text-subtle track-col-duration">{formatDuration(track.durationMs)}</div>
         <div className="track-col-actions track-actions-group">
+          <TrackSelectButton
+            track={track}
+            selectedTrackIds={data.selectedTrackIdSet}
+            onToggle={data.toggleTrackSelection}
+          />
           <AddToQueueButton track={track} onAdd={data.addTrackToQueue} />
           <AddToPlaylistMenu
             track={track}

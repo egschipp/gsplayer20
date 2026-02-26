@@ -3123,7 +3123,10 @@ export default function PlaylistBrowser() {
     return { uris, byId: new Set(tracks.map((t) => t.trackId || "")) };
   }
 
-  async function handlePlayTrack(track: TrackRow | TrackItem | null | undefined) {
+  async function handlePlayTrack(
+    track: TrackRow | TrackItem | null | undefined,
+    rowIndex?: number
+  ) {
     if (!track) return;
     if (!playerApi) {
       setError("Spotify player is nog niet klaar. Probeer het over een paar seconden opnieuw.");
@@ -3149,8 +3152,15 @@ export default function PlaylistBrowser() {
         ) {
           const playbackQueue = buildQueue();
           const targetUri = `spotify:track:${trackId}`;
+          const offsetPosition =
+            typeof rowIndex === "number" &&
+            Number.isFinite(rowIndex) &&
+            rowIndex >= 0 &&
+            rowIndex < playbackQueue.uris.length
+              ? Math.floor(rowIndex)
+              : null;
           if (playbackQueue.uris.length && playbackQueue.byId.has(trackId)) {
-            await playerApi.playQueue(playbackQueue.uris, targetUri);
+            await playerApi.playQueue(playbackQueue.uris, targetUri, offsetPosition);
           } else {
             await playerApi.playQueue([targetUri], targetUri, 0);
           }
@@ -3189,10 +3199,18 @@ export default function PlaylistBrowser() {
         await playerApi.playQueue([targetUri], targetUri, 0);
         return;
       }
-      const offsetPosition =
-        "position" in track && typeof track.position === "number"
-          ? track.position
+      const explicitRowOffset =
+        typeof rowIndex === "number" &&
+        Number.isFinite(rowIndex) &&
+        rowIndex >= 0 &&
+        rowIndex < playbackQueue.uris.length
+          ? Math.floor(rowIndex)
           : null;
+      const offsetPosition =
+        explicitRowOffset ??
+        ("position" in track && typeof track.position === "number"
+          ? track.position
+          : null);
       await playerApi.playQueue(playbackQueue.uris, targetUri, offsetPosition);
     } catch (error) {
       const message = String(error).toLowerCase();
@@ -4409,7 +4427,10 @@ type TrackRowData = {
   mode: Mode;
   currentTrackId: string | null;
   openDetailFromRow: (track: TrackRow, trigger?: HTMLElement | null) => void;
-  handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
+  handlePlayTrack: (
+    track: TrackRow | TrackItem | null | undefined,
+    rowIndex?: number
+  ) => Promise<void>;
   addTrackToQueue: (track: TrackRow | TrackItem) => void;
   applyTrackPlaylistChanges: (
     track: TrackRow | TrackItem,
@@ -4473,7 +4494,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             aria-label="Track afspelen"
             title="Afspelen"
             disabled={!track.trackId}
-            onClick={() => data.handlePlayTrack(track)}
+            onClick={() => data.handlePlayTrack(track, index)}
           >
             ▶
           </button>
@@ -4606,7 +4627,10 @@ type TrackItemData = {
   items: TrackItem[];
   currentTrackId: string | null;
   openDetailFromItem: (track: TrackItem, trigger?: HTMLElement | null) => void;
-  handlePlayTrack: (track: TrackRow | TrackItem | null | undefined) => Promise<void>;
+  handlePlayTrack: (
+    track: TrackRow | TrackItem | null | undefined,
+    rowIndex?: number
+  ) => Promise<void>;
   addTrackToQueue: (track: TrackRow | TrackItem) => void;
   applyTrackPlaylistChanges: (
     track: TrackRow | TrackItem,
@@ -4677,7 +4701,7 @@ function TrackItemRenderer({
             className="play-btn"
             aria-label="Track afspelen"
             title="Afspelen"
-            onClick={() => data.handlePlayTrack(track)}
+            onClick={() => data.handlePlayTrack(track, index)}
           >
             ▶
           </button>

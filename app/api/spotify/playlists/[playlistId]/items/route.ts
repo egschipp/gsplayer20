@@ -422,6 +422,30 @@ export async function POST(
       body: { uris: [`spotify:track:${trackId}`] },
       userLevel: true,
     });
+    try {
+      const db = getDb();
+      const maxPosRow = await db
+        .select({ maxPosition: sql<number>`max(${playlistItems.position})` })
+        .from(playlistItems)
+        .where(eq(playlistItems.playlistId, playlistId))
+        .get();
+      const nextPosition =
+        typeof maxPosRow?.maxPosition === "number" && Number.isFinite(maxPosRow.maxPosition)
+          ? Math.max(0, Math.floor(maxPosRow.maxPosition) + 1)
+          : 0;
+      await db.insert(playlistItems).values({
+        playlistId,
+        itemId: `manual:${Date.now()}:${Math.random().toString(36).slice(2, 9)}`,
+        trackId,
+        addedAt: Date.now(),
+        position: nextPosition,
+        addedBySpotifyUserId: null,
+        snapshotIdAtSync: null,
+        syncRunId: "manual",
+      });
+    } catch {
+      // ignore local db write errors; Spotify mutation already succeeded
+    }
     return jsonNoStore({ playlistId, trackId, added: true });
   } catch (error) {
     if (error instanceof SpotifyFetchError) {
@@ -472,6 +496,19 @@ export async function DELETE(
       body: { tracks: [{ uri: `spotify:track:${trackId}` }] },
       userLevel: true,
     });
+    try {
+      const db = getDb();
+      await db
+        .delete(playlistItems)
+        .where(
+          and(
+            eq(playlistItems.playlistId, playlistId),
+            eq(playlistItems.trackId, trackId)
+          )
+        );
+    } catch {
+      // ignore local db write errors; Spotify mutation already succeeded
+    }
     return jsonNoStore({ playlistId, trackId, removed: true });
   } catch (error) {
     if (error instanceof SpotifyFetchError) {

@@ -1,12 +1,60 @@
 import { getDb } from "@/lib/db/client";
-import { userSavedTracks, tracks, syncState, trackArtists, artists } from "@/lib/db/schema";
-import { and, desc, eq, lt, or, sql } from "drizzle-orm";
+import {
+  userSavedTracks,
+  tracks,
+  syncState,
+  trackArtists,
+  artists,
+  playlistItems,
+  playlists,
+  userPlaylists,
+} from "@/lib/db/schema";
+import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { encodeCursor, tryDecodeCursor } from "@/lib/spotify/cursor";
 import { rateLimitResponse, requireAppUser, jsonNoStore, jsonPrivateCache } from "@/lib/api/guards";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 
 export const runtime = "nodejs";
+
+async function fetchPlaylistsByTrack(
+  appUserId: string,
+  trackIds: string[]
+): Promise<Map<string, { id: string; name: string }[]>> {
+  const cleaned = Array.from(
+    new Set(trackIds.map((id) => String(id ?? "").trim()).filter(Boolean))
+  );
+  if (!cleaned.length) return new Map();
+
+  const db = getDb();
+  const rows = await db
+    .select({
+      trackId: playlistItems.trackId,
+      playlistId: playlists.playlistId,
+      playlistName: playlists.name,
+    })
+    .from(playlistItems)
+    .innerJoin(playlists, eq(playlists.playlistId, playlistItems.playlistId))
+    .innerJoin(
+      userPlaylists,
+      and(
+        eq(userPlaylists.playlistId, playlists.playlistId),
+        eq(userPlaylists.userId, appUserId)
+      )
+    )
+    .where(inArray(playlistItems.trackId, cleaned));
+
+  const map = new Map<string, { id: string; name: string }[]>();
+  for (const row of rows) {
+    if (!row.trackId || !row.playlistId) continue;
+    const list = map.get(row.trackId) ?? [];
+    if (!list.some((item) => item.id === row.playlistId)) {
+      list.push({ id: row.playlistId, name: row.playlistName ?? "" });
+    }
+    map.set(row.trackId, list);
+  }
+  return map;
+}
 
 export async function GET(req: Request) {
   const { session, response } = await requireAppUser();
@@ -114,10 +162,31 @@ export async function GET(req: Request) {
         })
         .filter(Boolean);
 
+      const trackIds = mapped
+        .map((item) => String(item?.trackId ?? "").trim())
+        .filter(Boolean);
+      const playlistsByTrack = await fetchPlaylistsByTrack(
+        session.appUserId as string,
+        trackIds
+      );
+
       const nextCursor = data?.next ? String(offset + items.length) : null;
 
       return jsonNoStore({
-        items: mapped,
+        items: mapped.map((item) => ({
+          ...item,
+          playlists: [
+            {
+              id: "liked",
+              name: "Liked Songs",
+              spotifyUrl: "https://open.spotify.com/collection/tracks",
+            },
+            ...((playlistsByTrack.get(String(item?.trackId ?? "")) ?? []).map((pl) => ({
+              ...pl,
+              spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
+            })) as Array<{ id: string; name: string; spotifyUrl: string }>),
+          ],
+        })),
         nextCursor,
         totalCount:
           typeof data?.total === "number" && Number.isFinite(data.total)
@@ -227,6 +296,12 @@ export async function GET(req: Request) {
     ? Math.floor((Date.now() - lastSuccessfulAt) / 1000)
     : null;
 
+  const trackIds = rows.map((row) => row.trackId).filter(Boolean);
+  const playlistsByTrack = await fetchPlaylistsByTrack(
+    session.appUserId as string,
+    trackIds
+  );
+
   return jsonPrivateCache({
     items: rows.map((row) => ({
       ...row,
@@ -237,6 +312,10 @@ export async function GET(req: Request) {
           name: "Liked Songs",
           spotifyUrl: "https://open.spotify.com/collection/tracks",
         },
+        ...((playlistsByTrack.get(row.trackId) ?? []).map((pl) => ({
+          ...pl,
+          spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
+        })) as Array<{ id: string; name: string; spotifyUrl: string }>),
       ],
     })),
     nextCursor,

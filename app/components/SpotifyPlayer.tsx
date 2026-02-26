@@ -4603,6 +4603,38 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           />
           <span className="text-subtle">{formatTime(durationMs)}</span>
         </div>
+        <div className="player-progress player-volume-inline">
+          <button
+            type="button"
+            className={`player-control player-control-ghost volume-toggle${
+              muted || volume === 0 ? " active" : ""
+            }`}
+            aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
+            title={muted || volume === 0 ? "Unmute" : "Mute"}
+            onClick={handleToggleMute}
+          >
+            {muted || volume === 0 ? "🔇" : "🔊"}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={(event) => handleVolume(Number(event.target.value))}
+            className="player-slider player-slider-volume"
+            style={{
+              background: `linear-gradient(90deg, #1db954 ${Math.round(
+                Math.min(1, Math.max(0, volume)) * 100
+              )}%, rgba(255, 255, 255, 0.12) ${Math.round(
+                Math.min(1, Math.max(0, volume)) * 100
+              )}%)`,
+            }}
+            aria-label="Volume"
+            disabled={!activeDeviceSupportsVolume}
+          />
+          <span className="text-subtle">{Math.round(Math.min(1, Math.max(0, volume)) * 100)}%</span>
+        </div>
       </div>
       <div className="player-connect">
         <div className="player-device-row">
@@ -4775,38 +4807,6 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             </button>
           </div>
         ) : null}
-      </div>
-      <div className="player-progress player-volume-under-connect">
-        <button
-          type="button"
-          className={`player-control player-control-ghost volume-toggle${
-            muted || volume === 0 ? " active" : ""
-          }`}
-          aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
-          title={muted || volume === 0 ? "Unmute" : "Mute"}
-          onClick={handleToggleMute}
-        >
-          {muted || volume === 0 ? "🔇" : "🔊"}
-        </button>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={volume}
-          onChange={(event) => handleVolume(Number(event.target.value))}
-          className="player-slider player-slider-volume"
-          style={{
-            background: `linear-gradient(90deg, #1db954 ${Math.round(
-              Math.min(1, Math.max(0, volume)) * 100
-            )}%, rgba(255, 255, 255, 0.12) ${Math.round(
-              Math.min(1, Math.max(0, volume)) * 100
-            )}%)`,
-          }}
-          aria-label="Volume"
-          disabled={!activeDeviceSupportsVolume}
-        />
-        <span className="text-subtle">{Math.round(Math.min(1, Math.max(0, volume)) * 100)}%</span>
       </div>
       {queueOpen ? (
         <div className="player-queue">

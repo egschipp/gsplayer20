@@ -58,9 +58,26 @@ export async function GET(
   }
 
   const searchParams = new URL(req.url).searchParams;
-  const preferredSeedTracks = parseRecommendationsSeedTracks(
-    searchParams.get("seed_tracks")
-  );
+  const rawSeedTracksParam = String(searchParams.get("seed_tracks") ?? "");
+  const parsedSeedTracks = rawSeedTracksParam
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const validSeedPattern = /^[0-9A-Za-z]{22}$/;
+  const validSeedTracks = parsedSeedTracks.filter((seed) => validSeedPattern.test(seed));
+  const invalidSeedTracksSample = parsedSeedTracks
+    .filter((seed) => !validSeedPattern.test(seed))
+    .slice(0, 2);
+  const preferredSeedTracks = parseRecommendationsSeedTracks(rawSeedTracksParam);
+  trace("request_seed_tracks_parsed", {
+    data: {
+      rawSeedTracksString: rawSeedTracksParam.slice(0, 256),
+      parsedSeedCount: parsedSeedTracks.length,
+      validSeedCount: validSeedTracks.length,
+      invalidSeedTracksSample,
+      preferredSeedCount: preferredSeedTracks.length,
+    },
+  });
   let limit = 25;
   try {
     limit = parseRecommendationsLimit(searchParams.get("limit"));
@@ -106,6 +123,67 @@ export async function GET(
       correlationId,
       mode: shouldForceRefresh(req) ? "refresh" : "initial",
     });
+    if (statusPayload.status === "rate_limited") {
+      const retryAfter = Math.max(1, Math.floor(statusPayload.retryAfterSeconds ?? 5));
+      trace("request_failed", {
+        level: "warn",
+        status: 429,
+        code: "RATE_LIMIT",
+        message: "Spotify tijdelijk geblokkeerd (rate limit).",
+        durationMs: Date.now() - started,
+        data: {
+          retryAfterSec: retryAfter,
+        },
+      });
+      return jsonNoStore(
+        {
+          error: "RATE_LIMIT",
+          message: "Spotify tijdelijk geblokkeerd (rate limit).",
+          retryAfter: retryAfter,
+        },
+        429,
+        {
+          "Retry-After": String(retryAfter),
+          "x-correlation-id": correlationId,
+        }
+      );
+    }
+    if (statusPayload.status === "auth_required") {
+      trace("request_failed", {
+        level: "warn",
+        status: 401,
+        code: "UNAUTHENTICATED",
+        message: "Log opnieuw in om aanbevelingen te laden.",
+        durationMs: Date.now() - started,
+      });
+      return jsonNoStore(
+        {
+          error: "UNAUTHENTICATED",
+          message: "Log opnieuw in om aanbevelingen te laden.",
+        },
+        401,
+        { "x-correlation-id": correlationId }
+      );
+    }
+    if (statusPayload.status === "error") {
+      trace("request_failed", {
+        level: "error",
+        status: 503,
+        code: statusPayload.code ?? "SPOTIFY_UPSTREAM",
+        message: "Spotify is tijdelijk niet bereikbaar.",
+        durationMs: Date.now() - started,
+      });
+      return jsonNoStore(
+        {
+          error: statusPayload.code ?? "SPOTIFY_UPSTREAM",
+          message: "Spotify is tijdelijk niet bereikbaar.",
+          requestId: statusPayload.requestId,
+        },
+        503,
+        { "x-correlation-id": correlationId }
+      );
+    }
+
     const payload = {
       status: statusPayload.status,
       items: statusPayload.legacyItems,
@@ -142,7 +220,15 @@ export async function GET(
         cacheState: payload.cacheState,
         totalCount: payload.totalCount,
         seedTrackCount: payload.seedTrackCount,
+        parsedSeedCount: parsedSeedTracks.length,
+        validSeedCount: validSeedTracks.length,
+        invalidSeedTracksSample,
         reason: payload.reason ?? null,
+        marketUsed: payload.market ?? null,
+        spotifyStatus: payload.meta.spotifyStatus ?? null,
+        spotifyErrorMessage: payload.meta.spotifyErrorMessage ?? null,
+        outboundHost: payload.meta.outboundHost ?? null,
+        tokenPresent: payload.meta.tokenPresent ?? null,
       },
     });
     return jsonNoStore(payload, 200, {

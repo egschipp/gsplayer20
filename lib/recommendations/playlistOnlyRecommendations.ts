@@ -516,25 +516,38 @@ async function fetchRecommendations(args: {
           correlationId: error.correlationId,
         });
       }
-      if (error.status === 400 || error.status === 404) {
-        const body = String(error.body ?? "").trim().toLowerCase();
-        const endpointUnavailable =
-          error.status === 404 &&
-          (body === "not_found" || body.includes("not found") || body.includes("endpoint"));
-        if (endpointUnavailable) {
-          recommendationsUnavailableUntilByUser.set(
-            args.userId,
-            nowMs() + RECOMMENDATIONS_UNAVAILABLE_TTL_MS
-          );
+      if (error.status === 404) {
+        recommendationsUnavailableUntilByUser.set(
+          args.userId,
+          nowMs() + RECOMMENDATIONS_UNAVAILABLE_TTL_MS
+        );
+        throw new RecommendationsServiceError({
+          status: 503,
+          code: "RECOMMENDATIONS_UNAVAILABLE",
+          message: "Spotify recommendations endpoint tijdelijk niet beschikbaar.",
+          retryAfterSec: Math.ceil(RECOMMENDATIONS_UNAVAILABLE_TTL_MS / 1000),
+          correlationId: error.correlationId,
+        });
+      }
+      if (error.status === 400) {
+        const body = String(error.body ?? "").toLowerCase();
+        const looksLikeSeedIssue =
+          body.includes("seed") ||
+          body.includes("invalid id") ||
+          body.includes("parameter") ||
+          body.includes("track");
+        if (looksLikeSeedIssue) {
           return {
             tracks: [],
-            status: "endpoint_unavailable" as const,
+            status: "seed_invalid" as const,
           };
         }
-        return {
-          tracks: [],
-          status: "seed_invalid" as const,
-        };
+        throw new RecommendationsServiceError({
+          status: 502,
+          code: "SPOTIFY_UPSTREAM",
+          message: "Spotify request ongeldig door upstream validatie.",
+          correlationId: error.correlationId,
+        });
       }
     }
     throw new RecommendationsServiceError({
@@ -620,6 +633,10 @@ export type PlaylistOnlyRecommendationsResponse = {
     afterFilter: number;
     topUpUsed: boolean;
     filteredReasons: Record<string, number>;
+    spotifyStatus?: number | null;
+    spotifyErrorMessage?: string | null;
+    outboundHost?: string | null;
+    tokenPresent?: boolean | null;
   };
   hints?: string[];
   code?: string;
@@ -641,28 +658,13 @@ export async function getPlaylistOnlyRecommendations(args: {
   cleanupCaches();
   const blockedUntil = recommendationsUnavailableUntilByUser.get(args.userId) ?? 0;
   if (blockedUntil > nowMs()) {
-    return {
-      status: "error",
-      playlistId: args.playlistId,
-      market: "US",
-      seed: {
-        trackIds: [],
-        seedHash: hashText(""),
-        poolSize: 0,
-      },
-      tracks: [],
-      meta: {
-        requestedLimit: args.limit,
-        returnedRaw: 0,
-        afterFilter: 0,
-        topUpUsed: false,
-        filteredReasons: {},
-      },
-      code: "RECOMMENDATIONS_NOT_FOUND",
-      requestId: args.correlationId,
-      legacyItems: [],
-      legacyReason: "upstream_fallback",
-    } satisfies PlaylistOnlyRecommendationsResponse;
+    throw new RecommendationsServiceError({
+      status: 503,
+      code: "RECOMMENDATIONS_UNAVAILABLE",
+      message: "Spotify recommendations endpoint tijdelijk niet beschikbaar.",
+      retryAfterSec: Math.max(1, Math.ceil((blockedUntil - nowMs()) / 1000)),
+      correlationId: args.correlationId,
+    });
   }
   const inflightKey = `reco-run:${args.userId}:${args.playlistId}:${args.mode}:${args.limit}`;
   if (inflightReco.has(inflightKey)) {
@@ -821,10 +823,7 @@ export async function getPlaylistOnlyRecommendations(args: {
             hints: ["PLAYLIST_TOO_SMALL_OR_NICHE", "MARKET_RESTRICTIONS"],
             requestId: args.correlationId,
             legacyItems: filtered.items,
-            legacyReason:
-              firstReco.status === "seed_invalid" || firstReco.status === "endpoint_unavailable"
-                ? "seed_rejected"
-                : "no_results",
+            legacyReason: firstReco.status === "seed_invalid" ? "seed_rejected" : "no_results",
           };
 
     logEvent({

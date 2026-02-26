@@ -1115,14 +1115,14 @@ a:focus-visible {
   overflow: hidden;
   visibility: hidden;
   pointer-events: none;
-  transform: translateY(-6px);
+  transform: translateY(-8px) scaleY(0.985);
   padding: 0 14px;
   transition:
-    max-height 300ms cubic-bezier(0.22, 0.61, 0.36, 1),
-    opacity 240ms ease,
-    transform 240ms ease,
-    padding 240ms ease,
-    visibility 0s linear 300ms;
+    max-height 420ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 300ms ease,
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 300ms ease,
+    visibility 0s linear 420ms;
 }
 
 .player-library-dock-body.open {
@@ -1131,13 +1131,13 @@ a:focus-visible {
   overflow: visible;
   visibility: visible;
   pointer-events: auto;
-  transform: translateY(0);
+  transform: translateY(0) scaleY(1);
   padding: 6px 14px 14px;
   transition:
-    max-height 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
-    opacity 240ms ease,
-    transform 240ms ease,
-    padding 240ms ease,
+    max-height 440ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 320ms ease,
+    transform 340ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 300ms ease,
     visibility 0s linear 0s;
 }
 
@@ -1366,6 +1366,11 @@ details[open] > .details-summary::after {
 .track-action-link {
   color: var(--text-primary);
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
 }
 
 .chatgpt-btn {
@@ -1373,11 +1378,20 @@ details[open] > .details-summary::after {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
   background: transparent;
   border: 0;
   padding: 0;
   cursor: pointer;
   transition: color 120ms ease, transform 120ms ease;
+}
+
+.track-action-link svg,
+.chatgpt-btn svg {
+  width: 15px;
+  height: 15px;
 }
 
 .chatgpt-btn:hover {
@@ -2063,6 +2077,19 @@ details[open] > .details-summary::after {
 
 .player-device-select {
   width: 100%;
+}
+
+.player-device-select-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.player-connect-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .player-device-select:focus-visible {

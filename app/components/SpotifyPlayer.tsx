@@ -4640,131 +4640,134 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       </div>
       <div className="player-connect">
         <div className="player-device-row">
-          <span>
-            {activeDeviceName
-              ? `Spotify Connect • ${activeDeviceName}`
-              : deviceId
-              ? "Spotify Connect"
-              : "Verbinden..."}
-          </span>
-          <button
-            type="button"
-            className="detail-btn"
-            aria-label={connectSelectorOpen ? "Verberg apparaatselectie" : "Toon apparaatselectie"}
-            title={connectSelectorOpen ? "Verberg apparaatselectie" : "Toon apparaatselectie"}
-            aria-expanded={connectSelectorOpen}
-            onClick={() => {
-              setConnectSelectorOpen((prev) => {
-                const next = !prev;
-                if (!next) {
-                  setDeviceMenuOpen(false);
-                } else {
-                  refreshDevices(true);
-                }
-                return next;
-              });
-            }}
-          >
-            {connectSelectorOpen ? "▴" : "▾"}
-          </button>
-          {sdkSupported && !sdkReadyState ? (
+          <span>Spotify Connect</span>
+          <span className="player-connect-row-actions">
+            {sdkSupported && !sdkReadyState ? (
+              <button
+                type="button"
+                className="detail-btn"
+                aria-label="Start lokale webplayer"
+                title="Start lokale webplayer"
+                onClick={startLocalWebPlayerFromConnect}
+              >
+                ▶
+              </button>
+            ) : null}
             <button
               type="button"
               className="detail-btn"
-              aria-label="Start lokale webplayer"
-              title="Start lokale webplayer"
-              onClick={startLocalWebPlayerFromConnect}
+              aria-label={connectSelectorOpen ? "Verberg apparaatselectie" : "Toon apparaatselectie"}
+              title={connectSelectorOpen ? "Verberg apparaatselectie" : "Toon apparaatselectie"}
+              aria-expanded={connectSelectorOpen}
+              onClick={() => {
+                setConnectSelectorOpen((prev) => {
+                  const next = !prev;
+                  if (!next) {
+                    setDeviceMenuOpen(false);
+                  } else {
+                    refreshDevices(true);
+                  }
+                  return next;
+                });
+              }}
             >
-              ▶
+              <span
+                className={`player-library-dock-chevron${connectSelectorOpen ? " open" : ""}`}
+                aria-hidden="true"
+              >
+                ⌄
+              </span>
             </button>
-          ) : null}
-          <button
-            type="button"
-            className="detail-btn"
-            aria-label="Apparaten vernieuwen"
-            title="Apparaten vernieuwen"
-            onClick={() => refreshDevices(true)}
-          >
-            ↻
-          </button>
+          </span>
         </div>
         {connectSelectorOpen ? (
           <div className="player-device-select">
-            <div
-              className="combo"
-              style={{ width: "100%" }}
-              ref={deviceMenu.rootRef}
-              onPointerDownCapture={deviceMenu.markInteraction}
-              onTouchStartCapture={deviceMenu.markInteraction}
-            >
-              <button
-                type="button"
-                className="combo-input"
-                onClick={() => {
-                  setDeviceMenuOpen((prev) => {
-                    const next = !prev;
-                    if (next) {
-                      refreshDevices(true);
-                      if (sdkSupported && !sdkReadyState) {
-                        startLocalWebPlayerFromConnect();
-                      }
-                    }
-                    return next;
-                  });
-                }}
-                onBlur={deviceMenu.handleBlur}
-                aria-label="Kies een Spotify‑apparaat"
-                aria-haspopup="listbox"
-                aria-expanded={deviceMenuOpen}
+            <div className="player-device-select-row">
+              <div
+                className="combo"
+                style={{ width: "100%" }}
+                ref={deviceMenu.rootRef}
+                onPointerDownCapture={deviceMenu.markInteraction}
+                onTouchStartCapture={deviceMenu.markInteraction}
               >
-                {devices.find((d) => d.id === (activeDeviceId || deviceId))?.name ||
-                  "Kies apparaat"}
-              </button>
-              {deviceMenuOpen ? (
-                <div className="combo-list" role="listbox">
-                  {sdkSupported && !sdkReadyState ? (
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={false}
-                      className="combo-item"
-                      onClick={() => {
-                        startLocalWebPlayerFromConnect();
-                        setDeviceMenuOpen(false);
-                      }}
-                    >
-                      {localWebplayerName} <span className="text-subtle">(start lokaal)</span>
-                    </button>
-                  ) : null}
-                  {devices.length === 0 ? (
-                    <div className="combo-empty">Geen apparaten gevonden.</div>
-                  ) : (
-                    devices.map((device) => (
+                <button
+                  type="button"
+                  className="combo-input"
+                  onClick={() => {
+                    setDeviceMenuOpen((prev) => {
+                      const next = !prev;
+                      if (next) {
+                        refreshDevices(true);
+                        if (sdkSupported && !sdkReadyState) {
+                          startLocalWebPlayerFromConnect();
+                        }
+                      }
+                      return next;
+                    });
+                  }}
+                  onBlur={deviceMenu.handleBlur}
+                  aria-label="Kies een Spotify‑apparaat"
+                  aria-haspopup="listbox"
+                  aria-expanded={deviceMenuOpen}
+                >
+                  {devices.find((d) => d.id === (activeDeviceId || deviceId))?.name ||
+                    "Kies apparaat"}
+                </button>
+                {deviceMenuOpen ? (
+                  <div className="combo-list" role="listbox">
+                    {sdkSupported && !sdkReadyState ? (
                       <button
-                        key={device.id}
                         type="button"
                         role="option"
-                        aria-selected={device.id === (activeDeviceId || deviceId)}
-                        className={`combo-item${
-                          device.id === (activeDeviceId || deviceId) ? " active" : ""
-                        }`}
-                        disabled={!device.selectable}
+                        aria-selected={false}
+                        className="combo-item"
                         onClick={() => {
-                          handleDeviceChange(device.id);
+                          startLocalWebPlayerFromConnect();
                           setDeviceMenuOpen(false);
                         }}
                       >
-                        {device.name}{" "}
-                        <span className="text-subtle">
-                          ({device.type}
-                          {device.isPrivateSession ? " • privésessie" : ""}
-                          {!device.selectable ? " • niet beschikbaar" : ""})
-                        </span>
+                        {localWebplayerName} <span className="text-subtle">(start lokaal)</span>
                       </button>
-                    ))
-                  )}
-                </div>
-              ) : null}
+                    ) : null}
+                    {devices.length === 0 ? (
+                      <div className="combo-empty">Geen apparaten gevonden.</div>
+                    ) : (
+                      devices.map((device) => (
+                        <button
+                          key={device.id}
+                          type="button"
+                          role="option"
+                          aria-selected={device.id === (activeDeviceId || deviceId)}
+                          className={`combo-item${
+                            device.id === (activeDeviceId || deviceId) ? " active" : ""
+                          }`}
+                          disabled={!device.selectable}
+                          onClick={() => {
+                            handleDeviceChange(device.id);
+                            setDeviceMenuOpen(false);
+                          }}
+                        >
+                          {device.name}{" "}
+                          <span className="text-subtle">
+                            ({device.type}
+                            {device.isPrivateSession ? " • privésessie" : ""}
+                            {!device.selectable ? " • niet beschikbaar" : ""})
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="detail-btn"
+                aria-label="Apparaten vernieuwen"
+                title="Apparaten vernieuwen"
+                onClick={() => refreshDevices(true)}
+              >
+                ↻
+              </button>
             </div>
           </div>
         ) : null}

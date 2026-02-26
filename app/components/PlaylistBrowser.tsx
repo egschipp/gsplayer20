@@ -736,13 +736,16 @@ function resolveTrackItemCanonicalId(item: TrackItem) {
 }
 
 function buildTrackRowDedupeKey(row: TrackRow, index: number) {
+  const canonicalTrackId = resolveTrackRowCanonicalId(row);
+  const playlistId = String(row.playlistId ?? "").trim();
+  if (canonicalTrackId) {
+    if (playlistId) return `playlist-track:${playlistId}:${canonicalTrackId}`;
+    return `track:${canonicalTrackId}`;
+  }
+
   const itemId = String(row.itemId ?? "").trim();
   if (itemId) return `item:${itemId}`;
 
-  const canonicalTrackId = resolveTrackRowCanonicalId(row);
-  if (canonicalTrackId) return `track:${canonicalTrackId}`;
-
-  const playlistId = String(row.playlistId ?? "").trim();
   if (playlistId && typeof row.position === "number" && Number.isFinite(row.position)) {
     return `playlist-pos:${playlistId}:${Math.max(0, Math.floor(row.position))}`;
   }
@@ -916,6 +919,7 @@ export default function PlaylistBrowser() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [selectorDockPinned, setSelectorDockPinned] = useState(false);
+  const [selectorDockHovered, setSelectorDockHovered] = useState(false);
   const [selectorDockManualOpen, setSelectorDockManualOpen] = useState(false);
   const [selectorDockHost, setSelectorDockHost] = useState<HTMLElement | null>(null);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
@@ -980,10 +984,13 @@ export default function PlaylistBrowser() {
   const comboMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setOpen(false),
   });
+  const selectorDockOpenDelayTimerRef = useRef<number | null>(null);
+  const selectorDockCloseDelayTimerRef = useRef<number | null>(null);
   const CACHE_KEY = "gs_library_cache_v1";
   const LEGACY_SELECTOR_DOCK_KEY = "gs_selector_dock_open_v1";
   const SELECTOR_DOCK_PIN_KEY = "gs_selector_dock_pinned_v1";
-  const selectorDockOpen = selectorDockPinned || selectorDockManualOpen;
+  const selectorDockOpen =
+    selectorDockPinned || selectorDockManualOpen || selectorDockHovered || open;
   const allPlaylistNames = useMemo(() => {
     return playlistOptions
       .map((pl) => pl.name || "Untitled playlist")
@@ -1097,6 +1104,17 @@ export default function PlaylistBrowser() {
       setOpen(false);
     }
   }, [selectorDockOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (selectorDockOpenDelayTimerRef.current) {
+        window.clearTimeout(selectorDockOpenDelayTimerRef.current);
+      }
+      if (selectorDockCloseDelayTimerRef.current) {
+        window.clearTimeout(selectorDockCloseDelayTimerRef.current);
+      }
+    };
+  }, []);
 
   const emitLikedTracksUpdated = useCallback(
     (trackId: string, action: "added" | "removed") => {
@@ -3278,6 +3296,57 @@ export default function PlaylistBrowser() {
     <div
       className="player-library-dock"
       data-open={selectorDockOpen ? "true" : "false"}
+      onMouseEnter={() => {
+        if (selectorDockCloseDelayTimerRef.current) {
+          window.clearTimeout(selectorDockCloseDelayTimerRef.current);
+          selectorDockCloseDelayTimerRef.current = null;
+        }
+        if (selectorDockOpenDelayTimerRef.current) {
+          window.clearTimeout(selectorDockOpenDelayTimerRef.current);
+        }
+        selectorDockOpenDelayTimerRef.current = window.setTimeout(() => {
+          setSelectorDockHovered(true);
+          selectorDockOpenDelayTimerRef.current = null;
+        }, 45);
+      }}
+      onMouseLeave={() => {
+        if (selectorDockOpenDelayTimerRef.current) {
+          window.clearTimeout(selectorDockOpenDelayTimerRef.current);
+          selectorDockOpenDelayTimerRef.current = null;
+        }
+        if (selectorDockCloseDelayTimerRef.current) {
+          window.clearTimeout(selectorDockCloseDelayTimerRef.current);
+        }
+        selectorDockCloseDelayTimerRef.current = window.setTimeout(() => {
+          if (!open) {
+            setSelectorDockHovered(false);
+          }
+          selectorDockCloseDelayTimerRef.current = null;
+        }, 190);
+      }}
+      onFocusCapture={() => {
+        if (selectorDockCloseDelayTimerRef.current) {
+          window.clearTimeout(selectorDockCloseDelayTimerRef.current);
+          selectorDockCloseDelayTimerRef.current = null;
+        }
+        setSelectorDockHovered(true);
+      }}
+      onBlurCapture={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+          return;
+        }
+        if (open) return;
+        if (selectorDockCloseDelayTimerRef.current) {
+          window.clearTimeout(selectorDockCloseDelayTimerRef.current);
+        }
+        selectorDockCloseDelayTimerRef.current = window.setTimeout(() => {
+          if (!open) {
+            setSelectorDockHovered(false);
+          }
+          selectorDockCloseDelayTimerRef.current = null;
+        }, 190);
+      }}
     >
       <div
         className={`player-library-dock-toggle${selectorDockOpen ? " open" : ""}`}

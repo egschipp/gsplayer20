@@ -73,6 +73,16 @@ type PlaylistTracksResponse = {
   total?: number;
 };
 
+type TracksLookupResponse = {
+  tracks?: Array<{
+    id?: string | null;
+    type?: string | null;
+    is_local?: boolean | null;
+    is_playable?: boolean | null;
+    available_markets?: string[] | null;
+  } | null>;
+};
+
 type UserProfileResponse = {
   country?: string | null;
 };
@@ -230,6 +240,118 @@ function selectSeedSet(args: {
     expiresAt: nowMs() + SHOWN_TTL_MS,
   });
   return chosen;
+}
+
+async function validateSeedTrackBatch(args: {
+  userId: string;
+  playlistId: string;
+  market: string;
+  correlationId: string;
+  seedTrackIds: string[];
+}) {
+  if (args.seedTrackIds.length === 0) {
+    return { validTrackIds: [] as string[], invalidTrackIds: [] as string[] };
+  }
+  const ids = Array.from(new Set(args.seedTrackIds)).slice(0, 50);
+  const qs = new URLSearchParams({
+    ids: ids.join(","),
+    market: args.market,
+  });
+  const lookupUrl = `https://api.spotify.com/v1/tracks?${qs.toString()}`;
+  const response = await spotifyFetch<TracksLookupResponse>({
+    url: lookupUrl,
+    userLevel: true,
+    correlationId: args.correlationId,
+    priority: "interactive",
+    requestClass: "read",
+    maxAttempts: 1,
+    cacheTtlMs: 5_000,
+    staleWhileRevalidateMs: 10_000,
+  });
+
+  const byId = new Map<string, boolean>();
+  for (const track of Array.isArray(response?.tracks) ? response.tracks : []) {
+    const trackId = normalizeTrackId(track?.id ?? null);
+    if (!trackId) continue;
+    const ok =
+      (track?.type == null || track.type === "track") &&
+      track?.is_local !== true &&
+      track?.is_playable !== false &&
+      (!Array.isArray(track?.available_markets) ||
+        track.available_markets.length === 0 ||
+        track.available_markets.includes(args.market));
+    byId.set(trackId, ok);
+  }
+
+  const validTrackIds = ids.filter((id) => byId.get(id) === true);
+  const invalidTrackIds = ids.filter((id) => !validTrackIds.includes(id));
+  logEvent({
+    level: "info",
+    event: "playlist_only_recommendations_seed_validation",
+    correlationId: args.correlationId,
+    appUserId: args.userId,
+    data: {
+      playlistId: args.playlistId,
+      market: args.market,
+      requestedSeedCount: ids.length,
+      validSeedCount: validTrackIds.length,
+      invalidSeedCount: invalidTrackIds.length,
+    },
+  });
+  return { validTrackIds, invalidTrackIds };
+}
+
+async function selectValidatedSeedSet(args: {
+  userId: string;
+  playlistId: string;
+  playlistKey: string;
+  pool: SeedTrackMeta[];
+  market: string;
+  correlationId: string;
+  preferredSeedTracks?: string[];
+}) {
+  const targetSeedCount = Math.min(5, args.pool.length);
+  if (targetSeedCount <= 0) {
+    return {
+      seedTrackIds: [] as string[],
+      rejectedSeedIds: [] as string[],
+      targetSeedCount,
+    };
+  }
+
+  let candidatePool = [...args.pool];
+  const rejected = new Set<string>();
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (candidatePool.length < targetSeedCount) break;
+    const candidateSeedIds = selectSeedSet({
+      playlistKey: args.playlistKey,
+      pool: candidatePool,
+      preferredSeedTracks: attempt === 0 ? args.preferredSeedTracks : undefined,
+    });
+    const validation = await validateSeedTrackBatch({
+      userId: args.userId,
+      playlistId: args.playlistId,
+      market: args.market,
+      correlationId: args.correlationId,
+      seedTrackIds: candidateSeedIds,
+    });
+    if (validation.validTrackIds.length >= targetSeedCount) {
+      return {
+        seedTrackIds: validation.validTrackIds.slice(0, targetSeedCount),
+        rejectedSeedIds: Array.from(rejected),
+        targetSeedCount,
+      };
+    }
+    for (const invalidId of validation.invalidTrackIds) {
+      rejected.add(invalidId);
+    }
+    candidatePool = candidatePool.filter((track) => !rejected.has(track.id));
+  }
+  return {
+    seedTrackIds: [] as string[],
+    rejectedSeedIds: Array.from(rejected),
+    targetSeedCount,
+  };
 }
 
 function getShownSet(key: string) {
@@ -780,11 +902,43 @@ export async function getPlaylistOnlyRecommendations(args: {
     }
 
     const playlistKey = `${args.userId}:${args.playlistId}:${market}`;
-    const firstSeeds = selectSeedSet({
+    const firstSeedSelection = await selectValidatedSeedSet({
+      userId: args.userId,
+      playlistId: args.playlistId,
       playlistKey,
       pool: seedPool.tracks,
+      market,
+      correlationId: args.correlationId,
       preferredSeedTracks: args.preferredSeedTracks,
     });
+    const firstSeeds = firstSeedSelection.seedTrackIds;
+    if (firstSeeds.length < firstSeedSelection.targetSeedCount) {
+      return {
+        status: "empty",
+        playlistId: args.playlistId,
+        market,
+        seed: {
+          trackIds: [],
+          seedHash: hashText(""),
+          poolSize: seedPool.tracks.length,
+        },
+        tracks: [],
+        meta: {
+          requestedLimit: args.limit,
+          returnedRaw: 0,
+          afterFilter: 0,
+          topUpUsed: false,
+          filteredReasons: {
+            SEED_REJECTED: firstSeedSelection.rejectedSeedIds.length,
+          },
+          tokenPresent: true,
+        },
+        hints: ["SEED_INVALID", "MARKET_RESTRICTIONS"],
+        requestId: args.correlationId,
+        legacyItems: [],
+        legacyReason: "seed_rejected",
+      } satisfies PlaylistOnlyRecommendationsResponse;
+    }
     const shownSet = getShownSet(playlistKey);
     const firstReco = await fetchRecommendations({
       userId: args.userId,
@@ -805,10 +959,42 @@ export async function getPlaylistOnlyRecommendations(args: {
     let seedTrackIds = firstSeeds;
 
     if (filtered.items.length < MIN_DISPLAY_TARGET && seedPool.tracks.length > firstSeeds.length) {
-      const secondSeeds = selectSeedSet({
+      const secondSeedSelection = await selectValidatedSeedSet({
+        userId: args.userId,
+        playlistId: args.playlistId,
         playlistKey,
         pool: seedPool.tracks,
+        market,
+        correlationId: args.correlationId,
       });
+      const secondSeeds = secondSeedSelection.seedTrackIds;
+      if (secondSeeds.length < secondSeedSelection.targetSeedCount) {
+        return {
+          status: "empty",
+          playlistId: args.playlistId,
+          market,
+          seed: {
+            trackIds: [],
+            seedHash: hashText(""),
+            poolSize: seedPool.tracks.length,
+          },
+          tracks: [],
+          meta: {
+            requestedLimit: args.limit,
+            returnedRaw,
+            afterFilter: 0,
+            topUpUsed: true,
+            filteredReasons: {
+              SEED_REJECTED: secondSeedSelection.rejectedSeedIds.length,
+            },
+            tokenPresent: true,
+          },
+          hints: ["SEED_INVALID", "MARKET_RESTRICTIONS"],
+          requestId: args.correlationId,
+          legacyItems: [],
+          legacyReason: "seed_rejected",
+        } satisfies PlaylistOnlyRecommendationsResponse;
+      }
       const topupReco = await fetchRecommendations({
         userId: args.userId,
         playlistId: args.playlistId,

@@ -1338,6 +1338,11 @@ details[open] > .details-summary::after {
   border: 1px solid var(--border-subtle);
   background: var(--bg-surface);
   overflow: visible;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    box-shadow 160ms ease,
+    opacity 140ms ease;
 }
 
 .track-row-grid {
@@ -1416,9 +1421,30 @@ details[open] > .details-summary::after {
 }
 
 .track-row-inner.playing {
-  border-color: rgba(29, 185, 84, 0.5);
-  background: var(--bg-elevated);
-  box-shadow: inset 4px 0 0 var(--tide);
+  border-color: rgba(30, 215, 96, 0.78);
+  background: linear-gradient(
+    100deg,
+    rgba(29, 185, 84, 0.14),
+    rgba(18, 24, 21, 0.98) 28%
+  );
+  box-shadow:
+    inset 4px 0 0 var(--tide),
+    0 0 0 1px rgba(30, 215, 96, 0.32) inset;
+}
+
+.track-row-inner.playing.paused {
+  border-color: rgba(30, 215, 96, 0.55);
+  background: linear-gradient(
+    100deg,
+    rgba(29, 185, 84, 0.08),
+    rgba(18, 24, 21, 0.98) 24%
+  );
+  box-shadow: inset 3px 0 0 rgba(30, 215, 96, 0.78);
+}
+
+.track-row-inner.playing.stale {
+  border-style: dashed;
+  opacity: 0.9;
 }
 
 .track-virtual-list .track-row {
@@ -1466,10 +1492,16 @@ details[open] > .details-summary::after {
 }
 
 .queue-row-btn.active {
-  border-color: rgba(29, 185, 84, 0.9);
-  background: rgba(29, 185, 84, 0.34);
+  border-color: rgba(30, 215, 96, 0.98);
+  background: linear-gradient(
+    135deg,
+    rgba(30, 215, 96, 0.62),
+    rgba(29, 185, 84, 0.46)
+  );
   color: #ffffff;
-  box-shadow: 0 0 0 1px rgba(29, 185, 84, 0.22) inset;
+  box-shadow:
+    0 0 0 1px rgba(30, 215, 96, 0.55) inset,
+    0 0 10px rgba(29, 185, 84, 0.45);
 }
 
 .queue-row-btn:disabled {
@@ -1768,6 +1800,15 @@ details[open] > .details-summary::after {
   background: rgba(29, 185, 84, 0.25);
   color: #ffffff;
   font-size: 0.65rem;
+}
+
+.playing-indicator.paused {
+  background: rgba(148, 163, 184, 0.28);
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.playing-indicator.stale {
+  border: 1px dashed rgba(226, 232, 240, 0.5);
 }
 
 .player-card {

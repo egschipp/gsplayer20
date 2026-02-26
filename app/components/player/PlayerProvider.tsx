@@ -6,21 +6,33 @@ import { createContext, useContext, useMemo, useState } from "react";
 import SpotifyPlayer, { type PlayerApi } from "../SpotifyPlayer";
 import { QueueProvider } from "@/lib/queue/QueueProvider";
 import { QueuePlaybackProvider } from "@/lib/playback/QueuePlaybackProvider";
+import {
+  DEFAULT_PLAYBACK_FOCUS,
+  type PlaybackFocus,
+} from "./playbackFocus";
 
 type PlayerContextValue = {
   api: PlayerApi | null;
   currentTrackId: string | null;
+  playbackFocus: PlaybackFocus;
 };
 
 const PlayerContext = createContext<PlayerContextValue>({
   api: null,
   currentTrackId: null,
+  playbackFocus: DEFAULT_PLAYBACK_FOCUS,
 });
 
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [api, setApi] = useState<PlayerApi | null>(null);
-  const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
-  const value = useMemo(() => ({ api, currentTrackId }), [api, currentTrackId]);
+  const [playbackFocus, setPlaybackFocus] = useState<PlaybackFocus>(
+    DEFAULT_PLAYBACK_FOCUS
+  );
+  const currentTrackId = playbackFocus.trackId;
+  const value = useMemo(
+    () => ({ api, currentTrackId, playbackFocus }),
+    [api, currentTrackId, playbackFocus]
+  );
   const pathname = usePathname();
   const path = pathname ?? "/";
   const showPlayer = path === "/" || path.startsWith("/gsplayer") || path.startsWith("/queue");
@@ -44,7 +56,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 className="library-logo"
                 priority
               />
-              <SpotifyPlayer onReady={setApi} onTrackChange={setCurrentTrackId} />
+              <SpotifyPlayer onReady={setApi} onPlaybackFocusChange={setPlaybackFocus} />
               {showLibraryDock ? (
                 <div
                   id="player-library-dock-slot"

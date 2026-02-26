@@ -13,6 +13,11 @@ import {
   projectRemoteProgressValue,
   reconcileProgressValue,
 } from "@/lib/playback/syncMath";
+import {
+  DEFAULT_PLAYBACK_FOCUS,
+  type PlaybackFocus,
+  type PlaybackFocusSource,
+} from "./player/playbackFocus";
 import { usePlaybackCommandQueue } from "./player/usePlaybackCommandQueue";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
@@ -42,6 +47,7 @@ const PLAYBACK_RESTRICTION_COOLDOWN_MS = 4_000;
 const PLAYER_TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
 const PLAYER_LIKED_PLAYLIST_ID = "liked";
 const CONNECT_DOCK_PIN_KEY = "gs_connect_dock_pinned_v1";
+const PLAYBACK_FOCUS_STALE_HOLD_MS = 15_000;
 
 type PlayerPlaylistOption = {
   id: string;
@@ -109,6 +115,7 @@ export type PlayerApi = {
 type PlayerProps = {
   onReady: (api: PlayerApi | null) => void;
   onTrackChange?: (trackId: string | null) => void;
+  onPlaybackFocusChange?: (focus: PlaybackFocus) => void;
 };
 
 function getWebPlaybackSdkSupport() {
@@ -254,7 +261,11 @@ function resolveDeviceTypeIcon(type: string | null | undefined) {
   return "🎵";
 }
 
-export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
+export default function SpotifyPlayer({
+  onReady,
+  onTrackChange,
+  onPlaybackFocusChange,
+}: PlayerProps) {
   const { data: session, status: sessionStatus } = useSession();
   const customQueue = useQueueStore();
   const customQueuePlayback = useQueuePlayback();
@@ -273,6 +284,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     durationMs: number;
   } | null>(null);
   const [currentTrackIdState, setCurrentTrackIdState] = useState<string | null>(null);
+  const [, setPlaybackFocusState] = useState<PlaybackFocus>(DEFAULT_PLAYBACK_FOCUS);
   const [currentTrackLiked, setCurrentTrackLiked] = useState<boolean | null>(null);
   const [likedStateLoading, setLikedStateLoading] = useState(false);
   const [likedStateSaving, setLikedStateSaving] = useState(false);
@@ -441,6 +453,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const playerErrorMessage = formatPlayerError(error);
   const lastTrackIdRef = useRef<string | null>(null);
   const pendingTrackIdRef = useRef<string | null>(null);
+  const currentTrackIdRef = useRef<string | null>(null);
+  const playbackFocusRef = useRef<PlaybackFocus>(DEFAULT_PLAYBACK_FOCUS);
   const operationEpochRef = useRef(0);
   const userIntentSeqRef = useRef(0);
   const trackChangeLockUntilRef = useRef(0);
@@ -482,6 +496,75 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     firstSeenAt: number;
     samples: number;
   } | null>(null);
+
+  const updatePlaybackFocus = useCallback(
+    (
+      next: Omit<PlaybackFocus, "source"> & {
+        source: PlaybackSource | PlaybackFocusSource;
+      }
+    ) => {
+      const normalized: PlaybackFocus = {
+        trackId: next.trackId ?? null,
+        isPlaying: typeof next.isPlaying === "boolean" ? next.isPlaying : null,
+        stale: Boolean(next.stale),
+        source: next.source,
+        confidence: Math.max(0, Math.min(1, Number(next.confidence ?? 0))),
+        updatedAt: Number.isFinite(next.updatedAt) ? next.updatedAt : Date.now(),
+      };
+      const previous = playbackFocusRef.current;
+      const changed =
+        previous.trackId !== normalized.trackId ||
+        previous.isPlaying !== normalized.isPlaying ||
+        previous.stale !== normalized.stale ||
+        previous.source !== normalized.source;
+      if (!changed) return;
+      playbackFocusRef.current = normalized;
+      setPlaybackFocusState(normalized);
+      if (onPlaybackFocusChange) {
+        onPlaybackFocusChange(normalized);
+      }
+    },
+    [onPlaybackFocusChange]
+  );
+
+  const setPlaybackTrackState = useCallback(
+    (
+      trackId: string | null,
+      options?: {
+        isPlaying?: boolean | null;
+        stale?: boolean;
+        source?: PlaybackSource | PlaybackFocusSource;
+        confidence?: number;
+        updatedAt?: number;
+      }
+    ) => {
+      const nextTrackId = trackId ?? null;
+      currentTrackIdRef.current = nextTrackId;
+      setCurrentTrackIdState(nextTrackId);
+      if (onTrackChange) onTrackChange(nextTrackId);
+      updatePlaybackFocus({
+        trackId: nextTrackId,
+        isPlaying:
+          typeof options?.isPlaying === "boolean"
+            ? options.isPlaying
+            : playbackFocusRef.current.isPlaying,
+        stale: Boolean(options?.stale),
+        source: options?.source ?? "system",
+        confidence:
+          typeof options?.confidence === "number"
+            ? options.confidence
+            : nextTrackId
+            ? 1
+            : 0,
+        updatedAt: options?.updatedAt ?? Date.now(),
+      });
+    },
+    [onTrackChange, updatePlaybackFocus]
+  );
+
+  useEffect(() => {
+    currentTrackIdRef.current = currentTrackIdState;
+  }, [currentTrackIdState]);
 
   const getMonotonicNow = useCallback(() => {
     if (typeof performance !== "undefined" && typeof performance.now === "function") {
@@ -649,19 +732,28 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }, []);
 
   const clearPlaybackViewState = useCallback(
-    (receivedAtMonoMs = getMonotonicNow()) => {
+    (
+      receivedAtMonoMs = getMonotonicNow(),
+      source: PlaybackSource | PlaybackFocusSource = "system",
+      isPlaying: boolean | null = null
+    ) => {
       lastTrackIdRef.current = null;
       pendingTrackIdRef.current = null;
       setOptimisticTrack(null);
       setPlayerState(null);
-      setCurrentTrackIdState(null);
+      setPlaybackTrackState(null, {
+        isPlaying,
+        stale: false,
+        source,
+        confidence: 0,
+        updatedAt: Date.now(),
+      });
       setDurationMs(0);
       if (!isScrubbingRef.current) {
         applyProgressPosition(0, receivedAtMonoMs);
       }
-      if (onTrackChange) onTrackChange(null);
     },
-    [applyProgressPosition, getMonotonicNow, onTrackChange]
+    [applyProgressPosition, getMonotonicNow, setPlaybackTrackState]
   );
 
   const beginScrub = useCallback(
@@ -1752,7 +1844,30 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
       const isPlaying = Boolean(data?.is_playing);
       if (!data?.item) {
-        clearPlaybackViewState(responseReceivedAtMonoMs);
+        const now = Date.now();
+        const previousTrackId = currentTrackIdRef.current || lastTrackIdRef.current;
+        const previousFocus = playbackFocusRef.current;
+        const canHoldStaleFocus =
+          Boolean(previousTrackId) && now - previousFocus.updatedAt < PLAYBACK_FOCUS_STALE_HOLD_MS;
+        if (canHoldStaleFocus && previousTrackId) {
+          setPlaybackTrackState(previousTrackId, {
+            isPlaying:
+              typeof data?.is_playing === "boolean"
+                ? data.is_playing
+                : previousFocus.isPlaying,
+            stale: true,
+            source,
+            confidence: 0.45,
+            updatedAt: now,
+          });
+          emitPlaybackMetric("focus_stale_hold", 1, { source });
+        } else {
+          clearPlaybackViewState(
+            responseReceivedAtMonoMs,
+            source,
+            typeof data?.is_playing === "boolean" ? data.is_playing : null
+          );
+        }
         if (typeof data?.is_playing === "boolean") {
           lastIsPlayingRef.current = data.is_playing;
         }
@@ -1823,8 +1938,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         applyProgressPosition(reconciledPosition, responseReceivedAtMonoMs);
       }
       setDurationMs(item.duration_ms ?? 0);
-      setCurrentTrackIdState(trackId);
-      if (onTrackChange) onTrackChange(trackId);
+      setPlaybackTrackState(trackId, {
+        isPlaying,
+        stale: false,
+        source,
+        confidence: 1,
+        updatedAt: Date.now(),
+      });
       syncQueuePositionFromTrack(trackId);
       if (trackId && Date.now() - lastProgressSyncRef.current > 5000) {
         lastProgressSyncRef.current = Date.now();
@@ -1884,11 +2004,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       applyProgressPosition,
       clearPlaybackViewState,
       emitPlaybackMetric,
-      onTrackChange,
       postCrossTabEvent,
       projectRemoteProgressMs,
       rebuildQueueOrder,
       reconcileProgressPosition,
+      setPlaybackTrackState,
       setActiveDevice,
       shouldAdoptRemoteDevice,
       clearRemoteTakeoverCandidate,
@@ -2073,6 +2193,46 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     []
   );
 
+  const emitPlaylistItemsUpdated = useCallback(
+    (playlistId: string, trackId: string, action: "added" | "removed") => {
+      if (!playlistId || !trackId || typeof window === "undefined") return;
+      const at = Date.now();
+      window.dispatchEvent(
+        new CustomEvent("gs-playlist-items-updated", {
+          detail: { playlistId, trackId, action, at },
+        })
+      );
+      try {
+        window.localStorage.setItem("gs_playlist_items_updated_at", String(at));
+      } catch {
+        // ignore storage issues
+      }
+    },
+    []
+  );
+
+  const requestPlaylistItemsSync = useCallback(async (playlistId: string) => {
+    if (!playlistId) return;
+    try {
+      await fetch("/api/spotify/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "playlist_items",
+          payload: {
+            playlistId,
+            offset: 0,
+            limit: 50,
+            maxPagesPerRun: 20,
+            runId: `player-menu-${Date.now()}`,
+          },
+        }),
+      });
+    } catch {
+      // ignore sync trigger failures; event still updates UI state
+    }
+  }, []);
+
   const ensureTrackPlaylistOptionsLoaded = useCallback(async () => {
     if (trackPlaylistOptionsLoadedRef.current) return;
     let cursor: string | null = null;
@@ -2170,6 +2330,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
     setTrackPlaylistSaving(true);
     let hadFailures = false;
+    const changedPlaylistIds = new Set<string>();
     try {
       for (const option of changed) {
         const shouldInclude = trackPlaylistSelectedIds.has(option.id);
@@ -2200,6 +2361,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
           }
           if (!res.ok) {
             hadFailures = true;
+          } else if (option.type === "playlist") {
+            changedPlaylistIds.add(option.id);
+            emitPlaylistItemsUpdated(
+              option.id,
+              currentTrackIdState,
+              shouldInclude ? "added" : "removed"
+            );
+            void requestPlaylistItemsSync(option.id);
           }
         } catch {
           hadFailures = true;
@@ -2219,6 +2388,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   }, [
     currentTrackIdState,
     emitLikedTracksUpdated,
+    emitPlaylistItemsUpdated,
+    requestPlaylistItemsSync,
     trackPlaylistInitialIds,
     trackPlaylistOptions,
     trackPlaylistSaving,
@@ -2393,8 +2564,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
         applyProgressPosition(reconciledPosition, eventMonoMs);
       }
       setDurationMs(nextDuration);
-      setCurrentTrackIdState(trackId);
-      if (onTrackChange) onTrackChange(trackId);
+      setPlaybackTrackState(trackId, {
+        isPlaying: !state.paused,
+        stale: false,
+        source: "sdk",
+        confidence: 1,
+        updatedAt: Date.now(),
+      });
       syncQueuePositionFromTrack(trackId);
       if (trackId && Date.now() - lastProgressSyncRef.current > 5000) {
         lastProgressSyncRef.current = Date.now();
@@ -2417,8 +2593,8 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       applyPendingSeekGuard,
       applyProgressPosition,
       getMonotonicNow,
-      onTrackChange,
       reconcileProgressPosition,
+      setPlaybackTrackState,
       setActiveDevice,
       syncQueuePositionFromTrack,
     ]
@@ -2793,7 +2969,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
       setSdkLastError(null);
       setSdkLifecycle("idle");
       playerRef.current = null;
-      setCurrentTrackIdState(null);
+      setPlaybackTrackState(null, {
+        isPlaying: false,
+        stale: false,
+        source: "system",
+        confidence: 0,
+        updatedAt: Date.now(),
+      });
       setCurrentTrackLiked(null);
       setDeviceReady(false);
       if (accessToken && !playbackAllowed) {
@@ -2978,8 +3160,13 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               }
               setDurationMs(item.duration_ms ?? 0);
               const bootstrapTrackId = resolvePlaybackTrackId(item);
-              setCurrentTrackIdState(bootstrapTrackId);
-              if (onTrackChange) onTrackChange(bootstrapTrackId);
+              setPlaybackTrackState(bootstrapTrackId, {
+                isPlaying: Boolean(data?.is_playing),
+                stale: false,
+                source: "api_bootstrap",
+                confidence: 0.9,
+                updatedAt: Date.now(),
+              });
             }
             if (typeof data?.shuffle_state === "boolean") {
               if (!(queueModeRef.current === "queue" && queueUrisRef.current?.length)) {

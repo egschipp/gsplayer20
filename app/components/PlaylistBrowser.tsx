@@ -963,7 +963,7 @@ export default function PlaylistBrowser() {
   const [tracksRefreshToken, setTracksRefreshToken] = useState(0);
   const [addingTargetKey, setAddingTargetKey] = useState<string | null>(null);
   const [removingTargetKey, setRemovingTargetKey] = useState<string | null>(null);
-  const { api: playerApi, currentTrackId } = usePlayer();
+  const { api: playerApi, playbackFocus } = usePlayer();
   const queue = useQueueStore();
   const comboListRef = useRef<HTMLDivElement | null>(null);
   const loadingMoreTracksRef = useRef(false);
@@ -994,8 +994,6 @@ export default function PlaylistBrowser() {
   const artistDetailDialogRef = useRef<HTMLDivElement | null>(null);
   const artistDetailRestoreFocusRef = useRef<HTMLElement | null>(null);
   const hydratingPlaylistTargetsRef = useRef(false);
-  const stableTrackClearTimerRef = useRef<number | null>(null);
-  const [stableCurrentTrackId, setStableCurrentTrackId] = useState<string | null>(null);
   const comboMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setOpen(false),
   });
@@ -1933,44 +1931,24 @@ export default function PlaylistBrowser() {
   const localFilteredTrackItems =
     mode === "tracks" ? filteredTrackItems : filteredAlbumTrackItems;
 
-  useEffect(() => {
-    const normalized = normalizeSpotifyTrackId(currentTrackId);
-    if (normalized) {
-      if (stableTrackClearTimerRef.current) {
-        window.clearTimeout(stableTrackClearTimerRef.current);
-        stableTrackClearTimerRef.current = null;
-      }
-      setStableCurrentTrackId((prev) => (prev === normalized ? prev : normalized));
-      return;
-    }
-    if (stableTrackClearTimerRef.current) {
-      window.clearTimeout(stableTrackClearTimerRef.current);
-    }
-    // Guard against short upstream sync gaps where currentTrackId briefly drops to null.
-    stableTrackClearTimerRef.current = window.setTimeout(() => {
-      setStableCurrentTrackId(null);
-      stableTrackClearTimerRef.current = null;
-    }, 12000);
-    return () => {
-      if (stableTrackClearTimerRef.current) {
-        window.clearTimeout(stableTrackClearTimerRef.current);
-      }
-    };
-  }, [currentTrackId]);
+  const activeTrackId = useMemo(
+    () => normalizeSpotifyTrackId(playbackFocus.trackId),
+    [playbackFocus.trackId]
+  );
+  const activeTrackIsPlaying = playbackFocus.isPlaying === true;
+  const activeTrackIsStale = Boolean(playbackFocus.stale);
 
   const activeTrackIndexInRows = useMemo(() => {
-    if (!tracks.length || !stableCurrentTrackId) return -1;
-    return tracks.findIndex((track) =>
-      isCurrentTrackMatch(track, stableCurrentTrackId)
-    );
-  }, [tracks, stableCurrentTrackId]);
+    if (!tracks.length || !activeTrackId) return -1;
+    return tracks.findIndex((track) => isCurrentTrackMatch(track, activeTrackId));
+  }, [tracks, activeTrackId]);
 
   const activeTrackIndexInItems = useMemo(() => {
-    if (!localFilteredTrackItems.length || !stableCurrentTrackId) return -1;
+    if (!localFilteredTrackItems.length || !activeTrackId) return -1;
     return localFilteredTrackItems.findIndex((track) =>
-      isCurrentTrackMatch(track, stableCurrentTrackId)
+      isCurrentTrackMatch(track, activeTrackId)
     );
-  }, [localFilteredTrackItems, stableCurrentTrackId]);
+  }, [localFilteredTrackItems, activeTrackId]);
 
   useEffect(() => {
     if (activeTrackIndexInRows < 0) return;
@@ -2852,6 +2830,56 @@ export default function PlaylistBrowser() {
       // ignore sync trigger failures; UI will still update optimistically
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handlePlaylistItemsUpdated = (event?: Event) => {
+      const detail =
+        event && "detail" in event
+          ? ((event as CustomEvent).detail as
+              | { playlistId?: string | null }
+              | null
+              | undefined)
+          : undefined;
+      const playlistId = String(detail?.playlistId ?? "").trim();
+      if (!playlistId) return;
+      triggerSelectedPlaylistLiveRefresh(playlistId);
+      void requestPlaylistItemsSync(playlistId);
+    };
+
+    const onStorage = (storageEvent: StorageEvent) => {
+      if (storageEvent.key !== "gs_playlist_items_updated_at") return;
+      if (
+        mode === "playlists" &&
+        selectedPlaylist?.type === "playlist" &&
+        selectedPlaylist.id
+      ) {
+        triggerSelectedPlaylistLiveRefresh(selectedPlaylist.id);
+        void requestPlaylistItemsSync(selectedPlaylist.id);
+      }
+    };
+
+    window.addEventListener(
+      "gs-playlist-items-updated",
+      handlePlaylistItemsUpdated as EventListener
+    );
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      window.removeEventListener(
+        "gs-playlist-items-updated",
+        handlePlaylistItemsUpdated as EventListener
+      );
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [
+    mode,
+    requestPlaylistItemsSync,
+    selectedPlaylist?.id,
+    selectedPlaylist?.type,
+    triggerSelectedPlaylistLiveRefresh,
+  ]);
 
   const upsertPlaylistOnTrack = useCallback(
     (trackId: string, link: PlaylistLink) => {
@@ -3910,13 +3938,20 @@ export default function PlaylistBrowser() {
               }}
               itemKey={(index: number, data: TrackRowData) => {
                 const item = data.items[index];
-                return `${item.itemId || "row"}:${item.trackId || "track"}:${index}`;
+                return (
+                  item.itemId ||
+                  resolveTrackRowCanonicalId(item) ||
+                  item.trackId ||
+                  item.id ||
+                  `row:${index}`
+                );
               }}
               itemData={{
                 items: tracks,
                 mode,
-                currentTrackId: stableCurrentTrackId,
-                activeTrackIndex: activeTrackIndexInRows,
+                activeTrackId,
+                activeTrackIsPlaying,
+                activeTrackIsStale,
                 openDetailFromRow,
                 handlePlayTrack,
                 addTrackToQueue: handleAddTrackToQueue,
@@ -3971,12 +4006,18 @@ export default function PlaylistBrowser() {
               overscanCount={6}
               itemKey={(index: number, data: TrackItemData) => {
                 const item = data.items[index];
-                return `${item.id || item.trackId || "item"}:${index}`;
+                return (
+                  resolveTrackItemCanonicalId(item) ||
+                  item.id ||
+                  item.trackId ||
+                  `item:${index}`
+                );
               }}
               itemData={{
                 items: localFilteredTrackItems,
-                currentTrackId: stableCurrentTrackId,
-                activeTrackIndex: activeTrackIndexInItems,
+                activeTrackId,
+                activeTrackIsPlaying,
+                activeTrackIsStale,
                 openDetailFromItem,
                 handlePlayTrack,
                 addTrackToQueue: handleAddTrackToQueue,
@@ -4641,8 +4682,9 @@ function AddToQueueButton({ track, onAdd, active = false }: AddToQueueButtonProp
 type TrackRowData = {
   items: TrackRow[];
   mode: Mode;
-  currentTrackId: string | null;
-  activeTrackIndex: number;
+  activeTrackId: string | null;
+  activeTrackIsPlaying: boolean;
+  activeTrackIsStale: boolean;
   openDetailFromRow: (track: TrackRow, trigger?: HTMLElement | null) => void;
   handlePlayTrack: (
     track: TrackRow | TrackItem | null | undefined,
@@ -4678,8 +4720,10 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
       .map((value) => value.trim())
       .filter(Boolean)[0] ?? "";
   const albumLine = String(track.albumName ?? "").trim();
-  const isPlaying =
-    isCurrentTrackMatch(track, data.currentTrackId) || index === data.activeTrackIndex;
+  const isTrackActive = isCurrentTrackMatch(track, data.activeTrackId);
+  const isPlaying = isTrackActive && data.activeTrackIsPlaying;
+  const isPaused = isTrackActive && !data.activeTrackIsPlaying;
+  const isStale = isTrackActive && data.activeTrackIsStale;
   const rowColumnsStyle = {
     ["--track-row-height" as const]: `${TRACK_ROW_HEIGHT}px`,
     ["--track-row-columns" as const]: isGrid
@@ -4689,7 +4733,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
   return (
     <div
       style={style}
-      className={`track-row${isPlaying ? " playing" : ""}`}
+      className={`track-row${isTrackActive ? " playing" : ""}${isPaused ? " paused" : ""}${isStale ? " stale" : ""}`}
       role="button"
       tabIndex={0}
       onClick={(event) => data.openDetailFromRow(track, event.currentTarget)}
@@ -4702,7 +4746,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
       }}
     >
       <div
-        className={`track-row-inner${isPlaying ? " playing" : ""} track-row-grid`}
+        className={`track-row-inner${isTrackActive ? " playing" : ""}${isPaused ? " paused" : ""}${isStale ? " stale" : ""} track-row-grid`}
         style={rowColumnsStyle}
       >
         <div className="track-media-cell" onClick={(event) => event.stopPropagation()}>
@@ -4732,9 +4776,14 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
         <div className="track-col-track">
           <div className="track-title-line" title={track.name || "Onbekend"}>
             <span className="track-title-text">{track.name || "Onbekend"}</span>
-            {isPlaying ? (
-              <span className="playing-indicator" aria-label="Now playing">
-                ▶
+            {isTrackActive ? (
+              <span
+                className={`playing-indicator${isPaused ? " paused" : ""}${
+                  isStale ? " stale" : ""
+                }`}
+                aria-label={isPlaying ? "Now playing" : "Actieve track"}
+              >
+                {isPlaying ? "▶" : "❚❚"}
               </span>
             ) : null}
           </div>
@@ -4848,8 +4897,9 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
 
 type TrackItemData = {
   items: TrackItem[];
-  currentTrackId: string | null;
-  activeTrackIndex: number;
+  activeTrackId: string | null;
+  activeTrackIsPlaying: boolean;
+  activeTrackIsStale: boolean;
   openDetailFromItem: (track: TrackItem, trigger?: HTMLElement | null) => void;
   handlePlayTrack: (
     track: TrackRow | TrackItem | null | undefined,
@@ -4881,8 +4931,10 @@ function TrackItemRenderer({
   data,
 }: ListChildComponentProps<TrackItemData>) {
   const track = data.items[index];
-  const isPlaying =
-    isCurrentTrackMatch(track, data.currentTrackId) || index === data.activeTrackIndex;
+  const isTrackActive = isCurrentTrackMatch(track, data.activeTrackId);
+  const isPlaying = isTrackActive && data.activeTrackIsPlaying;
+  const isPaused = isTrackActive && !data.activeTrackIsPlaying;
+  const isStale = isTrackActive && data.activeTrackIsStale;
   const coverUrl = track.album?.images?.[0]?.url ?? null;
   const artistNames = track.artists
     .map((artist) => artist?.name)
@@ -4904,7 +4956,7 @@ function TrackItemRenderer({
   return (
     <div
       style={style}
-      className={`track-row${isPlaying ? " playing" : ""}`}
+      className={`track-row${isTrackActive ? " playing" : ""}${isPaused ? " paused" : ""}${isStale ? " stale" : ""}`}
       role="button"
       tabIndex={0}
       onClick={(event) => data.openDetailFromItem(track, event.currentTarget)}
@@ -4917,7 +4969,7 @@ function TrackItemRenderer({
       }}
     >
       <div
-        className={`track-row-inner${isPlaying ? " playing" : ""} track-row-grid`}
+        className={`track-row-inner${isTrackActive ? " playing" : ""}${isPaused ? " paused" : ""}${isStale ? " stale" : ""} track-row-grid`}
         style={rowColumnsStyle}
       >
         <div className="track-media-cell" onClick={(event) => event.stopPropagation()}>
@@ -4946,9 +4998,14 @@ function TrackItemRenderer({
         <div className="track-col-track">
           <div className="track-title-line" title={track.name || "Onbekend"}>
             <span className="track-title-text">{track.name || "Onbekend"}</span>
-            {isPlaying ? (
-              <span className="playing-indicator" aria-label="Now playing">
-                ▶
+            {isTrackActive ? (
+              <span
+                className={`playing-indicator${isPaused ? " paused" : ""}${
+                  isStale ? " stale" : ""
+                }`}
+                aria-label={isPlaying ? "Now playing" : "Actieve track"}
+              >
+                {isPlaying ? "▶" : "❚❚"}
               </span>
             ) : null}
           </div>

@@ -115,8 +115,12 @@ jobs:
 
       - name: Scan image (Trivy)
         uses: aquasecurity/trivy-action@0.28.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
         with:
           image-ref: ${{ secrets.DOCKER_REGISTRY }}/${{ secrets.DOCKER_IMAGE }}:${{ github.sha }}
+          scan-type: image
+          scanners: vuln
           severity: HIGH,CRITICAL
           exit-code: "1"
 

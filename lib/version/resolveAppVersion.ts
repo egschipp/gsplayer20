@@ -133,6 +133,19 @@ export async function resolveAppVersion(options?: {
     };
   }
 
+  // Default to local package version so UI reflects deployed code rollback state.
+  // Set APP_VERSION_SOURCE=remote to restore remote release/tag resolution.
+  const versionSource = String(process.env.APP_VERSION_SOURCE ?? "package")
+    .trim()
+    .toLowerCase();
+  if (versionSource !== "remote") {
+    return {
+      name: packageVersion.name,
+      version: packageVersion.version,
+      source: "package",
+    };
+  }
+
   const repo = options?.repo?.trim() || process.env.GITHUB_RELEASE_REPO?.trim() || DEFAULT_REPO;
   const now = Date.now();
   if (cachedRemoteVersion && cachedRemoteVersion.expiresAt > now) {

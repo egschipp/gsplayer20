@@ -20,6 +20,7 @@ import {
 } from "./types";
 
 const STORAGE_KEY = "gs_custom_queue_v1";
+const SPOTIFY_TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
 
 const initialSnapshot: QueueSnapshot = {
   items: [],
@@ -35,6 +36,19 @@ function createQueueId() {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeQueueTrackId(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (SPOTIFY_TRACK_ID_REGEX.test(raw)) return raw;
+  if (raw.startsWith("spotify:track:")) {
+    const segment = raw.split(":").pop() ?? "";
+    const id = segment.split("?")[0]?.trim() ?? "";
+    return SPOTIFY_TRACK_ID_REGEX.test(id) ? id : null;
+  }
+  const embedded = raw.match(/[A-Za-z0-9]{22}/);
+  return embedded?.[0] ?? null;
 }
 
 function isQueueItem(value: unknown): value is QueueItem {
@@ -190,31 +204,42 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
   }, [hydrated, snapshot]);
 
   const addTracks = useCallback((tracks: QueueTrackInput[]) => {
-    const sanitized = tracks
-      .filter((track) => Boolean(track.trackId && track.uri))
-      .map((track): QueueItem => ({
-        queueId: createQueueId(),
-        uri: track.uri,
-        trackId: track.trackId,
-        name: track.name,
-        artists: track.artists,
-        primaryArtistId: track.primaryArtistId ?? null,
-        albumId: track.albumId ?? null,
-        albumName: track.albumName ?? null,
-        durationMs: track.durationMs,
-        explicit:
-          track.explicit === undefined || track.explicit === null
-            ? null
-            : track.explicit
-            ? 1
-            : 0,
-        artworkUrl: track.artworkUrl,
-        playlists: normalizePlaylistRefs(track.playlists),
-        addedAt: Date.now(),
-      }));
-    if (!sanitized.length) return;
-
     setSnapshot((prev) => {
+      const existingIds = new Set(
+        prev.items
+          .map((item) => normalizeQueueTrackId(item.trackId))
+          .filter((id): id is string => Boolean(id))
+      );
+      const sanitized: QueueItem[] = [];
+      for (const track of tracks) {
+        if (!track?.uri) continue;
+        const normalizedTrackId =
+          normalizeQueueTrackId(track.trackId) ?? normalizeQueueTrackId(track.uri);
+        if (!normalizedTrackId) continue;
+        if (existingIds.has(normalizedTrackId)) continue;
+        existingIds.add(normalizedTrackId);
+        sanitized.push({
+          queueId: createQueueId(),
+          uri: track.uri,
+          trackId: normalizedTrackId,
+          name: track.name,
+          artists: track.artists,
+          primaryArtistId: track.primaryArtistId ?? null,
+          albumId: track.albumId ?? null,
+          albumName: track.albumName ?? null,
+          durationMs: track.durationMs,
+          explicit:
+            track.explicit === undefined || track.explicit === null
+              ? null
+              : track.explicit
+              ? 1
+              : 0,
+          artworkUrl: track.artworkUrl,
+          playlists: normalizePlaylistRefs(track.playlists),
+          addedAt: Date.now(),
+        });
+      }
+      if (!sanitized.length) return prev;
       const items = [...prev.items, ...sanitized];
       return {
         ...prev,

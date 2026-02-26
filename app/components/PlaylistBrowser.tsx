@@ -1021,8 +1021,8 @@ export default function PlaylistBrowser() {
     () =>
       new Set(
         (queue.items ?? [])
-          .map((item) => String(item?.trackId ?? "").trim())
-          .filter(Boolean)
+          .map((item) => normalizeSpotifyTrackId(String(item?.trackId ?? "").trim()))
+          .filter((id): id is string => Boolean(id))
       ),
     [queue.items]
   );
@@ -3245,6 +3245,24 @@ export default function PlaylistBrowser() {
 
   const handleAddTrackToQueue = useCallback(
     (track: TrackRow | TrackItem) => {
+      const rawTrackId = resolveTrackId(track);
+      const normalizedTrackId = normalizeSpotifyTrackId(rawTrackId ?? null);
+      if (!normalizedTrackId) return;
+
+      const existingQueueIds = (queue.items ?? [])
+        .filter(
+          (item) => normalizeSpotifyTrackId(item.trackId ?? null) === normalizedTrackId
+        )
+        .map((item) => item.queueId);
+
+      if (existingQueueIds.length > 0) {
+        for (const queueId of existingQueueIds) {
+          queue.removeTrack(queueId);
+        }
+        setError(null);
+        return;
+      }
+
       const queueTrack = buildQueueTrackInput(track);
       if (!queueTrack) return;
       queue.addTracks([queueTrack]);
@@ -4766,7 +4784,12 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
           <AddToQueueButton
             track={track}
             onAdd={data.addTrackToQueue}
-            active={Boolean(track.trackId && data.queueTrackIds.has(track.trackId))}
+            active={Boolean(
+              normalizeSpotifyTrackId(track.trackId ?? null) &&
+                data.queueTrackIds.has(
+                  normalizeSpotifyTrackId(track.trackId ?? null) as string
+                )
+            )}
           />
           <AddToPlaylistMenu
             track={track}
@@ -4969,7 +4992,12 @@ function TrackItemRenderer({
           <AddToQueueButton
             track={track}
             onAdd={data.addTrackToQueue}
-            active={Boolean((track.trackId || track.id) && data.queueTrackIds.has(track.trackId || track.id))}
+            active={Boolean(
+              normalizeSpotifyTrackId(track.trackId ?? track.id ?? null) &&
+                data.queueTrackIds.has(
+                  normalizeSpotifyTrackId(track.trackId ?? track.id ?? null) as string
+                )
+            )}
           />
           <AddToPlaylistMenu
             track={track}

@@ -91,8 +91,6 @@ const shownTracksBySession = new Map<string, { ids: Set<string>; expiresAt: numb
 const userMarketCache = new Map<string, { market: string; expiresAt: number }>();
 const inflightReco = new Map<string, Promise<PlaylistOnlyRecommendationsResponse>>();
 const lastSeedSetByPlaylist = new Map<string, { ids: string[]; expiresAt: number }>();
-const recommendationsUnavailableUntilByUser = new Map<string, number>();
-const RECOMMENDATIONS_UNAVAILABLE_TTL_MS = 10 * 60 * 1000;
 
 function hashText(value: string) {
   return crypto.createHash("sha1").update(value).digest("hex");
@@ -150,6 +148,15 @@ function getSpotifyErrorExcerpt(body: unknown) {
     .slice(0, 3);
   if (lines.length === 0) return null;
   return lines.join(" | ").slice(0, 300);
+}
+
+function toOutboundPath(url: string) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return null;
+  }
 }
 
 function buildArtistQuotaOk(tracks: SeedTrackMeta[], seedIds: string[]) {
@@ -447,6 +454,7 @@ async function fetchRecommendations(args: {
   });
   const recoUrl = `https://api.spotify.com/v1/recommendations?${params.toString()}`;
   const outboundHost = new URL(recoUrl).host;
+  const outboundPath = toOutboundPath(recoUrl);
   const cached = recommendationsCache.get(cacheKey);
   if (cached && cached.expiresAt > nowMs()) {
     return {
@@ -455,6 +463,7 @@ async function fetchRecommendations(args: {
       spotifyStatus: 200 as const,
       spotifyErrorExcerpt: null,
       outboundHost,
+      outboundPath,
     };
   }
   try {
@@ -477,6 +486,7 @@ async function fetchRecommendations(args: {
       data: {
         playlistId: args.playlistId,
         outboundHost,
+        outboundPath,
         spotifyStatus: 200,
         marketUsed: args.market,
         rawTrackCount: tracks.length,
@@ -489,6 +499,7 @@ async function fetchRecommendations(args: {
       spotifyStatus: 200 as const,
       spotifyErrorExcerpt: null,
       outboundHost,
+      outboundPath,
     };
   } catch (error) {
     if (error instanceof SpotifyFetchError) {
@@ -501,6 +512,7 @@ async function fetchRecommendations(args: {
         data: {
           playlistId: args.playlistId,
           outboundHost,
+          outboundPath,
           spotifyStatus: error.status,
           spotifyErrorCode: error.code,
           spotifyErrorMessage: spotifyErrorExcerpt,
@@ -520,6 +532,7 @@ async function fetchRecommendations(args: {
           upstreamStatus: error.status,
           upstreamErrorExcerpt: spotifyErrorExcerpt,
           outboundHost,
+          outboundPath,
         });
       }
       if (error.status === 401) {
@@ -531,6 +544,7 @@ async function fetchRecommendations(args: {
           upstreamStatus: error.status,
           upstreamErrorExcerpt: spotifyErrorExcerpt,
           outboundHost,
+          outboundPath,
         });
       }
       if (error.status === 403) {
@@ -542,22 +556,19 @@ async function fetchRecommendations(args: {
           upstreamStatus: error.status,
           upstreamErrorExcerpt: spotifyErrorExcerpt,
           outboundHost,
+          outboundPath,
         });
       }
       if (error.status === 404) {
-        recommendationsUnavailableUntilByUser.set(
-          args.userId,
-          nowMs() + RECOMMENDATIONS_UNAVAILABLE_TTL_MS
-        );
         throw new RecommendationsServiceError({
-          status: 503,
-          code: "RECOMMENDATIONS_UNAVAILABLE",
-          message: "Spotify recommendations endpoint tijdelijk niet beschikbaar.",
-          retryAfterSec: Math.ceil(RECOMMENDATIONS_UNAVAILABLE_TTL_MS / 1000),
+          status: 502,
+          code: "SPOTIFY_UPSTREAM",
+          message: "Spotify endpoint niet gevonden voor recommendations.",
           correlationId: error.correlationId,
           upstreamStatus: error.status,
           upstreamErrorExcerpt: spotifyErrorExcerpt,
           outboundHost,
+          outboundPath,
         });
       }
       if (error.status === 400) {
@@ -574,6 +585,7 @@ async function fetchRecommendations(args: {
             spotifyStatus: error.status,
             spotifyErrorExcerpt,
             outboundHost,
+            outboundPath,
           };
         }
         throw new RecommendationsServiceError({
@@ -584,6 +596,7 @@ async function fetchRecommendations(args: {
           upstreamStatus: error.status,
           upstreamErrorExcerpt: spotifyErrorExcerpt,
           outboundHost,
+          outboundPath,
         });
       }
     }
@@ -597,6 +610,7 @@ async function fetchRecommendations(args: {
       upstreamErrorExcerpt:
         error instanceof SpotifyFetchError ? getSpotifyErrorExcerpt(error.body) : null,
       outboundHost,
+      outboundPath,
     });
   }
 }
@@ -677,6 +691,7 @@ export type PlaylistOnlyRecommendationsResponse = {
     spotifyStatus?: number | null;
     spotifyErrorMessage?: string | null;
     outboundHost?: string | null;
+    outboundPath?: string | null;
     tokenPresent?: boolean | null;
   };
   hints?: string[];
@@ -697,16 +712,6 @@ export async function getPlaylistOnlyRecommendations(args: {
   forceRefresh?: boolean;
 }) {
   cleanupCaches();
-  const blockedUntil = recommendationsUnavailableUntilByUser.get(args.userId) ?? 0;
-  if (blockedUntil > nowMs()) {
-    throw new RecommendationsServiceError({
-      status: 503,
-      code: "RECOMMENDATIONS_UNAVAILABLE",
-      message: "Spotify recommendations endpoint tijdelijk niet beschikbaar.",
-      retryAfterSec: Math.max(1, Math.ceil((blockedUntil - nowMs()) / 1000)),
-      correlationId: args.correlationId,
-    });
-  }
   const inflightKey = `reco-run:${args.userId}:${args.playlistId}:${args.mode}:${args.limit}`;
   if (inflightReco.has(inflightKey)) {
     return await inflightReco.get(inflightKey)!;
@@ -843,6 +848,7 @@ export async function getPlaylistOnlyRecommendations(args: {
               spotifyStatus: firstReco.spotifyStatus ?? null,
               spotifyErrorMessage: firstReco.spotifyErrorExcerpt ?? null,
               outboundHost: firstReco.outboundHost ?? null,
+              outboundPath: firstReco.outboundPath ?? null,
               tokenPresent: true,
             },
             requestId: args.correlationId,
@@ -867,6 +873,7 @@ export async function getPlaylistOnlyRecommendations(args: {
               spotifyStatus: firstReco.spotifyStatus ?? null,
               spotifyErrorMessage: firstReco.spotifyErrorExcerpt ?? null,
               outboundHost: firstReco.outboundHost ?? null,
+              outboundPath: firstReco.outboundPath ?? null,
               tokenPresent: true,
             },
             hints: ["PLAYLIST_TOO_SMALL_OR_NICHE", "MARKET_RESTRICTIONS"],

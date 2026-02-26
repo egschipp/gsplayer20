@@ -228,6 +228,7 @@ export async function GET(
         spotifyStatus: payload.meta.spotifyStatus ?? null,
         spotifyErrorMessage: payload.meta.spotifyErrorMessage ?? null,
         outboundHost: payload.meta.outboundHost ?? null,
+        outboundPath: payload.meta.outboundPath ?? null,
         tokenPresent: payload.meta.tokenPresent ?? null,
       },
     });
@@ -258,6 +259,7 @@ export async function GET(
           upstreamStatus: error.upstreamStatus ?? null,
           spotifyErrorMessage: error.upstreamErrorExcerpt ?? null,
           outboundHost: error.outboundHost ?? null,
+          outboundPath: error.outboundPath ?? null,
         },
       });
       return jsonNoStore(
@@ -267,6 +269,7 @@ export async function GET(
           upstreamStatus: error.upstreamStatus ?? undefined,
           spotifyErrorMessage: error.upstreamErrorExcerpt ?? undefined,
           outboundHost: error.outboundHost ?? undefined,
+          outboundPath: error.outboundPath ?? undefined,
           ...(error.retryAfterSec ? { retryAfter: error.retryAfterSec } : {}),
         },
         error.status,

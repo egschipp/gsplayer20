@@ -64,6 +64,7 @@ export class RecommendationsServiceError extends Error {
   upstreamStatus: number | null;
   upstreamErrorExcerpt: string | null;
   outboundHost: string | null;
+  outboundPath: string | null;
 
   constructor(args: {
     status: number;
@@ -74,6 +75,7 @@ export class RecommendationsServiceError extends Error {
     upstreamStatus?: number | null;
     upstreamErrorExcerpt?: string | null;
     outboundHost?: string | null;
+    outboundPath?: string | null;
   }) {
     super(args.message);
     this.name = "RecommendationsServiceError";
@@ -98,6 +100,10 @@ export class RecommendationsServiceError extends Error {
     this.outboundHost =
       typeof args.outboundHost === "string" && args.outboundHost.trim()
         ? args.outboundHost.trim()
+        : null;
+    this.outboundPath =
+      typeof args.outboundPath === "string" && args.outboundPath.trim()
+        ? args.outboundPath.trim()
         : null;
   }
 }

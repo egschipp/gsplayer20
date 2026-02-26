@@ -61,6 +61,9 @@ export class RecommendationsServiceError extends Error {
   code: RecommendationsErrorCode;
   retryAfterSec: number | null;
   correlationId: string | null;
+  upstreamStatus: number | null;
+  upstreamErrorExcerpt: string | null;
+  outboundHost: string | null;
 
   constructor(args: {
     status: number;
@@ -68,6 +71,9 @@ export class RecommendationsServiceError extends Error {
     message: string;
     retryAfterSec?: number | null;
     correlationId?: string | null;
+    upstreamStatus?: number | null;
+    upstreamErrorExcerpt?: string | null;
+    outboundHost?: string | null;
   }) {
     super(args.message);
     this.name = "RecommendationsServiceError";
@@ -80,6 +86,18 @@ export class RecommendationsServiceError extends Error {
     this.correlationId =
       typeof args.correlationId === "string" && args.correlationId.trim()
         ? args.correlationId
+        : null;
+    this.upstreamStatus =
+      typeof args.upstreamStatus === "number" && Number.isFinite(args.upstreamStatus)
+        ? Math.floor(args.upstreamStatus)
+        : null;
+    this.upstreamErrorExcerpt =
+      typeof args.upstreamErrorExcerpt === "string" && args.upstreamErrorExcerpt.trim()
+        ? args.upstreamErrorExcerpt.trim()
+        : null;
+    this.outboundHost =
+      typeof args.outboundHost === "string" && args.outboundHost.trim()
+        ? args.outboundHost.trim()
         : null;
   }
 }

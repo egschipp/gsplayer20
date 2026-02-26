@@ -255,12 +255,18 @@ export async function GET(
         data: {
           upstreamCorrelationId: error.correlationId ?? null,
           retryAfterSec: error.retryAfterSec ?? null,
+          upstreamStatus: error.upstreamStatus ?? null,
+          spotifyErrorMessage: error.upstreamErrorExcerpt ?? null,
+          outboundHost: error.outboundHost ?? null,
         },
       });
       return jsonNoStore(
         {
           error: error.code,
           message: error.message,
+          upstreamStatus: error.upstreamStatus ?? undefined,
+          spotifyErrorMessage: error.upstreamErrorExcerpt ?? undefined,
+          outboundHost: error.outboundHost ?? undefined,
           ...(error.retryAfterSec ? { retryAfter: error.retryAfterSec } : {}),
         },
         error.status,

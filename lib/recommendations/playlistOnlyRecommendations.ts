@@ -90,7 +90,7 @@ type UserProfileResponse = {
 const SEED_POOL_TTL_MS = 20 * 60 * 1000;
 const RECO_CACHE_TTL_MS = 90 * 1000;
 const SHOWN_TTL_MS = 3 * 60 * 60 * 1000;
-const USER_MARKET_TTL_MS = 10 * 60 * 1000;
+const USER_MARKET_TTL_MS = 60 * 60 * 1000;
 const SEED_VALIDATION_TTL_MS = 20 * 60 * 1000;
 const MAX_PLAYLIST_ITEMS_SCAN = 1000;
 const MIN_DISPLAY_TARGET = 15;
@@ -315,7 +315,7 @@ async function selectValidatedSeedSet(args: {
   correlationId: string;
   preferredSeedTracks?: string[];
 }) {
-  const targetSeedCount = Math.min(5, args.pool.length);
+  const targetSeedCount = 5;
   if (targetSeedCount <= 0) {
     return {
       seedTrackIds: [] as string[],
@@ -323,6 +323,14 @@ async function selectValidatedSeedSet(args: {
       targetSeedCount,
     };
   }
+  if (args.pool.length < targetSeedCount) {
+    return {
+      seedTrackIds: [] as string[],
+      rejectedSeedIds: [] as string[],
+      targetSeedCount,
+    };
+  }
+
   const cacheKeyFor = (trackId: string) => `${args.market}:${trackId}`;
   const now = nowMs();
   const unknownIds = args.pool
@@ -331,7 +339,7 @@ async function selectValidatedSeedSet(args: {
       const cached = seedValidationCache.get(cacheKeyFor(id));
       return !cached || cached.expiresAt <= now;
     })
-    .slice(0, 50);
+    .slice(0, 100);
 
   if (unknownIds.length > 0) {
     const validation = await validateSeedTrackBatch({
@@ -361,13 +369,31 @@ async function selectValidatedSeedSet(args: {
   });
 
   if (candidatePool.length >= targetSeedCount) {
-    const selected = selectSeedSet({
+    const selected = Array.from(
+      new Set(
+        selectSeedSet({
+          playlistKey: args.playlistKey,
+          pool: candidatePool,
+          preferredSeedTracks: args.preferredSeedTracks,
+        }).map((id) => id.trim())
+      )
+    );
+    if (selected.length >= targetSeedCount) {
+      return {
+        seedTrackIds: selected.slice(0, targetSeedCount),
+        rejectedSeedIds: args.pool
+          .map((track) => track.id)
+          .filter((id) => !candidatePool.some((track) => track.id === id)),
+        targetSeedCount,
+      };
+    }
+    const secondPass = selectSeedSet({
       playlistKey: args.playlistKey,
       pool: candidatePool,
-      preferredSeedTracks: args.preferredSeedTracks,
     });
+    const secondSelection = Array.from(new Set(secondPass.map((id) => id.trim())));
     return {
-      seedTrackIds: selected,
+      seedTrackIds: secondSelection.slice(0, targetSeedCount),
       rejectedSeedIds: args.pool
         .map((track) => track.id)
         .filter((id) => !candidatePool.some((track) => track.id === id)),
@@ -582,8 +608,19 @@ async function fetchRecommendations(args: {
   limit: number;
   correlationId: string;
 }) {
-  const invalidSeeds = args.seedTrackIds.filter((id) => !/^[A-Za-z0-9]{22}$/.test(id));
-  if (invalidSeeds.length > 0) {
+  const normalizedSeeds = args.seedTrackIds.map((id) => String(id).trim()).filter(Boolean);
+  const uniqueSeeds = Array.from(new Set(normalizedSeeds));
+  const params = new URLSearchParams({
+    seed_tracks: uniqueSeeds.join(","),
+    limit: String(args.limit),
+    market: args.market,
+  });
+  const recoUrl = `https://api.spotify.com/v1/recommendations?${params.toString()}`;
+  const outboundHost = new URL(recoUrl).host;
+  const outboundPath = toOutboundPath(recoUrl);
+  const invalidSeeds = uniqueSeeds.filter((id) => !/^[A-Za-z0-9]{22}$/.test(id));
+  const hasWhitespaceInAnySeed = uniqueSeeds.some((id) => id !== id.trim());
+  if (invalidSeeds.length > 0 || uniqueSeeds.length !== 5) {
     logEvent({
       level: "warn",
       event: "playlist_only_recommendations_seed_invalid",
@@ -591,25 +628,29 @@ async function fetchRecommendations(args: {
       appUserId: args.userId,
       data: {
         playlistId: args.playlistId,
+        seedCountAfterAllFilters: uniqueSeeds.length,
+        uniqueCount: uniqueSeeds.length,
+        hasWhitespaceInAnySeed,
+        seedTracksArray: uniqueSeeds,
+        invalidSeedTracksSample: invalidSeeds.slice(0, 3).map((seed) => ({
+          seed,
+          length: seed.length,
+        })),
         invalidSeedCount: invalidSeeds.length,
       },
     });
     return {
       tracks: [],
       status: "seed_invalid" as const,
+      outboundHost,
+      outboundPath,
+      outboundUrl: recoUrl,
+      outboundExecuted: false as const,
     };
   }
 
-  const seedHash = hashText(args.seedTrackIds.join(","));
+  const seedHash = hashText(uniqueSeeds.join(","));
   const cacheKey = `reco:${args.userId}:${args.playlistId}:${args.market}:${seedHash}:${args.limit}`;
-  const params = new URLSearchParams({
-    seed_tracks: args.seedTrackIds.join(","),
-    limit: String(args.limit),
-    market: args.market,
-  });
-  const recoUrl = `https://api.spotify.com/v1/recommendations?${params.toString()}`;
-  const outboundHost = new URL(recoUrl).host;
-  const outboundPath = toOutboundPath(recoUrl);
   const cached = recommendationsCache.get(cacheKey);
   if (cached && cached.expiresAt > nowMs()) {
     return {
@@ -619,9 +660,25 @@ async function fetchRecommendations(args: {
       spotifyErrorExcerpt: null,
       outboundHost,
       outboundPath,
+      outboundUrl: recoUrl,
+      outboundExecuted: false as const,
     };
   }
   try {
+    logEvent({
+      level: "info",
+      event: "playlist_only_recommendations_request_built",
+      correlationId: args.correlationId,
+      appUserId: args.userId,
+      data: {
+        playlistId: args.playlistId,
+        market: args.market,
+        seedTracksFinal: uniqueSeeds,
+        seedCountFinal: uniqueSeeds.length,
+        seedTracksParam: uniqueSeeds.join(","),
+        outboundPath,
+      },
+    });
     const response = await spotifyFetch<RecoResponse>({
       url: recoUrl,
       userLevel: true,
@@ -655,6 +712,8 @@ async function fetchRecommendations(args: {
       spotifyErrorExcerpt: null,
       outboundHost,
       outboundPath,
+      outboundUrl: recoUrl,
+      outboundExecuted: true as const,
     };
   } catch (error) {
     if (error instanceof SpotifyFetchError) {
@@ -758,6 +817,8 @@ async function fetchRecommendations(args: {
             spotifyErrorExcerpt,
             outboundHost,
             outboundPath,
+            outboundUrl: recoUrl,
+            outboundExecuted: true as const,
           };
         }
         throw new RecommendationsServiceError({
@@ -871,6 +932,8 @@ export type PlaylistOnlyRecommendationsResponse = {
     spotifyErrorMessage?: string | null;
     outboundHost?: string | null;
     outboundPath?: string | null;
+    outboundUrl?: string | null;
+    outboundExecuted?: boolean | null;
     tokenPresent?: boolean | null;
   };
   hints?: string[];
@@ -931,6 +994,33 @@ export async function getPlaylistOnlyRecommendations(args: {
         requestId: args.correlationId,
         legacyItems: [],
         legacyReason: "no_results",
+      } satisfies PlaylistOnlyRecommendationsResponse;
+    }
+    if (seedPool.tracks.length < 5) {
+      return {
+        status: "empty",
+        playlistId: args.playlistId,
+        market,
+        seed: {
+          trackIds: [],
+          seedHash: hashText(""),
+          poolSize: seedPool.tracks.length,
+        },
+        tracks: [],
+        meta: {
+          requestedLimit: args.limit,
+          returnedRaw: 0,
+          afterFilter: 0,
+          topUpUsed: false,
+          filteredReasons: {
+            INSUFFICIENT_PLAYLIST_SEEDS: 1,
+          },
+          tokenPresent: true,
+        },
+        hints: ["PLAYLIST_TOO_SMALL_OR_NICHE", "SEED_INVALID"],
+        requestId: args.correlationId,
+        legacyItems: [],
+        legacyReason: "seed_rejected",
       } satisfies PlaylistOnlyRecommendationsResponse;
     }
 
@@ -1092,6 +1182,8 @@ export async function getPlaylistOnlyRecommendations(args: {
               spotifyErrorMessage: firstReco.spotifyErrorExcerpt ?? null,
               outboundHost: firstReco.outboundHost ?? null,
               outboundPath: firstReco.outboundPath ?? null,
+              outboundUrl: firstReco.outboundUrl ?? null,
+              outboundExecuted: firstReco.outboundExecuted ?? null,
               tokenPresent: true,
             },
             requestId: args.correlationId,
@@ -1117,6 +1209,8 @@ export async function getPlaylistOnlyRecommendations(args: {
               spotifyErrorMessage: firstReco.spotifyErrorExcerpt ?? null,
               outboundHost: firstReco.outboundHost ?? null,
               outboundPath: firstReco.outboundPath ?? null,
+              outboundUrl: firstReco.outboundUrl ?? null,
+              outboundExecuted: firstReco.outboundExecuted ?? null,
               tokenPresent: true,
             },
             hints: ["PLAYLIST_TOO_SMALL_OR_NICHE", "MARKET_RESTRICTIONS"],

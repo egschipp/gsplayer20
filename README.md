@@ -22,8 +22,6 @@ Optional tuning:
 - `SPOTIFY_CIRCUIT_FAILURE_THRESHOLD` (default 6)
 - `SPOTIFY_CIRCUIT_OPEN_MS` (default 12000)
 - `SPOTIFY_RETRY_AFTER_MAX_MS` (default 120000)
-- `FEATURE_RECOMMENDATIONS` (default enabled; set `0`/`false` to disable server route)
-- `NEXT_PUBLIC_FEATURE_RECOMMENDATIONS` (default enabled; set `0`/`false` to hide UI)
 - `SYNC_TRACKS_INITIAL_PAGES` (default 50)
 - `SYNC_TRACKS_INCREMENTAL_PAGES` (default 5)
 - `SYNC_PLAYLISTS_PAGES` (default 10)
@@ -44,7 +42,6 @@ Routes:
 - `/api/spotify/me/playlists`
 - `/api/spotify/me/top`
 - `/api/spotify/me/library`
-- `/api/spotify/recommendations` (POST)
 - `/api/spotify/playlists/:playlistId/items`
 - `/api/spotify/sync` (POST: tracks_initial | tracks_incremental | playlists)
 - `/api/spotify/sync-status`

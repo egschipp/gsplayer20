@@ -31,6 +31,6 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/worker.js ./worker.js
 COPY --from=builder /app/db ./db
-RUN rm -f ./package-lock.json ./package.json ./.next/package.json
+RUN rm -f ./package-lock.json ./package.json ./.next/package.json ./node_modules/.package-lock.json
 EXPOSE 3000
 CMD ["sh", "-c", "node db/scripts/migrate.js && node server.js"]

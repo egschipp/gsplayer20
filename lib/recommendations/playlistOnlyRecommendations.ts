@@ -91,6 +91,7 @@ const SEED_POOL_TTL_MS = 20 * 60 * 1000;
 const RECO_CACHE_TTL_MS = 90 * 1000;
 const SHOWN_TTL_MS = 3 * 60 * 60 * 1000;
 const USER_MARKET_TTL_MS = 10 * 60 * 1000;
+const SEED_VALIDATION_TTL_MS = 20 * 60 * 1000;
 const MAX_PLAYLIST_ITEMS_SCAN = 1000;
 const MIN_DISPLAY_TARGET = 15;
 const MIN_DISPLAY_ABSOLUTE = 5;
@@ -99,6 +100,7 @@ const seedPoolCache = new Map<string, SeedPoolEntry>();
 const recommendationsCache = new Map<string, { value: RecoTrack[]; expiresAt: number }>();
 const shownTracksBySession = new Map<string, { ids: Set<string>; expiresAt: number }>();
 const userMarketCache = new Map<string, { market: string; expiresAt: number }>();
+const seedValidationCache = new Map<string, { valid: boolean; expiresAt: number }>();
 const inflightReco = new Map<string, Promise<PlaylistOnlyRecommendationsResponse>>();
 const lastSeedSetByPlaylist = new Map<string, { ids: string[]; expiresAt: number }>();
 
@@ -122,6 +124,9 @@ function cleanupCaches(now = nowMs()) {
   }
   for (const [key, value] of userMarketCache.entries()) {
     if (value.expiresAt <= now) userMarketCache.delete(key);
+  }
+  for (const [key, value] of seedValidationCache.entries()) {
+    if (value.expiresAt <= now) seedValidationCache.delete(key);
   }
   for (const [key, value] of lastSeedSetByPlaylist.entries()) {
     if (value.expiresAt <= now) lastSeedSetByPlaylist.delete(key);
@@ -318,38 +323,66 @@ async function selectValidatedSeedSet(args: {
       targetSeedCount,
     };
   }
+  const cacheKeyFor = (trackId: string) => `${args.market}:${trackId}`;
+  const now = nowMs();
+  const unknownIds = args.pool
+    .map((track) => track.id)
+    .filter((id) => {
+      const cached = seedValidationCache.get(cacheKeyFor(id));
+      return !cached || cached.expiresAt <= now;
+    })
+    .slice(0, 50);
 
-  let candidatePool = [...args.pool];
-  const rejected = new Set<string>();
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    if (candidatePool.length < targetSeedCount) break;
-    const candidateSeedIds = selectSeedSet({
-      playlistKey: args.playlistKey,
-      pool: candidatePool,
-      preferredSeedTracks: attempt === 0 ? args.preferredSeedTracks : undefined,
-    });
+  if (unknownIds.length > 0) {
     const validation = await validateSeedTrackBatch({
       userId: args.userId,
       playlistId: args.playlistId,
       market: args.market,
       correlationId: args.correlationId,
-      seedTrackIds: candidateSeedIds,
+      seedTrackIds: unknownIds,
     });
-    if (validation.validTrackIds.length >= targetSeedCount) {
-      return {
-        seedTrackIds: validation.validTrackIds.slice(0, targetSeedCount),
-        rejectedSeedIds: Array.from(rejected),
-        targetSeedCount,
-      };
+    for (const validId of validation.validTrackIds) {
+      seedValidationCache.set(cacheKeyFor(validId), {
+        valid: true,
+        expiresAt: now + SEED_VALIDATION_TTL_MS,
+      });
     }
     for (const invalidId of validation.invalidTrackIds) {
-      rejected.add(invalidId);
+      seedValidationCache.set(cacheKeyFor(invalidId), {
+        valid: false,
+        expiresAt: now + SEED_VALIDATION_TTL_MS,
+      });
     }
-    candidatePool = candidatePool.filter((track) => !rejected.has(track.id));
   }
+
+  const candidatePool = args.pool.filter((track) => {
+    const cached = seedValidationCache.get(cacheKeyFor(track.id));
+    return cached ? cached.valid : true;
+  });
+
+  if (candidatePool.length >= targetSeedCount) {
+    const selected = selectSeedSet({
+      playlistKey: args.playlistKey,
+      pool: candidatePool,
+      preferredSeedTracks: args.preferredSeedTracks,
+    });
+    return {
+      seedTrackIds: selected,
+      rejectedSeedIds: args.pool
+        .map((track) => track.id)
+        .filter((id) => !candidatePool.some((track) => track.id === id)),
+      targetSeedCount,
+    };
+  }
+
   return {
     seedTrackIds: [] as string[],
-    rejectedSeedIds: Array.from(rejected),
+    rejectedSeedIds: args.pool
+      .map((track) => track.id)
+      .filter((id) => {
+        const cached = seedValidationCache.get(cacheKeyFor(id));
+        return cached ? !cached.valid : false;
+      }),
     targetSeedCount,
   };
 }

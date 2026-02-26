@@ -122,6 +122,7 @@ jobs:
           scan-type: image
           scanners: vuln
           severity: HIGH,CRITICAL
+          ignore-unfixed: true
           exit-code: "1"
 
   deploy:

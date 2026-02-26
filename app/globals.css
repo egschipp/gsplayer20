@@ -1459,6 +1459,13 @@ details[open] > .details-summary::after {
   color: #ffffff;
 }
 
+.queue-row-btn.active {
+  border-color: rgba(29, 185, 84, 0.9);
+  background: rgba(29, 185, 84, 0.34);
+  color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(29, 185, 84, 0.22) inset;
+}
+
 .queue-row-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -1799,7 +1806,7 @@ details[open] > .details-summary::after {
 
 .player-connect {
   min-width: 0;
-  padding: 12px;
+  padding: 8px 10px;
   border-radius: 16px;
   background: linear-gradient(
       135deg,
@@ -1946,6 +1953,11 @@ details[open] > .details-summary::after {
   margin-top: 8px;
 }
 
+.player-volume-under-connect {
+  grid-column: 2;
+  margin-top: 8px;
+}
+
 .player-slider {
   -webkit-appearance: none;
   appearance: none;
@@ -2004,7 +2016,7 @@ details[open] > .details-summary::after {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .player-device-select {
@@ -3381,6 +3393,10 @@ details[open] > .details-summary::after {
   }
 
   .player-connect {
+    grid-column: 1 / -1;
+  }
+
+  .player-volume-under-connect {
     grid-column: 1 / -1;
   }
 }

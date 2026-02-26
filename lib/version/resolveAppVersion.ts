@@ -143,12 +143,12 @@ export async function resolveAppVersion(options?: {
     };
   }
 
-  // Default to local package version so UI reflects deployed code rollback state.
-  // Set APP_VERSION_SOURCE=remote to restore remote release/tag resolution.
-  const versionSource = String(process.env.APP_VERSION_SOURCE ?? "package")
+  // Default to remote release/tag version so the UI shows the deployed release number.
+  // Set APP_VERSION_SOURCE=package to force local package version.
+  const versionSource = String(process.env.APP_VERSION_SOURCE ?? "remote")
     .trim()
     .toLowerCase();
-  if (versionSource !== "remote") {
+  if (versionSource === "package") {
     return {
       name: packageVersion.name,
       version: packageVersion.version,

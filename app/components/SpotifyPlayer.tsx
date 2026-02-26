@@ -302,6 +302,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const [deviceMissing, setDeviceMissing] = useState(false);
   const [devicesLoaded, setDevicesLoaded] = useState(false);
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
+  const [connectSelectorOpen, setConnectSelectorOpen] = useState(false);
   const lastDeviceSelectRef = useRef(0);
   const pendingDeviceIdRef = useRef<string | null>(null);
   const preferSdkDeviceRef = useRef(true);
@@ -1969,33 +1970,40 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
 
   const ensureTrackPlaylistOptionsLoaded = useCallback(async () => {
     if (trackPlaylistOptionsLoadedRef.current) return;
-    const res = await fetch("/api/spotify/me/playlists?limit=100", { cache: "no-store" });
-    if (!res.ok) {
-      throw new Error(`PLAYLIST_OPTIONS_${res.status}`);
+    let cursor: string | null = null;
+    const allRows: Array<{ playlistId?: string; name?: string }> = [];
+    do {
+      const query = new URLSearchParams({ limit: "100", live: "1" });
+      if (cursor) query.set("cursor", cursor);
+      const res = await fetch(`/api/spotify/me/playlists?${query.toString()}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        throw new Error(`PLAYLIST_OPTIONS_${res.status}`);
+      }
+      const payload = (await res.json().catch(() => null)) as
+        | { items?: Array<{ playlistId?: string; name?: string }>; nextCursor?: string | null }
+        | null;
+      const rows = Array.isArray(payload?.items) ? payload.items : [];
+      allRows.push(...rows);
+      cursor = payload?.nextCursor ? String(payload.nextCursor) : null;
+    } while (cursor);
+
+    const deduped = new Map<string, { id: string; name: string; type: "playlist" }>();
+    for (const item of allRows) {
+      const id = String(item?.playlistId ?? "").trim();
+      const name = String(item?.name ?? "").trim();
+      if (!id || !name) continue;
+      if (!startsWithEmoji(name)) continue;
+      deduped.set(id, { id, name, type: "playlist" });
     }
-    const payload = (await res.json().catch(() => null)) as
-      | { items?: Array<{ playlistId?: string; name?: string }> }
-      | null;
-    const rows = Array.isArray(payload?.items) ? payload.items : [];
-    const mapped = rows
-      .map((item) => {
-        const id = String(item?.playlistId ?? "").trim();
-        const name = String(item?.name ?? "").trim();
-        if (!id || !name) return null;
-        if (!startsWithEmoji(name)) return null;
-        return { id, name, type: "playlist" as const };
+    const mapped = Array.from(deduped.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, "nl", {
+        sensitivity: "base",
+        ignorePunctuation: true,
+        numeric: true,
       })
-      .filter(
-        (item): item is { id: string; name: string; type: "playlist" } =>
-          Boolean(item)
-      )
-      .sort((a, b) =>
-        a.name.localeCompare(b.name, "nl", {
-          sensitivity: "base",
-          ignorePunctuation: true,
-          numeric: true,
-        })
-      );
+    );
     setTrackPlaylistOptions([
       { id: PLAYER_LIKED_PLAYLIST_ID, name: "Liked Songs", type: "liked" },
       ...mapped,
@@ -4317,7 +4325,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               </button>
               <button
                 type="button"
-                className="player-like-btn"
+                className="detail-btn queue-add-btn"
                 aria-label="Toevoegen aan playlists"
                 title="Playlist-selectie voor huidige track"
                 disabled={trackPlaylistSaving}
@@ -4455,7 +4463,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             aria-pressed={shuffleOn}
             aria-label={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
             title={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
-            disabled={shufflePending || commandBusy || disallowShuffle}
+            disabled={shufflePending || disallowShuffle}
             onClick={handleToggleShuffle}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -4467,7 +4475,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             className="player-control player-control-ghost player-control-grad"
             aria-label="Previous"
             title="Previous"
-            disabled={commandBusy || disallowPrevious}
+            disabled={disallowPrevious}
             onClick={handlePrevious}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -4478,7 +4486,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             type="button"
             className="player-control player-control-play player-control-grad"
             aria-label={playbackPausedUi ? "Play" : "Pause"}
-            aria-busy={playPauseOptimisticPaused !== null || commandBusy}
+            aria-busy={playPauseOptimisticPaused !== null}
             title={playbackPausedUi ? "Play" : "Pause"}
             disabled={disallowPlayPause}
             onClick={handleTogglePlay}
@@ -4498,7 +4506,7 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             className="player-control player-control-ghost player-control-grad"
             aria-label="Next"
             title="Next"
-            disabled={commandBusy || disallowNext}
+            disabled={disallowNext}
             onClick={handleNext}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -4605,6 +4613,26 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
               ? "Spotify Connect"
               : "Verbinden..."}
           </span>
+          <button
+            type="button"
+            className="detail-btn"
+            aria-label={connectSelectorOpen ? "Verberg apparaatselectie" : "Toon apparaatselectie"}
+            title={connectSelectorOpen ? "Verberg apparaatselectie" : "Toon apparaatselectie"}
+            aria-expanded={connectSelectorOpen}
+            onClick={() => {
+              setConnectSelectorOpen((prev) => {
+                const next = !prev;
+                if (!next) {
+                  setDeviceMenuOpen(false);
+                } else {
+                  refreshDevices(true);
+                }
+                return next;
+              });
+            }}
+          >
+            {connectSelectorOpen ? "▴" : "▾"}
+          </button>
           {sdkSupported && !sdkReadyState ? (
             <button
               type="button"
@@ -4626,84 +4654,86 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             ↻
           </button>
         </div>
-        <div className="player-device-select">
-          <div
-            className="combo"
-            style={{ width: "100%" }}
-            ref={deviceMenu.rootRef}
-            onPointerDownCapture={deviceMenu.markInteraction}
-            onTouchStartCapture={deviceMenu.markInteraction}
-          >
-            <button
-              type="button"
-              className="combo-input"
-              onClick={() => {
-                setDeviceMenuOpen((prev) => {
-                  const next = !prev;
-                  if (next) {
-                    refreshDevices(true);
-                    if (sdkSupported && !sdkReadyState) {
-                      startLocalWebPlayerFromConnect();
-                    }
-                  }
-                  return next;
-                });
-              }}
-              onBlur={deviceMenu.handleBlur}
-              aria-label="Kies een Spotify‑apparaat"
-              aria-haspopup="listbox"
-              aria-expanded={deviceMenuOpen}
+        {connectSelectorOpen ? (
+          <div className="player-device-select">
+            <div
+              className="combo"
+              style={{ width: "100%" }}
+              ref={deviceMenu.rootRef}
+              onPointerDownCapture={deviceMenu.markInteraction}
+              onTouchStartCapture={deviceMenu.markInteraction}
             >
-              {devices.find((d) => d.id === (activeDeviceId || deviceId))?.name ||
-                "Kies apparaat"}
-            </button>
-            {deviceMenuOpen ? (
-              <div className="combo-list" role="listbox">
-                {sdkSupported && !sdkReadyState ? (
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={false}
-                    className="combo-item"
-                    onClick={() => {
-                      startLocalWebPlayerFromConnect();
-                      setDeviceMenuOpen(false);
-                    }}
-                  >
-                    {localWebplayerName} <span className="text-subtle">(start lokaal)</span>
-                  </button>
-                ) : null}
-                {devices.length === 0 ? (
-                  <div className="combo-empty">Geen apparaten gevonden.</div>
-                ) : (
-                  devices.map((device) => (
+              <button
+                type="button"
+                className="combo-input"
+                onClick={() => {
+                  setDeviceMenuOpen((prev) => {
+                    const next = !prev;
+                    if (next) {
+                      refreshDevices(true);
+                      if (sdkSupported && !sdkReadyState) {
+                        startLocalWebPlayerFromConnect();
+                      }
+                    }
+                    return next;
+                  });
+                }}
+                onBlur={deviceMenu.handleBlur}
+                aria-label="Kies een Spotify‑apparaat"
+                aria-haspopup="listbox"
+                aria-expanded={deviceMenuOpen}
+              >
+                {devices.find((d) => d.id === (activeDeviceId || deviceId))?.name ||
+                  "Kies apparaat"}
+              </button>
+              {deviceMenuOpen ? (
+                <div className="combo-list" role="listbox">
+                  {sdkSupported && !sdkReadyState ? (
                     <button
-                      key={device.id}
                       type="button"
                       role="option"
-                      aria-selected={device.id === (activeDeviceId || deviceId)}
-                      className={`combo-item${
-                        device.id === (activeDeviceId || deviceId) ? " active" : ""
-                      }`}
-                      disabled={!device.selectable}
+                      aria-selected={false}
+                      className="combo-item"
                       onClick={() => {
-                        handleDeviceChange(device.id);
+                        startLocalWebPlayerFromConnect();
                         setDeviceMenuOpen(false);
                       }}
                     >
-                      {device.name}{" "}
-                      <span className="text-subtle">
-                        ({device.type}
-                        {device.isPrivateSession ? " • privésessie" : ""}
-                        {!device.selectable ? " • niet beschikbaar" : ""})
-                      </span>
+                      {localWebplayerName} <span className="text-subtle">(start lokaal)</span>
                     </button>
-                  ))
-                )}
-              </div>
-            ) : null}
+                  ) : null}
+                  {devices.length === 0 ? (
+                    <div className="combo-empty">Geen apparaten gevonden.</div>
+                  ) : (
+                    devices.map((device) => (
+                      <button
+                        key={device.id}
+                        type="button"
+                        role="option"
+                        aria-selected={device.id === (activeDeviceId || deviceId)}
+                        className={`combo-item${
+                          device.id === (activeDeviceId || deviceId) ? " active" : ""
+                        }`}
+                        disabled={!device.selectable}
+                        onClick={() => {
+                          handleDeviceChange(device.id);
+                          setDeviceMenuOpen(false);
+                        }}
+                      >
+                        {device.name}{" "}
+                        <span className="text-subtle">
+                          ({device.type}
+                          {device.isPrivateSession ? " • privésessie" : ""}
+                          {!device.selectable ? " • niet beschikbaar" : ""})
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
+        ) : null}
         {sdkSupported &&
         !sdkReadyState &&
         (!activeDeviceId || activeDeviceId === sdkDeviceIdRef.current) ? (
@@ -4745,37 +4775,38 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             </button>
           </div>
         ) : null}
-        <div className="player-volume">
-          <button
-            type="button"
-            className={`player-control player-control-ghost volume-toggle${
-              muted || volume === 0 ? " active" : ""
-            }`}
-            aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
-            title={muted || volume === 0 ? "Unmute" : "Mute"}
-            onClick={handleToggleMute}
-          >
-            {muted || volume === 0 ? "🔇" : "🔊"}
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={volume}
-            onChange={(event) => handleVolume(Number(event.target.value))}
-            className="player-slider player-slider-volume"
-            style={{
-              background: `linear-gradient(90deg, #1db954 ${Math.round(
-                Math.min(1, Math.max(0, volume)) * 100
-              )}%, rgba(255, 255, 255, 0.12) ${Math.round(
-                Math.min(1, Math.max(0, volume)) * 100
-              )}%)`,
-            }}
-            aria-label="Volume"
-            disabled={!activeDeviceSupportsVolume}
-          />
-        </div>
+      </div>
+      <div className="player-progress player-volume-under-connect">
+        <button
+          type="button"
+          className={`player-control player-control-ghost volume-toggle${
+            muted || volume === 0 ? " active" : ""
+          }`}
+          aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
+          title={muted || volume === 0 ? "Unmute" : "Mute"}
+          onClick={handleToggleMute}
+        >
+          {muted || volume === 0 ? "🔇" : "🔊"}
+        </button>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={volume}
+          onChange={(event) => handleVolume(Number(event.target.value))}
+          className="player-slider player-slider-volume"
+          style={{
+            background: `linear-gradient(90deg, #1db954 ${Math.round(
+              Math.min(1, Math.max(0, volume)) * 100
+            )}%, rgba(255, 255, 255, 0.12) ${Math.round(
+              Math.min(1, Math.max(0, volume)) * 100
+            )}%)`,
+          }}
+          aria-label="Volume"
+          disabled={!activeDeviceSupportsVolume}
+        />
+        <span className="text-subtle">{Math.round(Math.min(1, Math.max(0, volume)) * 100)}%</span>
       </div>
       {queueOpen ? (
         <div className="player-queue">

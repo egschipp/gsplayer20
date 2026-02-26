@@ -991,6 +991,15 @@ export default function PlaylistBrowser() {
       .map((pl) => pl.name || "Untitled playlist")
       .filter((name) => startsWithEmoji(name));
   }, [playlistOptions]);
+  const queueTrackIds = useMemo(
+    () =>
+      new Set(
+        (queue.items ?? [])
+          .map((item) => String(item?.trackId ?? "").trim())
+          .filter(Boolean)
+      ),
+    [queue.items]
+  );
 
   const applyAllMyMusicTotal = useCallback((nextTotal: number | null) => {
     setAllMyMusicTotal(nextTotal);
@@ -2979,6 +2988,11 @@ export default function PlaylistBrowser() {
     ) => {
       const toAdd = payload.toAdd ?? [];
       const toRemove = payload.toRemove ?? [];
+      const changedPlaylistIds = new Set(
+        [...toAdd, ...toRemove]
+          .filter((target) => target.type === "playlist")
+          .map((target) => target.id)
+      );
       let hadFailures = false;
       for (const target of toAdd) {
         const ok = await setTrackPlaylistMembership(track, target, true);
@@ -2988,11 +3002,15 @@ export default function PlaylistBrowser() {
         const ok = await setTrackPlaylistMembership(track, target, false);
         if (!ok) hadFailures = true;
       }
+      for (const playlistId of changedPlaylistIds) {
+        triggerSelectedPlaylistLiveRefresh(playlistId);
+        void requestPlaylistItemsSync(playlistId);
+      }
       if (hadFailures) {
         throw new Error("PLAYLIST_MEMBERSHIP_PARTIAL_FAILURE");
       }
     },
-    [setTrackPlaylistMembership]
+    [requestPlaylistItemsSync, setTrackPlaylistMembership, triggerSelectedPlaylistLiveRefresh]
   );
 
   const handleRemoveTrackFromPlaylist = useCallback(
@@ -3676,6 +3694,7 @@ export default function PlaylistBrowser() {
                 activeTargetKey: addingTargetKey || removingTargetKey,
                 ensureAllPlaylistOptionsLoaded,
                 allPlaylistNames,
+                queueTrackIds,
                 MAX_PLAYLIST_CHIPS,
                 selectArtistInMyMusic,
                 selectAlbumInMyMusic,
@@ -3733,6 +3752,7 @@ export default function PlaylistBrowser() {
                 activeTargetKey: addingTargetKey || removingTargetKey,
                 ensureAllPlaylistOptionsLoaded,
                 allPlaylistNames,
+                queueTrackIds,
                 MAX_PLAYLIST_CHIPS,
                 selectArtistInMyMusic,
                 selectAlbumInMyMusic,
@@ -4296,7 +4316,11 @@ function AddToPlaylistMenu({
         ＋
       </button>
       {open ? (
-        <div className="combo-list" role="menu" style={{ right: 0, left: "auto", width: 260 }}>
+        <div
+          className="combo-list"
+          role="menu"
+          style={{ right: 0, left: "auto", width: "min(560px, calc(100vw - 32px))" }}
+        >
           {options.length === 0 ? (
             <div className="combo-empty">Geen playlist-doelen.</div>
           ) : (
@@ -4309,7 +4333,12 @@ function AddToPlaylistMenu({
                   key={option.id}
                   role="menuitem"
                   className="combo-item"
-                  style={{ gap: 10, justifyContent: "flex-start" }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    justifyContent: "flex-start",
+                  }}
                 >
                   <input
                     type="checkbox"
@@ -4329,7 +4358,7 @@ function AddToPlaylistMenu({
                     }}
                     onClick={(event) => event.stopPropagation()}
                   />
-                  <span>{option.name}</span>
+                  <span style={{ whiteSpace: "nowrap" }}>{option.name}</span>
                 </label>
               );
             })
@@ -4343,16 +4372,18 @@ function AddToPlaylistMenu({
 type AddToQueueButtonProps = {
   track: TrackRow | TrackItem;
   onAdd: (track: TrackRow | TrackItem) => void;
+  active?: boolean;
 };
 
-function AddToQueueButton({ track, onAdd }: AddToQueueButtonProps) {
+function AddToQueueButton({ track, onAdd, active = false }: AddToQueueButtonProps) {
   const trackId = resolveTrackId(track);
   return (
     <button
       type="button"
-      className="queue-row-btn"
+      className={`queue-row-btn${active ? " active" : ""}`}
       aria-label="Toevoegen aan queue"
       title="Toevoegen aan queue"
+      aria-pressed={active}
       disabled={!trackId}
       onClick={(event) => {
         event.stopPropagation();
@@ -4396,6 +4427,7 @@ type TrackRowData = {
     artistId?: string | null
   ) => Promise<void>;
   selectAlbumInMyMusic: (track: TrackRow | TrackItem) => void;
+  queueTrackIds: Set<string>;
 };
 
 function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackRowData>) {
@@ -4510,7 +4542,11 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
           <div className="text-subtle track-col-duration">{formatDuration(track.durationMs)}</div>
         ) : null}
         <div className="track-col-actions track-actions-group">
-          <AddToQueueButton track={track} onAdd={data.addTrackToQueue} />
+          <AddToQueueButton
+            track={track}
+            onAdd={data.addTrackToQueue}
+            active={Boolean(track.trackId && data.queueTrackIds.has(track.trackId))}
+          />
           <AddToPlaylistMenu
             track={track}
             options={data.addTargetOptions}
@@ -4588,6 +4624,7 @@ type TrackItemData = {
     artistId?: string | null
   ) => Promise<void>;
   selectAlbumInMyMusic: (track: TrackRow | TrackItem) => void;
+  queueTrackIds: Set<string>;
 };
 
 function TrackItemRenderer({
@@ -4703,7 +4740,11 @@ function TrackItemRenderer({
         </div>
         <div className="text-subtle track-col-duration">{formatDuration(track.durationMs)}</div>
         <div className="track-col-actions track-actions-group">
-          <AddToQueueButton track={track} onAdd={data.addTrackToQueue} />
+          <AddToQueueButton
+            track={track}
+            onAdd={data.addTrackToQueue}
+            active={Boolean((track.trackId || track.id) && data.queueTrackIds.has(track.trackId || track.id))}
+          />
           <AddToPlaylistMenu
             track={track}
             options={data.addTargetOptions}

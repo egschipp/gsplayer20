@@ -120,6 +120,14 @@ type ActionHistoryItem = {
   at: number;
 };
 
+type RecommendationsTracePayload = {
+  traces?: Array<{
+    stage?: string;
+    ts?: string;
+    data?: Record<string, unknown>;
+  }>;
+};
+
 type Insight = {
   id: string;
   tone: Tone;
@@ -514,6 +522,9 @@ export default function MonitoringDashboard() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshIntervalSec, setRefreshIntervalSec] = useState(15);
   const [actionHistory, setActionHistory] = useState<ActionHistoryItem[]>([]);
+  const [lastSpotifyOutboundUrl, setLastSpotifyOutboundUrl] = useState<string | null>(null);
+  const [lastSpotifyOutboundAt, setLastSpotifyOutboundAt] = useState<string | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<"idle" | "copied" | "failed">("idle");
   const [tokenRefreshCooldownUntil, setTokenRefreshCooldownUntil] = useState(0);
   const [selectedErrorEndpoint, setSelectedErrorEndpoint] = useState<string | null>(null);
   const [clockNowMs, setClockNowMs] = useState(() => Date.now());
@@ -569,16 +580,52 @@ export default function MonitoringDashboard() {
     }
   }, []);
 
+  const refreshRecommendationsTrace = useCallback(async () => {
+    try {
+      const res = await clientFetch("/api/monitoring/recommendations-trace?limit=300");
+      if (!res.ok) return;
+      const data = (await res.json()) as RecommendationsTracePayload;
+      const traces = Array.isArray(data?.traces) ? data.traces : [];
+      const latest = [...traces]
+        .reverse()
+        .find((trace) => {
+          const url = String(trace?.data?.outboundUrl ?? "").trim();
+          if (url.startsWith("https://api.spotify.com/")) return true;
+          const host = String(trace?.data?.outboundHost ?? "").trim();
+          const path = String(trace?.data?.outboundPath ?? "").trim();
+          return host === "api.spotify.com" && path.startsWith("/v1/");
+        });
+      if (!latest) return;
+
+      const outboundUrlRaw = String(latest.data?.outboundUrl ?? "").trim();
+      const outboundHost = String(latest.data?.outboundHost ?? "").trim();
+      const outboundPath = String(latest.data?.outboundPath ?? "").trim();
+      const outboundUrl =
+        outboundUrlRaw ||
+        (outboundHost && outboundPath ? `https://${outboundHost}${outboundPath}` : "");
+      if (!outboundUrl) return;
+      setLastSpotifyOutboundUrl(outboundUrl);
+      setLastSpotifyOutboundAt(typeof latest.ts === "string" ? latest.ts : null);
+    } catch {
+      // leave existing diagnostics untouched on trace-fetch errors
+    }
+  }, []);
+
   const refreshAll = useCallback(async () => {
     try {
-      await Promise.all([refreshSummary(), refreshUserStatus(), refreshLibraryCounts()]);
+      await Promise.all([
+        refreshSummary(),
+        refreshUserStatus(),
+        refreshLibraryCounts(),
+        refreshRecommendationsTrace(),
+      ]);
       setRefreshError(null);
     } catch (err) {
       setRefreshError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [refreshLibraryCounts, refreshSummary, refreshUserStatus]);
+  }, [refreshLibraryCounts, refreshRecommendationsTrace, refreshSummary, refreshUserStatus]);
 
   useEffect(() => {
     void refreshAll();
@@ -804,6 +851,16 @@ export default function MonitoringDashboard() {
     if (!payload) return;
     downloadJson("gsplayer-diagnostics", payload);
   }, [runAction]);
+
+  const copyLastSpotifyOutboundUrl = useCallback(async () => {
+    if (!lastSpotifyOutboundUrl) return;
+    try {
+      await navigator.clipboard.writeText(lastSpotifyOutboundUrl);
+      setCopyFeedback("copied");
+    } catch {
+      setCopyFeedback("failed");
+    }
+  }, [lastSpotifyOutboundUrl]);
 
   const summaryAvailable = Boolean(summary);
 
@@ -1404,6 +1461,47 @@ export default function MonitoringDashboard() {
                   <div className="ops-keyvalue-row">
                     <span className="text-subtle">Verkeer/min</span>
                     <strong>{summary?.traffic.requestsPerMin ?? 0}</strong>
+                  </div>
+                  <div className="ops-keyvalue-row" style={{ alignItems: "flex-start" }}>
+                    <span className="text-subtle">Laatste Spotify request</span>
+                    <div style={{ display: "grid", gap: 8, justifyItems: "end", maxWidth: "100%" }}>
+                      {lastSpotifyOutboundUrl ? (
+                        <>
+                          <code
+                            style={{
+                              display: "block",
+                              maxWidth: 420,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                            title={lastSpotifyOutboundUrl}
+                          >
+                            {lastSpotifyOutboundUrl}
+                          </code>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={() => void copyLastSpotifyOutboundUrl()}
+                            >
+                              Copy URL
+                            </button>
+                            <span className="text-subtle">
+                              {copyFeedback === "copied"
+                                ? "Gekopieerd"
+                                : copyFeedback === "failed"
+                                ? "Kopiëren mislukt"
+                                : lastSpotifyOutboundAt
+                                ? fmtCompactTime(new Date(lastSpotifyOutboundAt).getTime())
+                                : "n/a"}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <strong>n/a</strong>
+                      )}
+                    </div>
                   </div>
                 </div>
               </article>

@@ -54,6 +54,9 @@ export async function GET(req: Request) {
       }>({
         url: `https://api.spotify.com/v1/me/playlists?limit=${limit}&offset=${offset}`,
         userLevel: true,
+        priority: "default",
+        cacheTtlMs: 6_000,
+        dedupeWindowMs: 1_200,
       });
       const now = Date.now();
       const liveItems = Array.isArray(liveData?.items)
@@ -183,6 +186,9 @@ export async function GET(req: Request) {
       }>({
         url: `https://api.spotify.com/v1/me/playlists?limit=${limit}&offset=0`,
         userLevel: true,
+        priority: "default",
+        cacheTtlMs: 6_000,
+        dedupeWindowMs: 1_200,
       });
       const now = Date.now();
       const liveItems = Array.isArray(live?.items)

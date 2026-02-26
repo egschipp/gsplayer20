@@ -73,6 +73,9 @@ export async function GET(req: Request) {
     const data = await spotifyFetch<SpotifyRecentlyPlayedResponse>({
       url: `https://api.spotify.com/v1/me/player/recently-played?limit=${limit}`,
       userLevel: true,
+      priority: "default",
+      cacheTtlMs: 10_000,
+      dedupeWindowMs: 2_000,
     });
 
     const sourceItems = Array.isArray(data?.items) ? data.items : [];

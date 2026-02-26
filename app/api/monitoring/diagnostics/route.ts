@@ -1,6 +1,7 @@
 import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
 import { getRecentErrors } from "@/lib/observability/logger";
 import { counterTotal, histogramQuantiles } from "@/lib/observability/metrics";
+import { getSpotifyRateLimiterSnapshot } from "@/lib/spotify/rateLimitManager";
 import {
   createCorrelationId,
   readCorrelationId,
@@ -40,8 +41,12 @@ export async function GET(req: Request) {
       requests5xx: counterTotal("spotify_api_requests_total", {
         status_class: "5xx",
       }),
+      retries: counterTotal("spotify_api_retries_total"),
+      cacheHits: counterTotal("spotify_cache_hits_total"),
+      cacheMisses: counterTotal("spotify_cache_misses_total"),
       latency: histogramQuantiles("spotify_api_latency_ms"),
     },
+    rateLimiter: getSpotifyRateLimiterSnapshot(),
     recentErrors: getRecentErrors(50).map((entry) => ({
       ts: entry.ts,
       level: entry.level,
@@ -55,4 +60,3 @@ export async function GET(req: Request) {
 
   return jsonNoStore(payload, 200, { "x-correlation-id": correlationId });
 }
-

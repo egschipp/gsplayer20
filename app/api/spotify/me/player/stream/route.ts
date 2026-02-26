@@ -125,6 +125,9 @@ export async function GET(req: Request) {
             url: "https://api.spotify.com/v1/me/player",
             userLevel: true,
             correlationId,
+            priority: "foreground",
+            cacheTtlMs: 0,
+            dedupeWindowMs: 200,
           });
           writeEvent("snapshot", normalizeSnapshot(data ?? null));
         } catch (error) {

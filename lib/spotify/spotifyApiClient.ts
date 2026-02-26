@@ -2,6 +2,15 @@ import { incCounter, observeHistogram } from "@/lib/observability/metrics";
 import { logEvent } from "@/lib/observability/logger";
 import { createCorrelationId } from "@/lib/observability/correlation";
 import { recordSpotifyRateLimitBackoff } from "@/lib/observability/rateLimit";
+import {
+  registerSpotifyRateLimit,
+  registerSpotifyRequestFailure,
+  registerSpotifyRequestSuccess,
+  scheduleSpotifyRequest,
+  SpotifyRateLimitError,
+} from "@/lib/spotify/rateLimitManager";
+import { coalesceInflight, getCachedValue, setCachedValue } from "@/lib/spotify/requestCache";
+import { inferSpotifyRequestPriority, type SpotifyRequestPriority } from "@/lib/spotify/requestPriority";
 
 const RETRY_AFTER_MIN_MS = 1_000;
 const RETRY_AFTER_MAX_MS = Number(
@@ -148,6 +157,7 @@ function waitWithRetryAfterJitter(baseMs: number): number {
 function endpointGroup(url: string): string {
   try {
     const parsed = new URL(url);
+    if (parsed.pathname.startsWith("/v1/me/player/devices")) return "me_player_devices";
     if (parsed.pathname.startsWith("/v1/me/player")) return "me_player";
     if (parsed.pathname.startsWith("/v1/me/tracks")) return "me_tracks";
     if (parsed.pathname.startsWith("/v1/me/playlists")) return "me_playlists";
@@ -159,6 +169,60 @@ function endpointGroup(url: string): string {
   }
 }
 
+function stableStringify(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+      a.localeCompare(b)
+    );
+    return `{${entries
+      .map(([key, val]) => `${key}:${stableStringify(val)}`)
+      .join(",")}}`;
+  }
+  return String(value);
+}
+
+function requestCacheKey(params: {
+  method: string;
+  url: string;
+  body?: unknown;
+  userKey: string;
+}): string {
+  return `${params.userKey}|${params.method}|${params.url}|${stableStringify(params.body)}`;
+}
+
+function defaultCacheTtlMs(method: string, url: string): number {
+  if (method !== "GET") return 0;
+  try {
+    const path = new URL(url).pathname;
+    if (path.startsWith("/v1/me/player")) return 0;
+    if (path.startsWith("/v1/me/player/devices")) return 2_000;
+    if (path.startsWith("/v1/me/tracks")) return 8_000;
+    if (path.startsWith("/v1/me/playlists")) return 10_000;
+    if (path.startsWith("/v1/me/top")) return 20_000;
+    if (path.startsWith("/v1/me/player/recently-played")) return 15_000;
+    return 5_000;
+  } catch {
+    return 0;
+  }
+}
+
+function defaultDedupeWindowMs(method: string, url: string): number {
+  if (method !== "GET") return 300;
+  try {
+    const path = new URL(url).pathname;
+    if (path.startsWith("/v1/me/player")) return 250;
+    return 1_200;
+  } catch {
+    return 1_000;
+  }
+}
+
 export async function spotifyApiRequest<T>(params: {
   url: string;
   accessToken: string;
@@ -167,166 +231,234 @@ export async function spotifyApiRequest<T>(params: {
   body?: unknown;
   timeoutMs?: number;
   maxAttempts?: number;
+  userKey?: string;
+  priority?: SpotifyRequestPriority;
+  cacheTtlMs?: number;
+  dedupeWindowMs?: number;
+  bypassCache?: boolean;
 }): Promise<T | undefined> {
   const correlationId = params.correlationId || createCorrelationId();
   const method = String(params.method || "GET").toUpperCase();
   const timeoutMs = params.timeoutMs ?? 15_000;
   const maxAttempts = params.maxAttempts ?? 3;
   const group = endpointGroup(params.url);
+  const userKey = params.userKey || "anonymous";
+  const priority = params.priority || inferSpotifyRequestPriority({ method, url: params.url });
+  const cacheTtlMs =
+    typeof params.cacheTtlMs === "number"
+      ? Math.max(0, Math.floor(params.cacheTtlMs))
+      : defaultCacheTtlMs(method, params.url);
+  const dedupeWindowMs =
+    typeof params.dedupeWindowMs === "number"
+      ? Math.max(1, Math.floor(params.dedupeWindowMs))
+      : defaultDedupeWindowMs(method, params.url);
+  const cacheKey = requestCacheKey({
+    method,
+    url: params.url,
+    body: params.body,
+    userKey,
+  });
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const started = Date.now();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(params.url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${params.accessToken}`,
-          "Content-Type": "application/json",
-          "x-correlation-id": correlationId,
-        },
-        body: params.body ? JSON.stringify(params.body) : undefined,
-        signal: controller.signal,
-      });
-
-      const durationMs = Date.now() - started;
-      observeHistogram("spotify_api_latency_ms", durationMs, { endpoint: group, method });
-      incCounter("spotify_api_requests_total", {
+  if (!params.bypassCache && cacheTtlMs > 0) {
+    const cached = getCachedValue<T>(cacheKey);
+    if (cached != null) {
+      incCounter("spotify_cache_hits_total", {
         endpoint: group,
-        method,
-        status_class: `${Math.floor(res.status / 100)}xx`,
-        status_code: String(res.status),
       });
-
-      if (res.ok) {
-        if (res.status === 204 || res.status === 205) {
-          return undefined as T;
-        }
-        const text = await res.text();
-        if (!text) return undefined as T;
-        const contentType = res.headers.get("Content-Type") ?? "";
-        const isJson =
-          contentType.includes("application/json") ||
-          text.trim().startsWith("{") ||
-          text.trim().startsWith("[");
-        return (isJson ? JSON.parse(text) : text) as T;
-      }
-
-      const text = await res.text();
-      const retryAfterMs = parseRetryAfterMs(res);
-      const code = classifyCode(res.status, text, group, method);
-      const retryable = shouldRetryStatus(res.status);
-      const retryWaitMs =
-        normalizeRetryAfterMs(retryAfterMs) ??
-        Math.min(500 * attempt * attempt, 5_000);
-      incCounter("spotify_api_errors_total", {
-        endpoint: group,
-        method,
-        status_code: String(res.status),
-        code,
-      });
-      const expected = isExpectedHttpCondition({
-        status: res.status,
-        endpointGroup: group,
-        method,
-        errorCode: code,
-      });
-
-      logEvent({
-        level: retryable || expected ? "warn" : "error",
-        event: "spotify_api_http_error",
-        correlationId,
-        endpointGroup: group,
-        status: res.status,
-        durationMs,
-        errorCode: code,
-        errorMessage: text.slice(0, 256),
-        data: { attempt, retryAfterMs },
-      });
-
-      if (retryable && attempt < maxAttempts) {
-        const waitMs =
-          retryAfterMs != null
-            ? waitWithRetryAfterJitter(retryWaitMs)
-            : jitterMs(retryWaitMs);
-        if (res.status === 429) {
-          recordSpotifyRateLimitBackoff(waitMs);
-        }
-        incCounter("spotify_api_retries_total", {
-          endpoint: group,
-          reason: code,
-        });
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-        continue;
-      }
-      if (res.status === 429) {
-        recordSpotifyRateLimitBackoff(retryWaitMs);
-      }
-
-      throw new SpotifyApiError({
-        status: res.status,
-        code,
-        body: text,
-        retryAfterMs,
-        retryable,
-        correlationId,
-      });
-    } catch (error) {
-      if (error instanceof SpotifyApiError) {
-        throw error;
-      }
-      const durationMs = Date.now() - started;
-      const isAbort = error instanceof DOMException && error.name === "AbortError";
-      const message = String((error as Error)?.message ?? error);
-      const retryable =
-        isAbort ||
-        message.toLowerCase().includes("fetch") ||
-        message.toLowerCase().includes("network") ||
-        message.toLowerCase().includes("timeout");
-      const networkCode = isAbort
-        ? "NETWORK_TIMEOUT"
-        : retryable
-        ? "NETWORK_TRANSIENT"
-        : "NETWORK_FATAL";
-
-      logEvent({
-        level: retryable ? "warn" : "error",
-        event: "spotify_api_network_error",
-        correlationId,
-        endpointGroup: group,
-        durationMs,
-        errorCode: networkCode,
-        errorMessage: message.slice(0, 256),
-        data: { attempt },
-      });
-
-      if (retryable && attempt < maxAttempts) {
-        incCounter("spotify_api_retries_total", {
-          endpoint: group,
-          reason: "NETWORK_TRANSIENT",
-        });
-        const base = Math.min(350 * attempt * attempt, 4_000);
-        await new Promise((resolve) => setTimeout(resolve, jitterMs(base)));
-        continue;
-      }
-
-      throw new SpotifyApiError({
-        status: 0,
-        code: networkCode,
-        body: message,
-        retryable,
-        correlationId,
-      });
-    } finally {
-      clearTimeout(timeout);
+      return cached;
     }
+    incCounter("spotify_cache_misses_total", {
+      endpoint: group,
+    });
   }
 
-  throw new SpotifyApiError({
-    status: 0,
-    code: "RETRY_EXHAUSTED",
-    correlationId,
-    retryable: false,
+  return coalesceInflight<T | undefined>(cacheKey, dedupeWindowMs, async () => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const started = Date.now();
+
+      try {
+        const result = await scheduleSpotifyRequest({
+          userKey,
+          endpoint: group,
+          priority,
+          run: async () => {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+              return await fetch(params.url, {
+                method,
+                headers: {
+                  Authorization: `Bearer ${params.accessToken}`,
+                  "Content-Type": "application/json",
+                  "x-correlation-id": correlationId,
+                },
+                body: params.body ? JSON.stringify(params.body) : undefined,
+                signal: controller.signal,
+              });
+            } finally {
+              clearTimeout(timeout);
+            }
+          },
+        });
+
+        const durationMs = Date.now() - started;
+        observeHistogram("spotify_api_latency_ms", durationMs, { endpoint: group, method });
+        incCounter("spotify_api_requests_total", {
+          endpoint: group,
+          method,
+          status_class: `${Math.floor(result.status / 100)}xx`,
+          status_code: String(result.status),
+        });
+
+        if (result.ok) {
+          registerSpotifyRequestSuccess(userKey);
+
+          if (result.status === 204 || result.status === 205) {
+            return undefined as T;
+          }
+          const text = await result.text();
+          if (!text) return undefined as T;
+          const contentType = result.headers.get("Content-Type") ?? "";
+          const isJson =
+            contentType.includes("application/json") ||
+            text.trim().startsWith("{") ||
+            text.trim().startsWith("[");
+          const parsed = (isJson ? JSON.parse(text) : text) as T;
+          if (!params.bypassCache && cacheTtlMs > 0 && method === "GET") {
+            setCachedValue(cacheKey, parsed, cacheTtlMs);
+          }
+          return parsed;
+        }
+
+        const text = await result.text();
+        const retryAfterMs = parseRetryAfterMs(result);
+        const code = classifyCode(result.status, text, group, method);
+        const retryable = shouldRetryStatus(result.status);
+        const retryWaitMs =
+          normalizeRetryAfterMs(retryAfterMs) ??
+          Math.min(500 * attempt * attempt, 5_000);
+        incCounter("spotify_api_errors_total", {
+          endpoint: group,
+          method,
+          status_code: String(result.status),
+          code,
+        });
+        const expected = isExpectedHttpCondition({
+          status: result.status,
+          endpointGroup: group,
+          method,
+          errorCode: code,
+        });
+
+        logEvent({
+          level: retryable || expected ? "warn" : "error",
+          event: "spotify_api_http_error",
+          correlationId,
+          endpointGroup: group,
+          status: result.status,
+          durationMs,
+          errorCode: code,
+          errorMessage: text.slice(0, 256),
+          data: { attempt, retryAfterMs },
+        });
+
+        if (result.status === 429) {
+          const waitMs = retryAfterMs ?? retryWaitMs;
+          recordSpotifyRateLimitBackoff(waitMs);
+          registerSpotifyRateLimit(userKey, waitMs, group);
+        } else if (result.status >= 500) {
+          registerSpotifyRequestFailure(userKey, group);
+        }
+
+        if (retryable && attempt < maxAttempts) {
+          const waitMs =
+            retryAfterMs != null
+              ? waitWithRetryAfterJitter(retryWaitMs)
+              : jitterMs(retryWaitMs);
+          incCounter("spotify_api_retries_total", {
+            endpoint: group,
+            reason: code,
+          });
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          continue;
+        }
+
+        throw new SpotifyApiError({
+          status: result.status,
+          code,
+          body: text,
+          retryAfterMs,
+          retryable,
+          correlationId,
+        });
+      } catch (error) {
+        if (error instanceof SpotifyApiError) {
+          throw error;
+        }
+
+        if (error instanceof SpotifyRateLimitError) {
+          throw new SpotifyApiError({
+            status: 429,
+            code: "LOCAL_RATE_LIMIT",
+            body: error.message,
+            retryAfterMs: error.retryAfterMs,
+            retryable: true,
+            correlationId,
+          });
+        }
+
+        const durationMs = Date.now() - started;
+        const isAbort = error instanceof DOMException && error.name === "AbortError";
+        const message = String((error as Error)?.message ?? error);
+        const retryable =
+          isAbort ||
+          message.toLowerCase().includes("fetch") ||
+          message.toLowerCase().includes("network") ||
+          message.toLowerCase().includes("timeout");
+        const networkCode = isAbort
+          ? "NETWORK_TIMEOUT"
+          : retryable
+          ? "NETWORK_TRANSIENT"
+          : "NETWORK_FATAL";
+
+        logEvent({
+          level: retryable ? "warn" : "error",
+          event: "spotify_api_network_error",
+          correlationId,
+          endpointGroup: group,
+          durationMs,
+          errorCode: networkCode,
+          errorMessage: message.slice(0, 256),
+          data: { attempt },
+        });
+
+        registerSpotifyRequestFailure(userKey, group);
+
+        if (retryable && attempt < maxAttempts) {
+          incCounter("spotify_api_retries_total", {
+            endpoint: group,
+            reason: "NETWORK_TRANSIENT",
+          });
+          const base = Math.min(350 * attempt * attempt, 4_000);
+          await new Promise((resolve) => setTimeout(resolve, jitterMs(base)));
+          continue;
+        }
+
+        throw new SpotifyApiError({
+          status: 0,
+          code: networkCode,
+          body: message,
+          retryable,
+          correlationId,
+        });
+      }
+    }
+
+    throw new SpotifyApiError({
+      status: 0,
+      code: "RETRY_EXHAUSTED",
+      correlationId,
+      retryable: false,
+    });
   });
 }

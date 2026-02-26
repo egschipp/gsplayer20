@@ -916,7 +916,6 @@ export default function PlaylistBrowser() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [selectorDockPinned, setSelectorDockPinned] = useState(false);
-  const [selectorDockHovered, setSelectorDockHovered] = useState(false);
   const [selectorDockManualOpen, setSelectorDockManualOpen] = useState(false);
   const [selectorDockHost, setSelectorDockHost] = useState<HTMLElement | null>(null);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
@@ -984,8 +983,7 @@ export default function PlaylistBrowser() {
   const CACHE_KEY = "gs_library_cache_v1";
   const LEGACY_SELECTOR_DOCK_KEY = "gs_selector_dock_open_v1";
   const SELECTOR_DOCK_PIN_KEY = "gs_selector_dock_pinned_v1";
-  const selectorDockOpen =
-    selectorDockPinned || selectorDockHovered || selectorDockManualOpen || open;
+  const selectorDockOpen = selectorDockPinned || selectorDockManualOpen;
   const allPlaylistNames = useMemo(() => {
     return playlistOptions
       .map((pl) => pl.name || "Untitled playlist")
@@ -3280,16 +3278,6 @@ export default function PlaylistBrowser() {
     <div
       className="player-library-dock"
       data-open={selectorDockOpen ? "true" : "false"}
-      onMouseEnter={() => setSelectorDockHovered(true)}
-      onMouseLeave={() => setSelectorDockHovered(false)}
-      onFocusCapture={() => setSelectorDockHovered(true)}
-      onBlurCapture={(event) => {
-        const nextTarget = event.relatedTarget;
-        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
-          return;
-        }
-        setSelectorDockHovered(false);
-      }}
     >
       <div
         className={`player-library-dock-toggle${selectorDockOpen ? " open" : ""}`}
@@ -3311,7 +3299,15 @@ export default function PlaylistBrowser() {
           aria-controls="player-library-dock-body"
           aria-expanded={selectorDockOpen}
           aria-label={selectorDockOpen ? "Selectiebalk inklappen" : "Selectiebalk uitklappen"}
-          onClick={() => setSelectorDockManualOpen((prev) => !prev)}
+          onClick={() =>
+            setSelectorDockManualOpen((prev) => {
+              const next = !prev;
+              if (!next) {
+                setOpen(false);
+              }
+              return next;
+            })
+          }
         >
           <span
             className={`player-library-dock-chevron${selectorDockOpen ? " open" : ""}`}

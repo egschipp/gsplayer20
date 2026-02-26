@@ -83,6 +83,11 @@ a:hover {
   margin-bottom: 16px;
 }
 
+.shell.header-shell,
+.shell.player-shell-wrap {
+  max-width: 1260px;
+}
+
 .fixed-top {
   position: sticky;
   top: 0;
@@ -1812,8 +1817,9 @@ details[open] > .details-summary::after {
   grid-column: 2;
   grid-row: 1;
   align-self: start;
+  justify-self: end;
   min-width: 0;
-  width: 100%;
+  width: min(100%, 380px);
   padding: 8px 10px;
   border-radius: 16px;
   background: linear-gradient(
@@ -1949,10 +1955,23 @@ details[open] > .details-summary::after {
   margin-top: 8px;
 }
 
-.player-progress-main {
-  grid-column: 2;
+.player-sliders-row {
+  grid-column: 2 / -1;
   grid-row: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+}
+
+.player-progress-main {
+  grid-column: auto;
+  grid-row: auto;
   margin-top: 8px;
+  flex: 0 1 78%;
+  max-width: 1040px;
+  min-width: 0;
 }
 
 .player-volume {
@@ -1964,10 +1983,12 @@ details[open] > .details-summary::after {
 }
 
 .player-volume-inline {
-  grid-column: 3;
-  grid-row: 2;
+  grid-column: auto;
+  grid-row: auto;
   margin-top: 8px;
-  min-width: 220px;
+  flex: 0 1 44%;
+  max-width: 520px;
+  min-width: 286px;
 }
 
 .player-slider {
@@ -2029,6 +2050,15 @@ details[open] > .details-summary::after {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 6px;
+  font-size: 0.86rem;
+  line-height: 1.15;
+}
+
+.player-device-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .player-device-select {
@@ -3409,16 +3439,27 @@ details[open] > .details-summary::after {
   .player-connect {
     grid-column: 1 / -1;
     grid-row: auto;
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .player-sliders-row {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
   }
 
   .player-progress-main {
-    grid-column: 1 / -1;
-    grid-row: auto;
+    flex: 0 1 auto;
+    max-width: none;
+    min-width: 0;
   }
 
   .player-volume-inline {
-    grid-column: 1 / -1;
-    grid-row: auto;
+    flex: 0 1 auto;
+    max-width: none;
     min-width: 0;
   }
 }

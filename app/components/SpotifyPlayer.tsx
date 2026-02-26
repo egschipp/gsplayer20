@@ -4528,112 +4528,114 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
             </svg>
           </button>
         </div>
-        <div className="player-progress player-progress-main">
-          <span className="text-subtle">{formatTime(sliderPositionMs)}</span>
-          <input
-            type="range"
-            min={0}
-            max={sliderMax}
-            step={250}
-            value={sliderPositionMs}
-            onPointerDown={(event) => {
-              beginScrub(true);
-              try {
-                event.currentTarget.setPointerCapture(event.pointerId);
-              } catch {
-                // Some browsers reject pointer capture on range controls.
-              }
-            }}
-            onPointerUp={() => {
-              commitScrubSeek();
-            }}
-            onPointerCancel={() => {
-              commitScrubSeek();
-            }}
-            onMouseDown={() => {
-              beginScrub(true);
-            }}
-            onMouseUp={() => {
-              commitScrubSeek();
-            }}
-            onTouchStart={() => {
-              beginScrub(true);
-            }}
-            onTouchEnd={() => {
-              commitScrubSeek();
-            }}
-            onTouchCancel={() => {
-              commitScrubSeek();
-            }}
-            onInput={(event) => {
-              const next = readSliderValue(event.currentTarget.value);
-              if (!isScrubbingRef.current) {
-                beginScrub(false);
-              }
-              updateScrub(next);
-            }}
-            onChange={(event) => {
-              const next = readSliderValue(event.currentTarget.value);
-              if (!isScrubbingRef.current) {
-                beginScrub(false);
-              }
-              if (scrubbingByPointerRef.current) return;
-              commitScrubSeek(next);
-            }}
-            onBlur={(event) => {
-              if (!isScrubbingRef.current && scrubPositionRef.current === null) return;
-              const next = readSliderValue(event.currentTarget.value);
-              commitScrubSeek(next);
-            }}
-            className={`player-slider player-slider-seek${
-              scrubActive ? " is-scrubbing" : ""
-            }`}
-            style={{
-              background: `linear-gradient(90deg, #1db954 ${Math.min(
-                100,
-                Math.max(0, sliderProgressPct)
-              )}%, rgba(255, 255, 255, 0.12) ${Math.min(
-                100,
-                Math.max(0, sliderProgressPct)
-              )}%)`,
-            }}
-            aria-label="Seek"
-            aria-valuetext={`${formatTime(sliderPositionMs)} van ${formatTime(durationMs)}`}
-            disabled={disallowSeeking}
-          />
-          <span className="text-subtle">{formatTime(durationMs)}</span>
-        </div>
-        <div className="player-progress player-volume-inline">
-          <button
-            type="button"
-            className={`player-control player-control-ghost volume-toggle${
-              muted || volume === 0 ? " active" : ""
-            }`}
-            aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
-            title={muted || volume === 0 ? "Unmute" : "Mute"}
-            onClick={handleToggleMute}
-          >
-            {muted || volume === 0 ? "🔇" : "🔊"}
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={volume}
-            onChange={(event) => handleVolume(Number(event.target.value))}
-            className="player-slider player-slider-volume"
-            style={{
-              background: `linear-gradient(90deg, #1db954 ${Math.round(
-                Math.min(1, Math.max(0, volume)) * 100
-              )}%, rgba(255, 255, 255, 0.12) ${Math.round(
-                Math.min(1, Math.max(0, volume)) * 100
-              )}%)`,
-            }}
-            aria-label="Volume"
-            disabled={!activeDeviceSupportsVolume}
-          />
-          <span className="text-subtle">{Math.round(Math.min(1, Math.max(0, volume)) * 100)}%</span>
+        <div className="player-sliders-row">
+          <div className="player-progress player-progress-main">
+            <span className="text-subtle">{formatTime(sliderPositionMs)}</span>
+            <input
+              type="range"
+              min={0}
+              max={sliderMax}
+              step={250}
+              value={sliderPositionMs}
+              onPointerDown={(event) => {
+                beginScrub(true);
+                try {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                } catch {
+                  // Some browsers reject pointer capture on range controls.
+                }
+              }}
+              onPointerUp={() => {
+                commitScrubSeek();
+              }}
+              onPointerCancel={() => {
+                commitScrubSeek();
+              }}
+              onMouseDown={() => {
+                beginScrub(true);
+              }}
+              onMouseUp={() => {
+                commitScrubSeek();
+              }}
+              onTouchStart={() => {
+                beginScrub(true);
+              }}
+              onTouchEnd={() => {
+                commitScrubSeek();
+              }}
+              onTouchCancel={() => {
+                commitScrubSeek();
+              }}
+              onInput={(event) => {
+                const next = readSliderValue(event.currentTarget.value);
+                if (!isScrubbingRef.current) {
+                  beginScrub(false);
+                }
+                updateScrub(next);
+              }}
+              onChange={(event) => {
+                const next = readSliderValue(event.currentTarget.value);
+                if (!isScrubbingRef.current) {
+                  beginScrub(false);
+                }
+                if (scrubbingByPointerRef.current) return;
+                commitScrubSeek(next);
+              }}
+              onBlur={(event) => {
+                if (!isScrubbingRef.current && scrubPositionRef.current === null) return;
+                const next = readSliderValue(event.currentTarget.value);
+                commitScrubSeek(next);
+              }}
+              className={`player-slider player-slider-seek${
+                scrubActive ? " is-scrubbing" : ""
+              }`}
+              style={{
+                background: `linear-gradient(90deg, #1db954 ${Math.min(
+                  100,
+                  Math.max(0, sliderProgressPct)
+                )}%, rgba(255, 255, 255, 0.12) ${Math.min(
+                  100,
+                  Math.max(0, sliderProgressPct)
+                )}%)`,
+              }}
+              aria-label="Seek"
+              aria-valuetext={`${formatTime(sliderPositionMs)} van ${formatTime(durationMs)}`}
+              disabled={disallowSeeking}
+            />
+            <span className="text-subtle">{formatTime(durationMs)}</span>
+          </div>
+          <div className="player-progress player-volume-inline">
+            <button
+              type="button"
+              className={`player-control player-control-ghost volume-toggle${
+                muted || volume === 0 ? " active" : ""
+              }`}
+              aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
+              title={muted || volume === 0 ? "Unmute" : "Mute"}
+              onClick={handleToggleMute}
+            >
+              {muted || volume === 0 ? "🔇" : "🔊"}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={volume}
+              onChange={(event) => handleVolume(Number(event.target.value))}
+              className="player-slider player-slider-volume"
+              style={{
+                background: `linear-gradient(90deg, #1db954 ${Math.round(
+                  Math.min(1, Math.max(0, volume)) * 100
+                )}%, rgba(255, 255, 255, 0.12) ${Math.round(
+                  Math.min(1, Math.max(0, volume)) * 100
+                )}%)`,
+              }}
+              aria-label="Volume"
+              disabled={!activeDeviceSupportsVolume}
+            />
+            <span className="text-subtle">{Math.round(Math.min(1, Math.max(0, volume)) * 100)}%</span>
+          </div>
         </div>
       </div>
       <div className="player-connect">

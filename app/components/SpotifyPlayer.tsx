@@ -4385,11 +4385,11 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 }
                 onBlur={trackPlaylistMenu.handleBlur}
               >
-                {trackPlaylistSaving ? "…" : "+"}
+                {trackPlaylistSaving ? "…" : "＋"}
               </button>
               {trackPlaylistMenuOpen ? (
                 <div
-                  className="combo-list"
+                  className="combo-list track-playlist-menu"
                   role="menu"
                   style={{ right: 0, left: "auto", width: 280 }}
                 >

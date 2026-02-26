@@ -1324,6 +1324,8 @@ details[open] > .details-summary::after {
 
 .track-row {
   display: block;
+  position: relative;
+  z-index: 1;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1335,7 +1337,7 @@ details[open] > .details-summary::after {
   border-radius: 16px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-surface);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .track-row-grid {
@@ -1501,6 +1503,11 @@ details[open] > .details-summary::after {
   transform: scale(1);
 }
 
+.track-row:hover,
+.track-row:focus-within {
+  z-index: 18;
+}
+
 .track-row:hover .play-btn:disabled,
 .track-row:focus-within .play-btn:disabled {
   opacity: 0.4;
@@ -1552,6 +1559,10 @@ details[open] > .details-summary::after {
   text-transform: uppercase;
   letter-spacing: 0.2em;
   font-size: 0.7rem;
+}
+
+.track-playlist-menu {
+  z-index: 220;
 }
 
 .text-subtle {

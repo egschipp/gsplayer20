@@ -15,6 +15,9 @@ function mapToFetchError(error: unknown, fallbackCorrelationId: string): Spotify
       code: error.code,
       retryAfterMs: error.retryAfterMs,
       correlationId: error.correlationId || fallbackCorrelationId,
+      url: error.url,
+      hasAuthHeader: error.hasAuthHeader,
+      responseContentType: error.responseContentType,
     });
   }
   return new SpotifyFetchError(500, String(error), {

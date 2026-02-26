@@ -25,6 +25,9 @@ export class SpotifyApiError extends Error {
   retryAfterMs: number | null;
   retryable: boolean;
   correlationId: string;
+  url: string | null;
+  hasAuthHeader: boolean | null;
+  responseContentType: string | null;
 
   constructor(args: {
     status: number;
@@ -33,6 +36,9 @@ export class SpotifyApiError extends Error {
     retryAfterMs?: number | null;
     retryable?: boolean;
     correlationId?: string;
+    url?: string;
+    hasAuthHeader?: boolean;
+    responseContentType?: string | null;
   }) {
     super(`${args.code}:${args.status}`);
     this.name = "SpotifyApiError";
@@ -42,6 +48,12 @@ export class SpotifyApiError extends Error {
     this.retryAfterMs = args.retryAfterMs ?? null;
     this.retryable = Boolean(args.retryable);
     this.correlationId = args.correlationId || createCorrelationId();
+    this.url = typeof args.url === "string" && args.url.trim() ? args.url : null;
+    this.hasAuthHeader = typeof args.hasAuthHeader === "boolean" ? args.hasAuthHeader : null;
+    this.responseContentType =
+      typeof args.responseContentType === "string" && args.responseContentType.trim()
+        ? args.responseContentType
+        : null;
   }
 }
 
@@ -232,6 +244,7 @@ async function runRawSpotifyApiRequest<T>(params: {
       }
 
       const text = await res.text();
+      const responseContentType = res.headers.get("Content-Type") ?? res.headers.get("content-type");
       const retryAfterMs = parseRetryAfterMs(res);
       const code = classifyCode(res.status, text, params.endpointGroup, params.method);
       const retryable = shouldRetryStatus(res.status);
@@ -298,6 +311,9 @@ async function runRawSpotifyApiRequest<T>(params: {
         retryAfterMs,
         retryable,
         correlationId: params.correlationId,
+        url: params.url,
+        hasAuthHeader: Boolean(params.accessToken),
+        responseContentType,
       });
     } catch (error) {
       if (error instanceof SpotifyApiError) {
@@ -344,6 +360,8 @@ async function runRawSpotifyApiRequest<T>(params: {
         body: message,
         retryable,
         correlationId: params.correlationId,
+        url: params.url,
+        hasAuthHeader: Boolean(params.accessToken),
       });
     } finally {
       releaseSlot();
@@ -356,6 +374,8 @@ async function runRawSpotifyApiRequest<T>(params: {
     code: "RETRY_EXHAUSTED",
     correlationId: params.correlationId,
     retryable: false,
+    url: params.url,
+    hasAuthHeader: Boolean(params.accessToken),
   });
 }
 

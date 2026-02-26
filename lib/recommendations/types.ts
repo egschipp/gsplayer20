@@ -65,6 +65,9 @@ export class RecommendationsServiceError extends Error {
   upstreamErrorExcerpt: string | null;
   outboundHost: string | null;
   outboundPath: string | null;
+  outboundUrl: string | null;
+  hasAuthHeader: boolean | null;
+  responseContentType: string | null;
 
   constructor(args: {
     status: number;
@@ -76,6 +79,9 @@ export class RecommendationsServiceError extends Error {
     upstreamErrorExcerpt?: string | null;
     outboundHost?: string | null;
     outboundPath?: string | null;
+    outboundUrl?: string | null;
+    hasAuthHeader?: boolean | null;
+    responseContentType?: string | null;
   }) {
     super(args.message);
     this.name = "RecommendationsServiceError";
@@ -104,6 +110,16 @@ export class RecommendationsServiceError extends Error {
     this.outboundPath =
       typeof args.outboundPath === "string" && args.outboundPath.trim()
         ? args.outboundPath.trim()
+        : null;
+    this.outboundUrl =
+      typeof args.outboundUrl === "string" && args.outboundUrl.trim()
+        ? args.outboundUrl.trim()
+        : null;
+    this.hasAuthHeader =
+      typeof args.hasAuthHeader === "boolean" ? args.hasAuthHeader : null;
+    this.responseContentType =
+      typeof args.responseContentType === "string" && args.responseContentType.trim()
+        ? args.responseContentType.trim()
         : null;
   }
 }

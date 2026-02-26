@@ -511,11 +511,16 @@ async function fetchRecommendations(args: {
         appUserId: args.userId,
         data: {
           playlistId: args.playlistId,
+          outboundUrl: recoUrl,
           outboundHost,
           outboundPath,
+          hasAuthHeader:
+            error.hasAuthHeader ?? (typeof error.url === "string" ? error.url.includes("api.spotify.com") : null),
+          responseContentType: error.responseContentType ?? null,
           spotifyStatus: error.status,
           spotifyErrorCode: error.code,
           spotifyErrorMessage: spotifyErrorExcerpt,
+          responseBodySnippet: spotifyErrorExcerpt,
           marketUsed: args.market,
         },
       });
@@ -533,6 +538,9 @@ async function fetchRecommendations(args: {
           upstreamErrorExcerpt: spotifyErrorExcerpt,
           outboundHost,
           outboundPath,
+          outboundUrl: error.url ?? recoUrl,
+          hasAuthHeader: error.hasAuthHeader,
+          responseContentType: error.responseContentType ?? null,
         });
       }
       if (error.status === 401) {
@@ -545,6 +553,9 @@ async function fetchRecommendations(args: {
           upstreamErrorExcerpt: spotifyErrorExcerpt,
           outboundHost,
           outboundPath,
+          outboundUrl: error.url ?? recoUrl,
+          hasAuthHeader: error.hasAuthHeader,
+          responseContentType: error.responseContentType ?? null,
         });
       }
       if (error.status === 403) {
@@ -557,6 +568,9 @@ async function fetchRecommendations(args: {
           upstreamErrorExcerpt: spotifyErrorExcerpt,
           outboundHost,
           outboundPath,
+          outboundUrl: error.url ?? recoUrl,
+          hasAuthHeader: error.hasAuthHeader,
+          responseContentType: error.responseContentType ?? null,
         });
       }
       if (error.status === 404) {
@@ -569,6 +583,9 @@ async function fetchRecommendations(args: {
           upstreamErrorExcerpt: spotifyErrorExcerpt,
           outboundHost,
           outboundPath,
+          outboundUrl: error.url ?? recoUrl,
+          hasAuthHeader: error.hasAuthHeader,
+          responseContentType: error.responseContentType ?? null,
         });
       }
       if (error.status === 400) {
@@ -597,6 +614,9 @@ async function fetchRecommendations(args: {
           upstreamErrorExcerpt: spotifyErrorExcerpt,
           outboundHost,
           outboundPath,
+          outboundUrl: error.url ?? recoUrl,
+          hasAuthHeader: error.hasAuthHeader,
+          responseContentType: error.responseContentType ?? null,
         });
       }
     }
@@ -611,6 +631,10 @@ async function fetchRecommendations(args: {
         error instanceof SpotifyFetchError ? getSpotifyErrorExcerpt(error.body) : null,
       outboundHost,
       outboundPath,
+      outboundUrl: error instanceof SpotifyFetchError ? error.url : recoUrl,
+      hasAuthHeader: error instanceof SpotifyFetchError ? error.hasAuthHeader : null,
+      responseContentType:
+        error instanceof SpotifyFetchError ? error.responseContentType : null,
     });
   }
 }

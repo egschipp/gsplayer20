@@ -76,31 +76,29 @@ function normalizeSpotifyTrackId(value: string | null | undefined) {
   return embedded?.[1] ?? null;
 }
 
+function collectTrackMatchCandidates(track: TrackRow | TrackItem | null | undefined) {
+  if (!track) return [] as string[];
+  const candidates = new Set<string>();
+  const candidateValues: Array<string | null | undefined> = [];
+  if ("artists" in track) {
+    candidateValues.push(track.id, track.trackId, track.linkedFromTrackId);
+  } else {
+    candidateValues.push(track.trackId, track.id, track.linkedFromTrackId);
+  }
+  for (const value of candidateValues) {
+    const normalized = normalizeSpotifyTrackId(value);
+    if (normalized) candidates.add(normalized);
+  }
+  return Array.from(candidates);
+}
+
 function isCurrentTrackMatch(
   track: TrackRow | TrackItem | null | undefined,
   currentTrackId: string | null
 ) {
   const activeId = normalizeSpotifyTrackId(currentTrackId);
   if (!activeId || !track) return false;
-
-  const candidates = new Set<string>();
-  if ("trackId" in track) {
-    const trackId = normalizeSpotifyTrackId(track.trackId ?? null);
-    const rowId = normalizeSpotifyTrackId(track.id ?? null);
-    const linkedId = normalizeSpotifyTrackId(track.linkedFromTrackId ?? null);
-    if (trackId) candidates.add(trackId);
-    if (rowId) candidates.add(rowId);
-    if (linkedId) candidates.add(linkedId);
-  } else {
-    const itemId = normalizeSpotifyTrackId(track.id ?? null);
-    const trackId = normalizeSpotifyTrackId(track.trackId ?? null);
-    const linkedId = normalizeSpotifyTrackId(track.linkedFromTrackId ?? null);
-    if (itemId) candidates.add(itemId);
-    if (trackId) candidates.add(trackId);
-    if (linkedId) candidates.add(linkedId);
-  }
-
-  return candidates.has(activeId);
+  return collectTrackMatchCandidates(track).includes(activeId);
 }
 
 function buildQueueTrackInput(track: TrackRow | TrackItem) {
@@ -474,6 +472,36 @@ function buildApiUrl(
   const qs = query.toString();
   return qs ? `${path}?${qs}` : path;
 }
+
+function parseRetryAfterMs(headers: Headers) {
+  const raw = headers.get("retry-after");
+  if (!raw) return null;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.max(0, Math.floor(seconds * 1000));
+  }
+  const dateMs = Date.parse(raw);
+  if (!Number.isFinite(dateMs)) return null;
+  return Math.max(0, dateMs - Date.now());
+}
+
+type TrackPageLoadReason =
+  | "scroll"
+  | "auto_prefetch"
+  | "active_track_hydration"
+  | "active_track_retry";
+
+type TrackPageLoadResult = {
+  ok: boolean;
+  status: number;
+  items: TrackRow[];
+  nextCursor: string | null;
+  totalCount: number | null;
+  retryAfterMs: number | null;
+  reason: TrackPageLoadReason;
+  cursorUsed: string | null;
+  sourceLabel: "playlist" | "liked" | "artist" | "unknown";
+};
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -949,6 +977,13 @@ export default function PlaylistBrowser() {
   const [loadingArtists, setLoadingArtists] = useState(false);
   const [loadingTracksList, setLoadingTracksList] = useState(false);
   const [loadingTracks, setLoadingTracks] = useState(false);
+  const [activeTrackHydrating, setActiveTrackHydrating] = useState(false);
+  const [activeTrackHydrationRetryAfterMs, setActiveTrackHydrationRetryAfterMs] = useState<
+    number | null
+  >(null);
+  const [activeTrackHydrationError, setActiveTrackHydrationError] = useState<string | null>(
+    null
+  );
   const [selectedTrackDetail, setSelectedTrackDetail] = useState<TrackDetail | null>(
     null
   );
@@ -967,6 +1002,15 @@ export default function PlaylistBrowser() {
   const queue = useQueueStore();
   const comboListRef = useRef<HTMLDivElement | null>(null);
   const loadingMoreTracksRef = useRef(false);
+  const tracksRef = useRef<TrackRow[]>([]);
+  const nextCursorRef = useRef<string | null>(null);
+  const activeTrackHydrationInFlightRef = useRef(false);
+  const activeTrackHydrationTargetRef = useRef<string | null>(null);
+  const activeTrackHydrationMetricsRef = useRef({
+    missing: 0,
+    resolved: 0,
+    failed: 0,
+  });
   const MAX_PLAYLIST_CHIPS = 2;
   const [listHeight, setListHeight] = useState(560);
   const hydratedSelectionRef = useRef(false);
@@ -1024,6 +1068,25 @@ export default function PlaylistBrowser() {
       ),
     [queue.items]
   );
+
+  useEffect(() => {
+    tracksRef.current = tracks;
+  }, [tracks]);
+
+  useEffect(() => {
+    nextCursorRef.current = nextCursor;
+  }, [nextCursor]);
+
+  useEffect(() => {
+    if (!activeTrackHydrationRetryAfterMs || activeTrackHydrationRetryAfterMs <= 0) return;
+    const interval = window.setInterval(() => {
+      setActiveTrackHydrationRetryAfterMs((prev) => {
+        if (!prev || prev <= 300) return null;
+        return prev - 300;
+      });
+    }, 300);
+    return () => window.clearInterval(interval);
+  }, [activeTrackHydrationRetryAfterMs]);
 
   const applyAllMyMusicTotal = useCallback((nextTotal: number | null) => {
     setAllMyMusicTotal(nextTotal);
@@ -1280,9 +1343,15 @@ export default function PlaylistBrowser() {
         setLoadingTracksList(false);
       }
       if (Array.isArray(parsed.trackItems)) setTrackItems(parsed.trackItems);
-      if (Array.isArray(parsed.tracks)) setTracks(dedupeTrackRows(parsed.tracks));
+      if (Array.isArray(parsed.tracks)) {
+        const dedupedTracks = dedupeTrackRows(parsed.tracks);
+        tracksRef.current = dedupedTracks;
+        setTracks(dedupedTracks);
+      }
       if (typeof parsed.nextCursor === "string" || parsed.nextCursor === null) {
-        setNextCursor(parsed.nextCursor ?? null);
+        const nextCursorValue = parsed.nextCursor ?? null;
+        setNextCursor(nextCursorValue);
+        nextCursorRef.current = nextCursorValue;
       }
       if (
         typeof parsed.playlistCursor === "string" ||
@@ -1938,17 +2007,42 @@ export default function PlaylistBrowser() {
   const activeTrackIsPlaying = playbackFocus.isPlaying === true;
   const activeTrackIsStale = Boolean(playbackFocus.stale);
 
+  const trackRowIndexById = useMemo(() => {
+    const indexById = new Map<string, number>();
+    for (let index = 0; index < tracks.length; index += 1) {
+      const track = tracks[index];
+      for (const candidate of collectTrackMatchCandidates(track)) {
+        if (!indexById.has(candidate)) indexById.set(candidate, index);
+      }
+    }
+    return indexById;
+  }, [tracks]);
+
+  const trackItemIndexById = useMemo(() => {
+    const indexById = new Map<string, number>();
+    for (let index = 0; index < localFilteredTrackItems.length; index += 1) {
+      const track = localFilteredTrackItems[index];
+      for (const candidate of collectTrackMatchCandidates(track)) {
+        if (!indexById.has(candidate)) indexById.set(candidate, index);
+      }
+    }
+    return indexById;
+  }, [localFilteredTrackItems]);
+
   const activeTrackIndexInRows = useMemo(() => {
-    if (!tracks.length || !activeTrackId) return -1;
-    return tracks.findIndex((track) => isCurrentTrackMatch(track, activeTrackId));
-  }, [tracks, activeTrackId]);
+    if (!activeTrackId) return -1;
+    return trackRowIndexById.get(activeTrackId) ?? -1;
+  }, [trackRowIndexById, activeTrackId]);
 
   const activeTrackIndexInItems = useMemo(() => {
-    if (!localFilteredTrackItems.length || !activeTrackId) return -1;
-    return localFilteredTrackItems.findIndex((track) =>
-      isCurrentTrackMatch(track, activeTrackId)
-    );
-  }, [localFilteredTrackItems, activeTrackId]);
+    if (!activeTrackId) return -1;
+    return trackItemIndexById.get(activeTrackId) ?? -1;
+  }, [trackItemIndexById, activeTrackId]);
+
+  const activeTrackMissingInRows =
+    (mode === "playlists" || mode === "artists") &&
+    Boolean(activeTrackId) &&
+    activeTrackIndexInRows < 0;
 
   useEffect(() => {
     if (activeTrackIndexInRows < 0) return;
@@ -2573,8 +2667,11 @@ export default function PlaylistBrowser() {
             })
           );
           if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
-            setTracks(dedupeTrackRows(rows));
+            const dedupedRows = dedupeTrackRows(rows);
+            tracksRef.current = dedupedRows;
+            setTracks(dedupedRows);
             setNextCursor(null);
+            nextCursorRef.current = null;
             applyAllMyMusicTotal(rows.length);
             if (nextContextKey) setTracksContextKey(nextContextKey);
             setPendingTracksContextKey(null);
@@ -2634,8 +2731,12 @@ export default function PlaylistBrowser() {
           }
         }
         if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
-          setTracks(dedupeTrackRows(items));
-          setNextCursor(data.nextCursor ?? null);
+          const dedupedRows = dedupeTrackRows(items);
+          tracksRef.current = dedupedRows;
+          setTracks(dedupedRows);
+          const nextCursorValue = data.nextCursor ?? null;
+          setNextCursor(nextCursorValue);
+          nextCursorRef.current = nextCursorValue;
           if (mode === "playlists" && selectedPlaylist?.type === "liked") {
             const nextTotal =
               typeof data.totalCount === "number" && Number.isFinite(data.totalCount)
@@ -2712,6 +2813,7 @@ export default function PlaylistBrowser() {
     if (contextChanged) {
       setPendingTracksContextKey(nextContextKey);
       setNextCursor(null);
+      nextCursorRef.current = null;
     }
     loadTracks();
 
@@ -2733,59 +2835,163 @@ export default function PlaylistBrowser() {
     likedTracksTotal,
   ]);
 
-  async function loadMore() {
-    if (!nextCursor || loadingMoreTracksRef.current) return;
-    if (mode === "playlists" && !selectedPlaylist?.id) return;
-    if (mode === "playlists" && selectedPlaylist?.type === "all_music") return;
-    if (mode === "artists" && !selectedArtist?.id) return;
-    if (mode === "tracks" || mode === "albums") return;
-    const requestVersion = tracksLoadVersionRef.current;
-    const cursor = nextCursor;
-    const baseUrl =
-      mode === "playlists"
-        ? selectedPlaylist?.type === "liked"
-          ? "/api/spotify/me/tracks?live=1"
-          : playlistTracksSourceLiveRef.current
-          ? `/api/spotify/playlists/${selectedPlaylist?.id}/items?live=1`
-          : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
-        : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
-    const connector = baseUrl.includes("?") ? "&" : "?";
-    const url = `${baseUrl}${connector}limit=50&cursor=${encodeURIComponent(cursor)}`;
+  const resolveTrackListSource = useCallback(() => {
+    if (mode === "tracks" || mode === "albums") return null;
+    if (mode === "playlists") {
+      if (!selectedPlaylist?.id) return null;
+      if (selectedPlaylist.type === "all_music") return null;
+      if (selectedPlaylist.type === "liked") {
+        return {
+          baseUrl: "/api/spotify/me/tracks?live=1",
+          sourceLabel: "liked" as const,
+        };
+      }
+      return {
+        baseUrl: playlistTracksSourceLiveRef.current
+          ? `/api/spotify/playlists/${selectedPlaylist.id}/items?live=1`
+          : `/api/spotify/playlists/${selectedPlaylist.id}/items`,
+        sourceLabel: "playlist" as const,
+      };
+    }
+    if (mode === "artists") {
+      if (!selectedArtist?.id) return null;
+      return {
+        baseUrl: `/api/spotify/artists/${selectedArtist.id}/tracks`,
+        sourceLabel: "artist" as const,
+      };
+    }
+    return null;
+  }, [mode, selectedArtist?.id, selectedPlaylist?.id, selectedPlaylist?.type]);
 
-    loadingMoreTracksRef.current = true;
-    setLoadingMoreTracks(true);
-    try {
+  const fetchTrackRowsPage = useCallback(
+    async (
+      cursor: string,
+      reason: TrackPageLoadReason
+    ): Promise<TrackPageLoadResult> => {
+      const source = resolveTrackListSource();
+      if (!source) {
+        return {
+          ok: false,
+          status: 0,
+          items: [],
+          nextCursor: null,
+          totalCount: null,
+          retryAfterMs: null,
+          reason,
+          cursorUsed: cursor,
+          sourceLabel: "unknown",
+        };
+      }
+      const url = buildApiUrl(source.baseUrl, {
+        limit: "50",
+        cursor,
+      });
       const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) return;
+      const retryAfterMs = parseRetryAfterMs(res.headers);
+      if (!res.ok) {
+        return {
+          ok: false,
+          status: res.status,
+          items: [],
+          nextCursor: cursor,
+          totalCount: null,
+          retryAfterMs,
+          reason,
+          cursorUsed: cursor,
+          sourceLabel: source.sourceLabel,
+        };
+      }
       const data = (await res.json()) as CursorResponse<TrackRow>;
       const items = Array.isArray(data.items) ? data.items : [];
-      if (requestVersion !== tracksLoadVersionRef.current) return;
-      setTracks((prev) => dedupeTrackRows(prev.concat(items)));
-      setNextCursor(data.nextCursor ?? null);
-      if (mode === "playlists" && selectedPlaylist?.type === "liked") {
-        const nextTotal =
+      return {
+        ok: true,
+        status: res.status,
+        items,
+        nextCursor: data.nextCursor ?? null,
+        totalCount:
           typeof data.totalCount === "number" && Number.isFinite(data.totalCount)
             ? Math.max(0, Math.floor(data.totalCount))
-            : null;
-        applyLikedTracksTotal(nextTotal);
+            : null,
+        retryAfterMs,
+        reason,
+        cursorUsed: cursor,
+        sourceLabel: source.sourceLabel,
+      };
+    },
+    [resolveTrackListSource]
+  );
+
+  const loadMore = useCallback(
+    async (reason: TrackPageLoadReason = "scroll"): Promise<TrackPageLoadResult | null> => {
+      const cursor = nextCursorRef.current;
+      if (!cursor || loadingMoreTracksRef.current) return null;
+      if (mode === "playlists" && !selectedPlaylist?.id) return null;
+      if (mode === "playlists" && selectedPlaylist?.type === "all_music") return null;
+      if (mode === "artists" && !selectedArtist?.id) return null;
+      if (mode === "tracks" || mode === "albums") return null;
+      const requestVersion = tracksLoadVersionRef.current;
+
+      loadingMoreTracksRef.current = true;
+      setLoadingMoreTracks(true);
+      try {
+        const page = await fetchTrackRowsPage(cursor, reason);
+        if (requestVersion !== tracksLoadVersionRef.current) return page;
+        if (!page.ok) {
+          if (page.status > 0) {
+            const mapped = mapSpotifyApiError(page.status, "Tracks laden lukt nu niet.");
+            setAuthRequired(Boolean(mapped.authRequired));
+            if (reason === "active_track_hydration" || reason === "active_track_retry") {
+              setActiveTrackHydrationError(mapped.message);
+              setActiveTrackHydrationRetryAfterMs(page.retryAfterMs ?? null);
+            } else {
+              setError(mapped.message);
+            }
+          }
+          return page;
+        }
+        setActiveTrackHydrationRetryAfterMs(null);
+        setTracks((prev) => {
+          const merged = dedupeTrackRows(prev.concat(page.items));
+          tracksRef.current = merged;
+          return merged;
+        });
+        setNextCursor(page.nextCursor);
+        nextCursorRef.current = page.nextCursor;
+        if (mode === "playlists" && selectedPlaylist?.type === "liked") {
+          applyLikedTracksTotal(page.totalCount);
+        }
+        if (
+          mode === "playlists" &&
+          selectedPlaylist?.type === "playlist" &&
+          selectedPlaylist.id
+        ) {
+          applyPlaylistTracksTotal(selectedPlaylist.id, page.totalCount);
+        }
+        return page;
+      } catch {
+        if (requestVersion !== tracksLoadVersionRef.current) return null;
+        const fallback = "Tracks laden lukt nu niet.";
+        if (reason === "active_track_hydration" || reason === "active_track_retry") {
+          setActiveTrackHydrationError(fallback);
+        } else {
+          setError(fallback);
+        }
+        return null;
+      } finally {
+        loadingMoreTracksRef.current = false;
+        setLoadingMoreTracks(false);
       }
-      if (
-        mode === "playlists" &&
-        selectedPlaylist?.type === "playlist" &&
-        selectedPlaylist.id &&
-        typeof data.totalCount === "number" &&
-        Number.isFinite(data.totalCount)
-      ) {
-        applyPlaylistTracksTotal(
-          selectedPlaylist.id,
-          Math.max(0, Math.floor(data.totalCount))
-        );
-      }
-    } finally {
-      loadingMoreTracksRef.current = false;
-      setLoadingMoreTracks(false);
-    }
-  }
+    },
+    [
+      applyLikedTracksTotal,
+      applyPlaylistTracksTotal,
+      fetchTrackRowsPage,
+      mode,
+      selectedArtist?.id,
+      selectedPlaylist?.id,
+      selectedPlaylist?.type,
+    ]
+  );
 
   useEffect(() => {
     if (!pendingTracksContextKey) return;
@@ -2804,11 +3010,169 @@ export default function PlaylistBrowser() {
     if (autoTrackListPrefetchCountRef.current >= 3) return;
     const timeout = window.setTimeout(() => {
       if (loadingMoreTracksRef.current) return;
-      autoTrackListPrefetchCountRef.current += 1;
-      void loadMore();
+      void (async () => {
+        const page = await loadMore("auto_prefetch");
+        if (page?.ok) {
+          autoTrackListPrefetchCountRef.current += 1;
+        }
+      })();
     }, 180);
     return () => window.clearTimeout(timeout);
-  }, [mode, tracksContextKey, nextCursor, loadingTracks, loadingMoreTracks]);
+  }, [loadMore, loadingMoreTracks, loadingTracks, mode, nextCursor, tracksContextKey]);
+
+  useEffect(() => {
+    if (mode !== "playlists" && mode !== "artists") return;
+    if (!activeTrackId) {
+      if (activeTrackHydrating) setActiveTrackHydrating(false);
+      if (activeTrackHydrationError) setActiveTrackHydrationError(null);
+      if (activeTrackHydrationRetryAfterMs !== null) setActiveTrackHydrationRetryAfterMs(null);
+      return;
+    }
+    if (activeTrackIndexInRows >= 0) {
+      if (activeTrackHydrating) setActiveTrackHydrating(false);
+      if (activeTrackHydrationError) setActiveTrackHydrationError(null);
+      if (activeTrackHydrationRetryAfterMs !== null) setActiveTrackHydrationRetryAfterMs(null);
+      return;
+    }
+    if (loadingTracks) return;
+    if (!nextCursorRef.current) return;
+    if (
+      activeTrackHydrationInFlightRef.current &&
+      activeTrackHydrationTargetRef.current === activeTrackId
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const hydrationStartedAt = Date.now();
+    activeTrackHydrationInFlightRef.current = true;
+    activeTrackHydrationTargetRef.current = activeTrackId;
+    setActiveTrackHydrating(true);
+    setActiveTrackHydrationError(null);
+    setActiveTrackHydrationRetryAfterMs(null);
+    activeTrackHydrationMetricsRef.current.missing += 1;
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => {
+        window.setTimeout(resolve, ms);
+      });
+
+    void (async () => {
+      let attempts = 0;
+      let maxAttempts = 20;
+      if (
+        mode === "playlists" &&
+        selectedPlaylist?.type === "playlist" &&
+        selectedPlaylist.id
+      ) {
+        try {
+          const hintUrl = buildApiUrl(
+            `/api/spotify/playlists/${selectedPlaylist.id}/items`,
+            {
+              limit: "1",
+              trackId: activeTrackId,
+            }
+          );
+          const hintRes = await fetch(hintUrl, { cache: "no-store" });
+          if (hintRes.ok) {
+            const hintPayload = (await hintRes.json()) as CursorResponse<TrackRow>;
+            const targetPosition = hintPayload.target?.found
+              ? hintPayload.target.position
+              : null;
+            if (typeof targetPosition === "number" && Number.isFinite(targetPosition)) {
+              const loadedCount = tracksRef.current.length;
+              const remaining = Math.max(0, Math.floor(targetPosition) - loadedCount + 1);
+              const pagesNeeded = Math.ceil(remaining / 50) + 3;
+              maxAttempts = Math.max(20, Math.min(40, pagesNeeded));
+            }
+          }
+        } catch {
+          // non-blocking hint lookup
+        }
+      }
+      while (!cancelled && attempts < maxAttempts) {
+        const currentRows = tracksRef.current;
+        const alreadyVisible = currentRows.some((track) =>
+          isCurrentTrackMatch(track, activeTrackId)
+        );
+        if (alreadyVisible) break;
+
+        const cursor = nextCursorRef.current;
+        if (!cursor) break;
+
+        const reason: TrackPageLoadReason =
+          attempts === 0 ? "active_track_hydration" : "active_track_retry";
+        const page = await loadMore(reason);
+        if (!page) {
+          if (loadingMoreTracksRef.current) {
+            await sleep(120);
+            continue;
+          }
+          break;
+        }
+        attempts += 1;
+        if (!page.ok) {
+          if (page.status === 429 && (page.retryAfterMs ?? 0) > 0) {
+            const retryDelay = Math.min(4000, Math.max(250, page.retryAfterMs ?? 0));
+            if (!cancelled) {
+              setActiveTrackHydrationRetryAfterMs(retryDelay);
+            }
+            await sleep(retryDelay);
+            continue;
+          }
+          break;
+        }
+        if (page.items.length === 0) break;
+      }
+
+      if (cancelled) return;
+      const resolved = tracksRef.current.some((track) =>
+        isCurrentTrackMatch(track, activeTrackId)
+      );
+      if (resolved) {
+        activeTrackHydrationMetricsRef.current.resolved += 1;
+        setActiveTrackHydrationError(null);
+      } else {
+        activeTrackHydrationMetricsRef.current.failed += 1;
+        setActiveTrackHydrationError("Actieve track nog niet gevonden in de geladen lijst.");
+      }
+      setActiveTrackHydrating(false);
+      setActiveTrackHydrationRetryAfterMs(null);
+      activeTrackHydrationInFlightRef.current = false;
+      activeTrackHydrationTargetRef.current = null;
+      const durationMs = Date.now() - hydrationStartedAt;
+      window.dispatchEvent(
+        new CustomEvent("gs-highlight-metric", {
+          detail: {
+            name: "active_track_hydration",
+            resolved,
+            durationMs,
+            attempts,
+            context: tracksContextKey,
+          },
+        })
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+      if (activeTrackHydrationTargetRef.current === activeTrackId) {
+        activeTrackHydrationInFlightRef.current = false;
+        activeTrackHydrationTargetRef.current = null;
+      }
+      setActiveTrackHydrating(false);
+    };
+  }, [
+    activeTrackId,
+    activeTrackHydrating,
+    activeTrackIndexInRows,
+    loadMore,
+    loadingTracks,
+    mode,
+    selectedPlaylist?.id,
+    selectedPlaylist?.type,
+    tracksContextKey,
+  ]);
 
   const requestPlaylistItemsSync = useCallback(async (playlistId: string) => {
     try {
@@ -4048,6 +4412,18 @@ export default function PlaylistBrowser() {
         ) : loadingTracks || loadingMoreTracks ? (
           <span className="text-body">Tracks laden...</span>
         ) : null}
+        {activeTrackMissingInRows && activeTrackHydrating ? (
+          <div className="text-body">Actieve track wordt geladen voor consistente highlight…</div>
+        ) : null}
+        {activeTrackMissingInRows && activeTrackHydrationRetryAfterMs ? (
+          <div className="text-subtle">
+            Spotify rate limit actief, opnieuw proberen over{" "}
+            {Math.max(1, Math.ceil(activeTrackHydrationRetryAfterMs / 1000))}s.
+          </div>
+        ) : null}
+        {activeTrackMissingInRows && !activeTrackHydrating && activeTrackHydrationError ? (
+          <div className="text-subtle">{activeTrackHydrationError}</div>
+        ) : null}
       </div>
 
       {selectedTrackDetail && !selectedArtistDetail ? (
@@ -4457,6 +4833,11 @@ type CursorResponse<T> = {
   items?: T[];
   nextCursor?: string | null;
   totalCount?: number | null;
+  target?: {
+    trackId?: string | null;
+    found?: boolean;
+    position?: number | null;
+  };
 };
 
 type PlaylistApiItem = {

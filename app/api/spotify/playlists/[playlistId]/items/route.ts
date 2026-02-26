@@ -22,6 +22,7 @@ import {
 } from "@/lib/api/guards";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
+import { incCounter, observeHistogram } from "@/lib/observability/metrics";
 
 export const runtime = "nodejs";
 
@@ -72,6 +73,11 @@ export async function GET(
       : 50;
   const cursor = searchParams.get("cursor");
   const live = searchParams.get("live") === "1";
+  const trackIdParam = searchParams.get("trackId");
+  const targetTrackId = normalizeTrackId(trackIdParam);
+  if (trackIdParam && !targetTrackId) {
+    return jsonError("INVALID_TRACK_ID", 400);
+  }
 
   const db = getDb();
   const baseWhere = and(
@@ -102,6 +108,57 @@ export async function GET(
       return jsonError("INVALID_CURSOR", 400);
     }
     whereClause = cursorWhere;
+  }
+
+  let target:
+    | {
+        trackId: string;
+        found: boolean;
+        position: number | null;
+      }
+    | undefined;
+  if (targetTrackId) {
+    const lookupStartedAt = Date.now();
+    const targetWhere = and(
+      baseWhere,
+      or(
+        eq(playlistItems.trackId, targetTrackId),
+        eq(tracks.linkedFromTrackId, targetTrackId)
+      )
+    );
+    const targetRow = await db
+      .select({
+        position: playlistItems.position,
+      })
+      .from(playlistItems)
+      .innerJoin(
+        userPlaylists,
+        eq(userPlaylists.playlistId, playlistItems.playlistId)
+      )
+      .leftJoin(tracks, eq(tracks.trackId, playlistItems.trackId))
+      .where(targetWhere)
+      .orderBy(asc(playlistItems.position), asc(playlistItems.itemId))
+      .limit(1)
+      .get();
+    const found = Boolean(targetRow && typeof targetRow.position === "number");
+    target = {
+      trackId: targetTrackId,
+      found,
+      position:
+        targetRow && typeof targetRow.position === "number"
+          ? Math.max(0, Math.floor(targetRow.position))
+          : null,
+    };
+    incCounter("playlist_items_target_lookup_total", {
+      found: found ? "1" : "0",
+    });
+    observeHistogram(
+      "playlist_items_target_lookup_latency_ms",
+      Date.now() - lookupStartedAt,
+      {
+        found: found ? "1" : "0",
+      }
+    );
   }
 
   const rows = await db
@@ -271,6 +328,15 @@ export async function GET(
           lastSuccessfulAt: now,
           lagSec: 0,
         },
+        target:
+          target ??
+          (targetTrackId
+            ? {
+                trackId: targetTrackId,
+                found: false,
+                position: null,
+              }
+            : undefined),
       });
     } catch (error) {
       if (error instanceof SpotifyFetchError) {
@@ -385,6 +451,7 @@ export async function GET(
       lastSuccessfulAt,
       lagSec,
     },
+    target,
   });
 }
 

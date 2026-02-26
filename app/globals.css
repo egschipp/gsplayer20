@@ -1366,42 +1366,44 @@ details[open] > .details-summary::after {
   background: #2a2a2a;
 }
 
-.track-action-link {
-  color: var(--text-primary);
+.track-action-link,
+.chatgpt-btn,
+.queue-row-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 30px;
   height: 30px;
   border-radius: 999px;
-}
-
-.chatgpt-btn {
-  color: var(--text-primary);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  background: transparent;
-  border: 0;
+  border: 1px solid rgba(29, 185, 84, 0.42);
+  background: rgba(29, 185, 84, 0.14);
+  color: rgba(234, 255, 242, 0.94);
+  line-height: 1;
   padding: 0;
   cursor: pointer;
-  transition: color 120ms ease, transform 120ms ease;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.track-action-link {
+  text-decoration: none;
 }
 
 .track-action-link svg,
-.chatgpt-btn svg {
+.chatgpt-btn svg,
+.queue-row-btn svg {
   width: 15px;
   height: 15px;
 }
 
-.chatgpt-btn:hover {
+.track-action-link:hover,
+.chatgpt-btn:hover,
+.queue-row-btn:hover:not(:disabled) {
+  border-color: rgba(29, 185, 84, 0.62);
+  background: rgba(29, 185, 84, 0.24);
   color: #ffffff;
-  transform: translateY(-1px);
 }
 
+.track-action-link:focus-visible,
 .chatgpt-btn:focus-visible {
   outline: 2px solid var(--tide);
   outline-offset: 2px;
@@ -1459,26 +1461,6 @@ details[open] > .details-summary::after {
     background 120ms ease,
     border-color 120ms ease,
     color 120ms ease;
-}
-
-.queue-row-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  border: 1px solid rgba(29, 185, 84, 0.42);
-  background: rgba(29, 185, 84, 0.14);
-  color: rgba(234, 255, 242, 0.94);
-  cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
-}
-
-.queue-row-btn:hover:not(:disabled) {
-  border-color: rgba(29, 185, 84, 0.62);
-  background: rgba(29, 185, 84, 0.24);
-  color: #ffffff;
 }
 
 .queue-row-btn.active {

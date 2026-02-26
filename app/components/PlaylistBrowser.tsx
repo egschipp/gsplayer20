@@ -981,6 +981,8 @@ export default function PlaylistBrowser() {
   const artistDetailDialogRef = useRef<HTMLDivElement | null>(null);
   const artistDetailRestoreFocusRef = useRef<HTMLElement | null>(null);
   const hydratingPlaylistTargetsRef = useRef(false);
+  const stableTrackClearTimerRef = useRef<number | null>(null);
+  const [stableCurrentTrackId, setStableCurrentTrackId] = useState<string | null>(null);
   const comboMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setOpen(false),
   });
@@ -988,6 +990,10 @@ export default function PlaylistBrowser() {
   const trackItemsListRef = useRef<any>(null);
   const selectorDockOpenDelayTimerRef = useRef<number | null>(null);
   const selectorDockCloseDelayTimerRef = useRef<number | null>(null);
+  const autoTrackOptionsPrefetchCountRef = useRef(0);
+  const autoTrackOptionsPrefetchOpenRef = useRef(false);
+  const autoTrackListPrefetchCountRef = useRef(0);
+  const autoTrackListPrefetchContextRef = useRef<string | null>(null);
   const CACHE_KEY = "gs_library_cache_v1";
   const LEGACY_SELECTOR_DOCK_KEY = "gs_selector_dock_open_v1";
   const SELECTOR_DOCK_PIN_KEY = "gs_selector_dock_pinned_v1";
@@ -1914,17 +1920,44 @@ export default function PlaylistBrowser() {
   const localFilteredTrackItems =
     mode === "tracks" ? filteredTrackItems : filteredAlbumTrackItems;
 
+  useEffect(() => {
+    const normalized = normalizeSpotifyTrackId(currentTrackId);
+    if (normalized) {
+      if (stableTrackClearTimerRef.current) {
+        window.clearTimeout(stableTrackClearTimerRef.current);
+        stableTrackClearTimerRef.current = null;
+      }
+      setStableCurrentTrackId((prev) => (prev === normalized ? prev : normalized));
+      return;
+    }
+    if (stableTrackClearTimerRef.current) {
+      window.clearTimeout(stableTrackClearTimerRef.current);
+    }
+    // Guard against short upstream sync gaps where currentTrackId briefly drops to null.
+    stableTrackClearTimerRef.current = window.setTimeout(() => {
+      setStableCurrentTrackId(null);
+      stableTrackClearTimerRef.current = null;
+    }, 2200);
+    return () => {
+      if (stableTrackClearTimerRef.current) {
+        window.clearTimeout(stableTrackClearTimerRef.current);
+      }
+    };
+  }, [currentTrackId]);
+
   const activeTrackIndexInRows = useMemo(() => {
-    if (!tracks.length || !currentTrackId) return -1;
-    return tracks.findIndex((track) => isCurrentTrackMatch(track, currentTrackId));
-  }, [tracks, currentTrackId]);
+    if (!tracks.length || !stableCurrentTrackId) return -1;
+    return tracks.findIndex((track) =>
+      isCurrentTrackMatch(track, stableCurrentTrackId)
+    );
+  }, [tracks, stableCurrentTrackId]);
 
   const activeTrackIndexInItems = useMemo(() => {
-    if (!localFilteredTrackItems.length || !currentTrackId) return -1;
+    if (!localFilteredTrackItems.length || !stableCurrentTrackId) return -1;
     return localFilteredTrackItems.findIndex((track) =>
-      isCurrentTrackMatch(track, currentTrackId)
+      isCurrentTrackMatch(track, stableCurrentTrackId)
     );
-  }, [localFilteredTrackItems, currentTrackId]);
+  }, [localFilteredTrackItems, stableCurrentTrackId]);
 
   useEffect(() => {
     if (activeTrackIndexInRows < 0) return;
@@ -2090,6 +2123,32 @@ export default function PlaylistBrowser() {
       setLoadingMoreTrackOptions(false);
     }
   }, [loadingMoreTrackOptions, trackCursor]);
+
+  useEffect(() => {
+    const trackSelectorMode = mode === "tracks" || mode === "albums";
+    if (!trackSelectorMode || !open) {
+      autoTrackOptionsPrefetchOpenRef.current = false;
+      autoTrackOptionsPrefetchCountRef.current = 0;
+      return;
+    }
+    if (!autoTrackOptionsPrefetchOpenRef.current) {
+      autoTrackOptionsPrefetchOpenRef.current = true;
+      autoTrackOptionsPrefetchCountRef.current = 0;
+    }
+  }, [mode, open]);
+
+  useEffect(() => {
+    const trackSelectorMode = mode === "tracks" || mode === "albums";
+    if (!trackSelectorMode || !open) return;
+    if (!trackCursor || loadingMoreTrackOptions) return;
+    if (autoTrackOptionsPrefetchCountRef.current >= 4) return;
+    const timeout = window.setTimeout(() => {
+      if (loadingMoreTrackOptions) return;
+      autoTrackOptionsPrefetchCountRef.current += 1;
+      void loadMoreTrackOptions();
+    }, 140);
+    return () => window.clearTimeout(timeout);
+  }, [mode, open, trackCursor, loadingMoreTrackOptions, loadMoreTrackOptions]);
 
   useEffect(() => {
     const term = debouncedQuery.trim();
@@ -2736,6 +2795,29 @@ export default function PlaylistBrowser() {
       setLoadingMoreTracks(false);
     }
   }
+
+  useEffect(() => {
+    if (!pendingTracksContextKey) return;
+    autoTrackListPrefetchContextRef.current = pendingTracksContextKey;
+    autoTrackListPrefetchCountRef.current = 0;
+  }, [pendingTracksContextKey]);
+
+  useEffect(() => {
+    if (mode !== "playlists" && mode !== "artists") return;
+    if (!tracksContextKey) return;
+    if (!nextCursor || loadingTracks || loadingMoreTracks) return;
+    if (autoTrackListPrefetchContextRef.current !== tracksContextKey) {
+      autoTrackListPrefetchContextRef.current = tracksContextKey;
+      autoTrackListPrefetchCountRef.current = 0;
+    }
+    if (autoTrackListPrefetchCountRef.current >= 3) return;
+    const timeout = window.setTimeout(() => {
+      if (loadingMoreTracksRef.current) return;
+      autoTrackListPrefetchCountRef.current += 1;
+      void loadMore();
+    }, 180);
+    return () => window.clearTimeout(timeout);
+  }, [mode, tracksContextKey, nextCursor, loadingTracks, loadingMoreTracks]);
 
   const requestPlaylistItemsSync = useCallback(async (playlistId: string) => {
     try {

@@ -1,13 +1,15 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:20-alpine AS deps
+FROM node:20-bookworm-slim AS deps
 WORKDIR /app
-RUN apk add --no-cache python3 make g++
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
   npm ci --no-audit --no-fund --prefer-offline
 
-FROM node:20-alpine AS builder
+FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -18,7 +20,7 @@ FROM deps AS prod-deps
 WORKDIR /app
 RUN npm prune --omit=dev
 
-FROM node:20-alpine AS runner
+FROM node:20-bookworm-slim AS runner
 # runtime image
 WORKDIR /app
 ENV NODE_ENV=production

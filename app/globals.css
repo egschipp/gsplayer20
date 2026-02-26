@@ -1330,10 +1330,12 @@ details[open] > .details-summary::after {
 }
 
 .track-row-inner {
+  position: relative;
   width: 100%;
   border-radius: 16px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-surface);
+  overflow: hidden;
 }
 
 .track-row-grid {
@@ -1342,6 +1344,7 @@ details[open] > .details-summary::after {
   gap: 16px;
   align-items: center;
   height: calc(var(--track-row-height, 72px) - 2px);
+  min-height: calc(var(--track-row-height, 72px) - 2px);
   padding: 0 16px;
 }
 
@@ -1410,8 +1413,8 @@ details[open] > .details-summary::after {
 
 .track-row-inner.playing {
   border-color: rgba(29, 185, 84, 0.5);
-  border-left: 4px solid var(--tide);
   background: var(--bg-elevated);
+  box-shadow: inset 4px 0 0 var(--tide);
 }
 
 .track-virtual-list .track-row {
@@ -2073,6 +2076,34 @@ details[open] > .details-summary::after {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.player-connect-active-device {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 0 8px;
+  padding: 2px 0 0;
+}
+
+.player-connect-active-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.92rem;
+  line-height: 1;
+}
+
+.player-connect-active-name {
+  min-width: 0;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.86);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .player-device-select {

@@ -984,6 +984,8 @@ export default function PlaylistBrowser() {
   const comboMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setOpen(false),
   });
+  const trackRowsListRef = useRef<any>(null);
+  const trackItemsListRef = useRef<any>(null);
   const selectorDockOpenDelayTimerRef = useRef<number | null>(null);
   const selectorDockCloseDelayTimerRef = useRef<number | null>(null);
   const CACHE_KEY = "gs_library_cache_v1";
@@ -1911,6 +1913,38 @@ export default function PlaylistBrowser() {
 
   const localFilteredTrackItems =
     mode === "tracks" ? filteredTrackItems : filteredAlbumTrackItems;
+
+  const activeTrackIndexInRows = useMemo(() => {
+    if (!tracks.length || !currentTrackId) return -1;
+    return tracks.findIndex((track) => isCurrentTrackMatch(track, currentTrackId));
+  }, [tracks, currentTrackId]);
+
+  const activeTrackIndexInItems = useMemo(() => {
+    if (!localFilteredTrackItems.length || !currentTrackId) return -1;
+    return localFilteredTrackItems.findIndex((track) =>
+      isCurrentTrackMatch(track, currentTrackId)
+    );
+  }, [localFilteredTrackItems, currentTrackId]);
+
+  useEffect(() => {
+    if (activeTrackIndexInRows < 0) return;
+    if (mode !== "playlists" && mode !== "artists") return;
+    const list = trackRowsListRef.current;
+    if (!list || typeof list.scrollToItem !== "function") return;
+    window.requestAnimationFrame(() => {
+      list.scrollToItem(activeTrackIndexInRows, "start");
+    });
+  }, [activeTrackIndexInRows, mode]);
+
+  useEffect(() => {
+    if (activeTrackIndexInItems < 0) return;
+    if (mode !== "tracks" && mode !== "albums") return;
+    const list = trackItemsListRef.current;
+    if (!list || typeof list.scrollToItem !== "function") return;
+    window.requestAnimationFrame(() => {
+      list.scrollToItem(activeTrackIndexInItems, "start");
+    });
+  }, [activeTrackIndexInItems, mode]);
 
   const isContextSwitchLoading = Boolean(
     loadingTracks &&
@@ -3750,6 +3784,7 @@ export default function PlaylistBrowser() {
           ) : null}
           {tracks.length ? (
             <List
+              ref={trackRowsListRef}
               height={listHeight}
               itemCount={tracks.length}
               itemSize={TRACK_ROW_HEIGHT}
@@ -3762,12 +3797,13 @@ export default function PlaylistBrowser() {
               }}
               itemKey={(index: number, data: TrackRowData) => {
                 const item = data.items[index];
-                return item.itemId || item.trackId || index;
+                return `${item.itemId || "row"}:${item.trackId || "track"}:${index}`;
               }}
               itemData={{
                 items: tracks,
                 mode,
                 currentTrackId,
+                activeTrackIndex: activeTrackIndexInRows,
                 openDetailFromRow,
                 handlePlayTrack,
                 addTrackToQueue: handleAddTrackToQueue,
@@ -3814,6 +3850,7 @@ export default function PlaylistBrowser() {
           ) : null}
           {localFilteredTrackItems.length ? (
             <List
+              ref={trackItemsListRef}
               height={listHeight}
               itemCount={localFilteredTrackItems.length}
               itemSize={TRACK_ROW_HEIGHT}
@@ -3821,11 +3858,12 @@ export default function PlaylistBrowser() {
               overscanCount={6}
               itemKey={(index: number, data: TrackItemData) => {
                 const item = data.items[index];
-                return item.id || index;
+                return `${item.id || item.trackId || "item"}:${index}`;
               }}
               itemData={{
                 items: localFilteredTrackItems,
                 currentTrackId,
+                activeTrackIndex: activeTrackIndexInItems,
                 openDetailFromItem,
                 handlePlayTrack,
                 addTrackToQueue: handleAddTrackToQueue,
@@ -4491,6 +4529,7 @@ type TrackRowData = {
   items: TrackRow[];
   mode: Mode;
   currentTrackId: string | null;
+  activeTrackIndex: number;
   openDetailFromRow: (track: TrackRow, trigger?: HTMLElement | null) => void;
   handlePlayTrack: (
     track: TrackRow | TrackItem | null | undefined,
@@ -4526,7 +4565,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
       .map((value) => value.trim())
       .filter(Boolean)[0] ?? "";
   const albumLine = String(track.albumName ?? "").trim();
-  const isPlaying = isCurrentTrackMatch(track, data.currentTrackId);
+  const isPlaying = index === data.activeTrackIndex;
   const rowColumnsStyle = {
     ["--track-row-height" as const]: `${TRACK_ROW_HEIGHT}px`,
     ["--track-row-columns" as const]: isGrid
@@ -4691,6 +4730,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
 type TrackItemData = {
   items: TrackItem[];
   currentTrackId: string | null;
+  activeTrackIndex: number;
   openDetailFromItem: (track: TrackItem, trigger?: HTMLElement | null) => void;
   handlePlayTrack: (
     track: TrackRow | TrackItem | null | undefined,
@@ -4722,7 +4762,7 @@ function TrackItemRenderer({
   data,
 }: ListChildComponentProps<TrackItemData>) {
   const track = data.items[index];
-  const isPlaying = isCurrentTrackMatch(track, data.currentTrackId);
+  const isPlaying = index === data.activeTrackIndex;
   const coverUrl = track.album?.images?.[0]?.url ?? null;
   const artistNames = track.artists
     .map((artist) => artist?.name)

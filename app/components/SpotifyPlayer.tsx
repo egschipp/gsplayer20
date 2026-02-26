@@ -214,6 +214,33 @@ function createCommandId() {
   return `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function resolveDeviceTypeIcon(type: string | null | undefined) {
+  const raw = String(type ?? "").trim().toLowerCase();
+  if (!raw) return "🎵";
+  if (raw.includes("smartphone") || raw.includes("phone") || raw.includes("tablet")) {
+    return "📱";
+  }
+  if (raw.includes("computer") || raw.includes("webplayer") || raw.includes("desktop")) {
+    return "💻";
+  }
+  if (raw.includes("speaker") || raw.includes("castaudio")) {
+    return "🔊";
+  }
+  if (raw.includes("headphone") || raw.includes("headset")) {
+    return "🎧";
+  }
+  if (raw.includes("tv") || raw.includes("stb") || raw.includes("console")) {
+    return "📺";
+  }
+  if (raw.includes("avr") || raw.includes("receiver")) {
+    return "📻";
+  }
+  if (raw.includes("audiodongle") || raw.includes("dongle")) {
+    return "🎛️";
+  }
+  return "🎵";
+}
+
 export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
   const { data: session, status: sessionStatus } = useSession();
   const customQueue = useQueueStore();
@@ -713,6 +740,19 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
     () => devices.filter((device) => device.selectable).length,
     [devices]
   );
+  const activeConnectDevice = useMemo(() => {
+    const currentId = activeDeviceId || deviceId;
+    const found = currentId ? devices.find((device) => device.id === currentId) : null;
+    const name =
+      (found?.name && found.name.trim()) ||
+      (activeDeviceName && activeDeviceName.trim()) ||
+      "Geen actief apparaat";
+    const type = found?.type ?? null;
+    return {
+      name,
+      icon: resolveDeviceTypeIcon(type),
+    };
+  }, [activeDeviceId, activeDeviceName, deviceId, devices]);
 
   useEffect(() => {
     playerStateRef.current = playerState;
@@ -4678,6 +4718,14 @@ export default function SpotifyPlayer({ onReady, onTrackChange }: PlayerProps) {
                 ⌄
               </span>
             </button>
+          </span>
+        </div>
+        <div className="player-connect-active-device" aria-live="polite">
+          <span className="player-connect-active-icon" aria-hidden="true">
+            {activeConnectDevice.icon}
+          </span>
+          <span className="player-connect-active-name">
+            {activeConnectDevice.name}
           </span>
         </div>
         {connectSelectorOpen ? (

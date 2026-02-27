@@ -23,6 +23,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
@@ -118,6 +124,20 @@ jobs:
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
             echo "Tag ${TAG} already exists."
             exit 0
+          fi
+          npm version "${VERSION}" --no-git-tag-version
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = ".release-please-manifest.json";
+          if (!fs.existsSync(path)) process.exit(0);
+          const data = JSON.parse(fs.readFileSync(path, "utf8"));
+          data["."] = process.env.VERSION;
+          fs.writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
+          NODE
+          if ! git diff --quiet -- package.json package-lock.json .release-please-manifest.json; then
+            git add package.json package-lock.json .release-please-manifest.json
+            git commit -m "chore(release): v${VERSION}"
+            git push origin HEAD:main
           fi
           git tag -a "${TAG}" -m "Release ${TAG}"
           git push origin "${TAG}"

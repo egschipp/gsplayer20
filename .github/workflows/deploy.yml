@@ -131,6 +131,63 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve app version
+        id: app_version
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs = require("node:fs");
+
+          async function main() {
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const fallbackVersion = String(pkg.version || "0.0.0").replace(/^v/i, "").trim();
+            const repo = String(process.env.GITHUB_REPOSITORY || "").trim();
+            const token = String(process.env.GITHUB_TOKEN || "").trim();
+
+            if (!repo || !token) {
+              process.stdout.write(`value=${fallbackVersion}\n`);
+              return;
+            }
+
+            try {
+              const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+                headers: {
+                  Accept: "application/vnd.github+json",
+                  Authorization: `Bearer ${token}`,
+                  "User-Agent": "gsplayer20-deploy-version",
+                },
+                cache: "no-store",
+              });
+
+              if (!res.ok) {
+                process.stdout.write(`value=${fallbackVersion}\n`);
+                return;
+              }
+
+              const data = await res.json();
+              const tag = String(data?.tag_name || "")
+                .trim()
+                .replace(/^v/i, "");
+              if (tag) {
+                process.stdout.write(`value=${tag}\n`);
+                return;
+              }
+            } catch {
+              // fall back to package.json version
+            }
+
+            process.stdout.write(`value=${fallbackVersion}\n`);
+          }
+
+          main();
+          NODE
+
       - name: Validate APP_ENCRYPTION_KEY
         env:
           APP_ENCRYPTION_KEY: ${{ secrets.APP_ENCRYPTION_KEY }}
@@ -171,12 +228,13 @@ jobs:
           NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL || secrets.AUTH_URL }}
           TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
           DB_PATH: /data/gsplayer.sqlite
+          APP_RELEASE_VERSION: ${{ steps.app_version.outputs.value }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT }}
-          envs: APP_ENCRYPTION_KEY,IMAGE_NAME,IMAGE_TAG,DOCKER_REGISTRY,DOCKER_USERNAME,DOCKER_PASSWORD,SPOTIFY_CLIENT_ID,SPOTIFY_CLIENT_SECRET,SPOTIFY_REDIRECT_URI,AUTH_SECRET,APP_PIN,AUTH_URL,NEXTAUTH_SECRET,NEXTAUTH_URL,TOKEN_ENCRYPTION_KEY,DB_PATH
+          envs: APP_ENCRYPTION_KEY,IMAGE_NAME,IMAGE_TAG,DOCKER_REGISTRY,DOCKER_USERNAME,DOCKER_PASSWORD,SPOTIFY_CLIENT_ID,SPOTIFY_CLIENT_SECRET,SPOTIFY_REDIRECT_URI,AUTH_SECRET,APP_PIN,AUTH_URL,NEXTAUTH_SECRET,NEXTAUTH_URL,TOKEN_ENCRYPTION_KEY,DB_PATH,APP_RELEASE_VERSION
           script: |
             set -euo pipefail
             cd "${{ secrets.DEPLOY_DIR }}"
@@ -209,6 +267,7 @@ jobs:
             NEXTAUTH_URL=$NEXTAUTH_URL
             TOKEN_ENCRYPTION_KEY=$TOKEN_ENCRYPTION_KEY
             DB_PATH=$DB_PATH
+            APP_RELEASE_VERSION=$APP_RELEASE_VERSION
             EOF
             chmod 600 "$tmp_env"
             mv "$tmp_env" .env

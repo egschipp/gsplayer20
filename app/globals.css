@@ -16,6 +16,7 @@
   --text-subtle: #b3b3b3;
   --border-subtle: rgba(255, 255, 255, 0.08);
   --content-inline-space: 16px;
+  --list-inner-max-width: calc(1200px - 32px);
   --shadow-glow: 0 0 16px rgba(29, 185, 84, 0.25);
   --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
@@ -54,6 +55,7 @@ a:hover {
 @media (min-width: 768px) {
   :root {
     --content-inline-space: 20px;
+    --list-inner-max-width: calc(1200px - 64px);
   }
 
   .page {
@@ -88,7 +90,7 @@ a:hover {
 }
 
 .shell.player-shell-wrap {
-  max-width: 1200px;
+  max-width: 1260px;
 }
 
 .fixed-top {
@@ -978,7 +980,9 @@ a:focus-visible {
 }
 
 .player-library-dock-slot {
-  width: 100%;
+  width: min(100%, var(--list-inner-max-width));
+  margin-left: auto;
+  margin-right: auto;
   margin-top: 4px;
   margin-bottom: 10px;
 }
@@ -1863,6 +1867,7 @@ details[open] > .details-summary::after {
   position: relative;
   display: grid;
   width: 100%;
+  max-width: var(--list-inner-max-width);
   grid-template-columns: 3fr 2fr;
   grid-template-rows: auto auto;
   gap: 16px;
@@ -1877,7 +1882,7 @@ details[open] > .details-summary::after {
       rgba(255, 255, 255, 0.03)
     ),
     rgba(0, 0, 0, 0.58);
-  margin: 10px 0 14px;
+  margin: 10px auto 14px;
 }
 
 .player-cover {

@@ -143,12 +143,12 @@ export async function resolveAppVersion(options?: {
     };
   }
 
-  // Default to remote release/tag version so the UI shows the deployed release number.
-  // Set APP_VERSION_SOURCE=package to force local package version.
-  const versionSource = String(process.env.APP_VERSION_SOURCE ?? "remote")
+  // Default to local package version so deployed builds always show their own release number.
+  // Set APP_VERSION_SOURCE=remote to force GitHub release/tag lookup.
+  const versionSource = String(process.env.APP_VERSION_SOURCE ?? "package")
     .trim()
     .toLowerCase();
-  if (versionSource === "package") {
+  if (versionSource !== "remote") {
     return {
       name: packageVersion.name,
       version: packageVersion.version,

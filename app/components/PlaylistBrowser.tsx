@@ -776,6 +776,34 @@ function resolveTrackItemCanonicalId(item: TrackItem) {
   );
 }
 
+function resolveTrackSelectionKey(track: TrackRow | TrackItem | null | undefined) {
+  if (!track) return null;
+  if (isTrackItem(track)) {
+    return resolveTrackItemCanonicalId(track);
+  }
+  return resolveTrackRowCanonicalId(track);
+}
+
+function collectPlaylistIdsFromTrack(track: TrackRow | TrackItem) {
+  return new Set(
+    (Array.isArray(track.playlists) ? track.playlists : [])
+      .map((playlist) => String(playlist?.id ?? "").trim())
+      .filter(Boolean)
+  );
+}
+
+function dedupeTracksForBulkApply(tracks: Array<TrackRow | TrackItem>) {
+  const byId = new Map<string, TrackRow | TrackItem>();
+  for (const track of tracks) {
+    const trackId = resolveTrackId(track);
+    if (!trackId) continue;
+    if (!byId.has(trackId)) {
+      byId.set(trackId, track);
+    }
+  }
+  return Array.from(byId.values());
+}
+
 function buildTrackRowDedupeKey(row: TrackRow, index: number) {
   const canonicalTrackId = resolveTrackRowCanonicalId(row);
   const playlistId = String(row.playlistId ?? "").trim();
@@ -998,6 +1026,7 @@ export default function PlaylistBrowser() {
   const [tracksRefreshToken, setTracksRefreshToken] = useState(0);
   const [addingTargetKey, setAddingTargetKey] = useState<string | null>(null);
   const [removingTargetKey, setRemovingTargetKey] = useState<string | null>(null);
+  const [selectedTrackKeys, setSelectedTrackKeys] = useState<Set<string>>(new Set());
   const { api: playerApi, playbackFocus } = usePlayer();
   const queue = useQueueStore();
   const comboListRef = useRef<HTMLDivElement | null>(null);
@@ -1999,6 +2028,83 @@ export default function PlaylistBrowser() {
 
   const localFilteredTrackItems =
     mode === "tracks" ? filteredTrackItems : filteredAlbumTrackItems;
+
+  const visibleTracksForSelection = useMemo<Array<TrackRow | TrackItem>>(
+    () =>
+      mode === "playlists" || mode === "artists"
+        ? tracks
+        : localFilteredTrackItems,
+    [localFilteredTrackItems, mode, tracks]
+  );
+
+  const visibleTracksBySelectionKey = useMemo(() => {
+    const byKey = new Map<string, TrackRow | TrackItem>();
+    for (const track of visibleTracksForSelection) {
+      const key = resolveTrackSelectionKey(track);
+      if (!key || byKey.has(key)) continue;
+      byKey.set(key, track);
+    }
+    return byKey;
+  }, [visibleTracksForSelection]);
+
+  const selectedTrackCount = selectedTrackKeys.size;
+
+  const isTrackSelected = useCallback(
+    (track: TrackRow | TrackItem) => {
+      const key = resolveTrackSelectionKey(track);
+      return Boolean(key && selectedTrackKeys.has(key));
+    },
+    [selectedTrackKeys]
+  );
+
+  const toggleTrackSelection = useCallback((track: TrackRow | TrackItem) => {
+    const key = resolveTrackSelectionKey(track);
+    if (!key) return;
+    setSelectedTrackKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearTrackSelection = useCallback(() => {
+    setSelectedTrackKeys(new Set());
+  }, []);
+
+  const resolveTracksForPlaylistApply = useCallback(
+    (track: TrackRow | TrackItem) => {
+      const clickedKey = resolveTrackSelectionKey(track);
+      if (!clickedKey) return [track];
+      if (!selectedTrackKeys.has(clickedKey) || selectedTrackKeys.size <= 1) {
+        return [track];
+      }
+      const selectedTracks = Array.from(selectedTrackKeys)
+        .map((key) => visibleTracksBySelectionKey.get(key))
+        .filter((item): item is TrackRow | TrackItem => Boolean(item));
+      if (!selectedTracks.length) return [track];
+      return selectedTracks;
+    },
+    [selectedTrackKeys, visibleTracksBySelectionKey]
+  );
+
+  useEffect(() => {
+    setSelectedTrackKeys((prev) => {
+      if (!prev.size) return prev;
+      const next = new Set(
+        Array.from(prev).filter((key) => visibleTracksBySelectionKey.has(key))
+      );
+      if (next.size === prev.size) return prev;
+      return next;
+    });
+  }, [visibleTracksBySelectionKey]);
+
+  useEffect(() => {
+    setSelectedTrackKeys(new Set());
+  }, [tracksContextKey]);
 
   const activeTrackId = useMemo(
     () => normalizeSpotifyTrackId(playbackFocus.trackId),
@@ -3520,9 +3626,11 @@ export default function PlaylistBrowser() {
 
   const handleApplyTrackPlaylistChanges = useCallback(
     async (
-      track: TrackRow | TrackItem,
+      applyTracks: Array<TrackRow | TrackItem>,
       payload: { toAdd: PlaylistOption[]; toRemove: PlaylistOption[] }
     ) => {
+      const tracksToApply = dedupeTracksForBulkApply(applyTracks ?? []);
+      if (!tracksToApply.length) return;
       const toAdd = payload.toAdd ?? [];
       const toRemove = payload.toRemove ?? [];
       const changedPlaylistIds = new Set(
@@ -3531,13 +3639,18 @@ export default function PlaylistBrowser() {
           .map((target) => target.id)
       );
       let hadFailures = false;
-      for (const target of toAdd) {
-        const ok = await setTrackPlaylistMembership(track, target, true);
-        if (!ok) hadFailures = true;
-      }
-      for (const target of toRemove) {
-        const ok = await setTrackPlaylistMembership(track, target, false);
-        if (!ok) hadFailures = true;
+      for (const track of tracksToApply) {
+        const currentPlaylistIds = collectPlaylistIdsFromTrack(track);
+        for (const target of toAdd) {
+          if (currentPlaylistIds.has(target.id)) continue;
+          const ok = await setTrackPlaylistMembership(track, target, true);
+          if (!ok) hadFailures = true;
+        }
+        for (const target of toRemove) {
+          if (!currentPlaylistIds.has(target.id)) continue;
+          const ok = await setTrackPlaylistMembership(track, target, false);
+          if (!ok) hadFailures = true;
+        }
       }
       for (const playlistId of changedPlaylistIds) {
         triggerSelectedPlaylistLiveRefresh(playlistId);
@@ -4279,7 +4392,19 @@ export default function PlaylistBrowser() {
           ) : null}
           {tracks.length ? (
             <div className="track-header columns-6">
-              <div />
+              <div className="track-col-select-header">
+                {selectedTrackCount > 0 ? (
+                  <button
+                    type="button"
+                    className="track-selection-clear-btn"
+                    onClick={clearTrackSelection}
+                  >
+                    Selectie wissen ({selectedTrackCount})
+                  </button>
+                ) : (
+                  <span>Selectie</span>
+                )}
+              </div>
               <div>Track</div>
               <div className="track-col-year">Jaar</div>
               <div className="track-col-playlists">Playlists</div>
@@ -4313,6 +4438,9 @@ export default function PlaylistBrowser() {
               itemData={{
                 items: tracks,
                 mode,
+                isTrackSelected,
+                toggleTrackSelection,
+                resolveTracksForPlaylistApply,
                 activeTrackId,
                 activeTrackIsPlaying,
                 activeTrackIsStale,
@@ -4352,7 +4480,19 @@ export default function PlaylistBrowser() {
           ) : null}
           {localFilteredTrackItems.length ? (
             <div className="track-header columns-6">
-              <div />
+              <div className="track-col-select-header">
+                {selectedTrackCount > 0 ? (
+                  <button
+                    type="button"
+                    className="track-selection-clear-btn"
+                    onClick={clearTrackSelection}
+                  >
+                    Selectie wissen ({selectedTrackCount})
+                  </button>
+                ) : (
+                  <span>Selectie</span>
+                )}
+              </div>
               <div>Track</div>
               <div className="track-col-year">Jaar</div>
               <div className="track-col-playlists">Playlists</div>
@@ -4379,6 +4519,9 @@ export default function PlaylistBrowser() {
               }}
               itemData={{
                 items: localFilteredTrackItems,
+                isTrackSelected,
+                toggleTrackSelection,
+                resolveTracksForPlaylistApply,
                 activeTrackId,
                 activeTrackIsPlaying,
                 activeTrackIsStale,
@@ -4883,9 +5026,12 @@ type AddToPlaylistMenuProps = {
   options: PlaylistOption[];
   activeTargetKey: string | null;
   onApply: (
-    track: TrackRow | TrackItem,
+    tracks: Array<TrackRow | TrackItem>,
     payload: { toAdd: PlaylistOption[]; toRemove: PlaylistOption[] }
   ) => Promise<void>;
+  resolveTracksForApply?: (
+    track: TrackRow | TrackItem
+  ) => Array<TrackRow | TrackItem>;
   onOpen?: () => void;
 };
 
@@ -4894,25 +5040,35 @@ function AddToPlaylistMenu({
   options,
   activeTargetKey,
   onApply,
+  resolveTracksForApply,
   onOpen,
 }: AddToPlaylistMenuProps) {
   const trackId = resolveTrackId(track);
   const [open, setOpen] = useState(false);
+  const [applyTracks, setApplyTracks] = useState<Array<TrackRow | TrackItem>>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [initialSelectedIds, setInitialSelectedIds] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
-  const buildSelectedFromTrack = useCallback(
-    (value: TrackRow | TrackItem) =>
-      new Set(
-        (Array.isArray(value.playlists) ? value.playlists : [])
-          .map((playlist) => String(playlist?.id ?? "").trim())
-          .filter(Boolean)
-      ),
-    []
+  const buildSelectedFromTracks = useCallback(
+    (values: Array<TrackRow | TrackItem>) => {
+      const candidates = dedupeTracksForBulkApply(values);
+      if (!candidates.length) return new Set<string>();
+      const playlistSets = candidates.map((item) => collectPlaylistIdsFromTrack(item));
+      const next = new Set<string>();
+      for (const option of options) {
+        if (playlistSets.every((set) => set.has(option.id))) {
+          next.add(option.id);
+        }
+      }
+      return next;
+    },
+    [options]
   );
   const applyChanges = useCallback(async () => {
     if (!trackId) return;
     if (submitting) return;
+    const targets = dedupeTracksForBulkApply(applyTracks.length ? applyTracks : [track]);
+    if (!targets.length) return;
     const toAdd = options.filter(
       (option) => selectedIds.has(option.id) && !initialSelectedIds.has(option.id)
     );
@@ -4922,7 +5078,7 @@ function AddToPlaylistMenu({
     if (!toAdd.length && !toRemove.length) return;
     setSubmitting(true);
     try {
-      await onApply(track, { toAdd, toRemove });
+      await onApply(targets, { toAdd, toRemove });
       const next = new Set(selectedIds);
       setInitialSelectedIds(next);
     } catch {
@@ -4930,13 +5086,26 @@ function AddToPlaylistMenu({
     } finally {
       setSubmitting(false);
     }
-  }, [initialSelectedIds, onApply, options, selectedIds, submitting, track, trackId]);
+  }, [
+    applyTracks,
+    initialSelectedIds,
+    onApply,
+    options,
+    selectedIds,
+    submitting,
+    track,
+    trackId,
+  ]);
   const { rootRef, markInteraction, handleBlur } = useStableMenu<HTMLDivElement>({
     onClose: () => {
       setOpen(false);
       void applyChanges();
     },
   });
+  const effectiveTrackCount = Math.max(
+    1,
+    dedupeTracksForBulkApply(applyTracks.length ? applyTracks : [track]).length
+  );
 
   return (
     <div
@@ -4957,7 +5126,12 @@ function AddToPlaylistMenu({
           setOpen((prev) => {
             const next = !prev;
             if (next) {
-              const selected = buildSelectedFromTrack(track);
+              const targets = dedupeTracksForBulkApply(
+                resolveTracksForApply ? resolveTracksForApply(track) : [track]
+              );
+              if (!targets.length) return false;
+              setApplyTracks(targets);
+              const selected = buildSelectedFromTracks(targets);
               setSelectedIds(selected);
               setInitialSelectedIds(selected);
               onOpen?.();
@@ -4977,6 +5151,11 @@ function AddToPlaylistMenu({
           role="menu"
           style={{ right: 0, left: "auto", width: "min(560px, calc(100vw - 32px))" }}
         >
+          {effectiveTrackCount > 1 ? (
+            <div className="combo-empty" style={{ paddingBottom: 2 }}>
+              {effectiveTrackCount} tracks geselecteerd
+            </div>
+          ) : null}
           {options.length === 0 ? (
             <div className="combo-empty">Geen playlist-doelen.</div>
           ) : (
@@ -5063,6 +5242,11 @@ function AddToQueueButton({ track, onAdd, active = false }: AddToQueueButtonProp
 type TrackRowData = {
   items: TrackRow[];
   mode: Mode;
+  isTrackSelected: (track: TrackRow | TrackItem) => boolean;
+  toggleTrackSelection: (track: TrackRow | TrackItem) => void;
+  resolveTracksForPlaylistApply: (
+    track: TrackRow | TrackItem
+  ) => Array<TrackRow | TrackItem>;
   activeTrackId: string | null;
   activeTrackIsPlaying: boolean;
   activeTrackIsStale: boolean;
@@ -5073,7 +5257,7 @@ type TrackRowData = {
   ) => Promise<void>;
   addTrackToQueue: (track: TrackRow | TrackItem) => void;
   applyTrackPlaylistChanges: (
-    track: TrackRow | TrackItem,
+    tracks: Array<TrackRow | TrackItem>,
     payload: { toAdd: PlaylistOption[]; toRemove: PlaylistOption[] }
   ) => Promise<void>;
   selectPlaylistInMyMusic: (playlistId: string) => void;
@@ -5093,6 +5277,7 @@ type TrackRowData = {
 
 function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackRowData>) {
   const track = data.items[index];
+  const isSelected = data.isTrackSelected(track);
   const isGrid = data.mode === "artists" || data.mode === "playlists";
   const artistLine = resolveTrackRowArtistNames(track);
   const primaryArtistName =
@@ -5114,7 +5299,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
   return (
     <div
       style={style}
-      className={`track-row${isTrackActive ? " playing" : ""}${isPaused ? " paused" : ""}${isStale ? " stale" : ""}`}
+      className={`track-row${isSelected ? " selected" : ""}${isTrackActive ? " playing" : ""}${isPaused ? " paused" : ""}${isStale ? " stale" : ""}`}
       role="button"
       tabIndex={0}
       onClick={(event) => data.openDetailFromRow(track, event.currentTarget)}
@@ -5127,10 +5312,24 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
       }}
     >
       <div
-        className={`track-row-inner${isTrackActive ? " playing" : ""}${isPaused ? " paused" : ""}${isStale ? " stale" : ""} track-row-grid`}
+        className={`track-row-inner${isSelected ? " selected" : ""}${isTrackActive ? " playing" : ""}${isPaused ? " paused" : ""}${isStale ? " stale" : ""} track-row-grid`}
         style={rowColumnsStyle}
       >
         <div className="track-media-cell" onClick={(event) => event.stopPropagation()}>
+          <label
+            className="track-select-control"
+            aria-label={isSelected ? "Track selectie uit" : "Track selecteren"}
+            title={isSelected ? "Track selectie uit" : "Track selecteren"}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              className="track-select-checkbox"
+              checked={isSelected}
+              onChange={() => data.toggleTrackSelection(track)}
+              onClick={(event) => event.stopPropagation()}
+            />
+          </label>
           <button
             type="button"
             className="play-btn"
@@ -5226,6 +5425,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             options={data.addTargetOptions}
             activeTargetKey={data.activeTargetKey}
             onApply={data.applyTrackPlaylistChanges}
+            resolveTracksForApply={data.resolveTracksForPlaylistApply}
             onOpen={data.ensureAllPlaylistOptionsLoaded}
           />
           <ChatGptButton
@@ -5278,6 +5478,11 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
 
 type TrackItemData = {
   items: TrackItem[];
+  isTrackSelected: (track: TrackRow | TrackItem) => boolean;
+  toggleTrackSelection: (track: TrackRow | TrackItem) => void;
+  resolveTracksForPlaylistApply: (
+    track: TrackRow | TrackItem
+  ) => Array<TrackRow | TrackItem>;
   activeTrackId: string | null;
   activeTrackIsPlaying: boolean;
   activeTrackIsStale: boolean;
@@ -5288,7 +5493,7 @@ type TrackItemData = {
   ) => Promise<void>;
   addTrackToQueue: (track: TrackRow | TrackItem) => void;
   applyTrackPlaylistChanges: (
-    track: TrackRow | TrackItem,
+    tracks: Array<TrackRow | TrackItem>,
     payload: { toAdd: PlaylistOption[]; toRemove: PlaylistOption[] }
   ) => Promise<void>;
   selectPlaylistInMyMusic: (playlistId: string) => void;
@@ -5312,6 +5517,7 @@ function TrackItemRenderer({
   data,
 }: ListChildComponentProps<TrackItemData>) {
   const track = data.items[index];
+  const isSelected = data.isTrackSelected(track);
   const isTrackActive = isCurrentTrackMatch(track, data.activeTrackId);
   const isPlaying = isTrackActive && data.activeTrackIsPlaying;
   const isPaused = isTrackActive && !data.activeTrackIsPlaying;
@@ -5337,7 +5543,7 @@ function TrackItemRenderer({
   return (
     <div
       style={style}
-      className={`track-row${isTrackActive ? " playing" : ""}${isPaused ? " paused" : ""}${isStale ? " stale" : ""}`}
+      className={`track-row${isSelected ? " selected" : ""}${isTrackActive ? " playing" : ""}${isPaused ? " paused" : ""}${isStale ? " stale" : ""}`}
       role="button"
       tabIndex={0}
       onClick={(event) => data.openDetailFromItem(track, event.currentTarget)}
@@ -5350,10 +5556,24 @@ function TrackItemRenderer({
       }}
     >
       <div
-        className={`track-row-inner${isTrackActive ? " playing" : ""}${isPaused ? " paused" : ""}${isStale ? " stale" : ""} track-row-grid`}
+        className={`track-row-inner${isSelected ? " selected" : ""}${isTrackActive ? " playing" : ""}${isPaused ? " paused" : ""}${isStale ? " stale" : ""} track-row-grid`}
         style={rowColumnsStyle}
       >
         <div className="track-media-cell" onClick={(event) => event.stopPropagation()}>
+          <label
+            className="track-select-control"
+            aria-label={isSelected ? "Track selectie uit" : "Track selecteren"}
+            title={isSelected ? "Track selectie uit" : "Track selecteren"}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              className="track-select-checkbox"
+              checked={isSelected}
+              onChange={() => data.toggleTrackSelection(track)}
+              onClick={(event) => event.stopPropagation()}
+            />
+          </label>
           <button
             type="button"
             className="play-btn"
@@ -5442,6 +5662,7 @@ function TrackItemRenderer({
             options={data.addTargetOptions}
             activeTargetKey={data.activeTargetKey}
             onApply={data.applyTrackPlaylistChanges}
+            resolveTracksForApply={data.resolveTracksForPlaylistApply}
             onOpen={data.ensureAllPlaylistOptionsLoaded}
           />
           <ChatGptButton

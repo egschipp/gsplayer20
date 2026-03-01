@@ -208,6 +208,15 @@ function fmtWindow(seconds: number | null | undefined) {
   return `${Math.round(seconds / 60)}m`;
 }
 
+function fmtAgoShort(seconds: number | null | undefined) {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) {
+    return "n/a";
+  }
+  if (seconds < 60) return `${Math.max(1, Math.floor(seconds))}s`;
+  if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m`;
+  return `${Math.max(1, Math.floor(seconds / 3600))}u`;
+}
+
 function toneClass(tone: Tone) {
   return `ops-tone-${tone}`;
 }
@@ -867,16 +876,24 @@ export default function MonitoringDashboard() {
   const rateBackoffRemainingMs = Math.max(backoffFromSnapshotMs, backoffFromUntilMs);
   const rateBackoffRemainingSec = Math.ceil(rateBackoffRemainingMs / 1000);
   const hasActiveRateBackoff = rateBackoffRemainingSec > 0;
+  const lastRateTriggeredAgoSec = summary?.rateLimits.lastTriggeredAt
+    ? Math.max(0, Math.floor((clockNowMs - summary.rateLimits.lastTriggeredAt) / 1000))
+    : null;
+  const recentRateBurst = typeof lastRateTriggeredAgoSec === "number" && lastRateTriggeredAgoSec <= 120;
+  const historicRateBurst =
+    typeof lastRateTriggeredAgoSec === "number" && lastRateTriggeredAgoSec > 120;
 
   const rateTone: Tone = hasActiveRateBackoff
-    ? (summary?.rateLimits.count429 ?? 0) < 5
-      ? "warn"
-      : "error"
+    ? (summary?.rateLimits.count429 ?? 0) >= 10 || rateBackoffRemainingSec >= 10
+      ? "error"
+      : "warn"
     : (summary?.rateLimits.count429 ?? 0) === 0
     ? "ok"
-    : (summary?.rateLimits.count429 ?? 0) < 5
+    : recentRateBurst
     ? "warn"
-    : "error";
+    : historicRateBurst
+    ? "ok"
+    : "warn";
 
   const topErrors = useMemo(() => {
     const rows = summary?.apiHealth.errorBreakdown ?? [];
@@ -927,12 +944,12 @@ export default function MonitoringDashboard() {
   const rateBackoffSubtitle = hasActiveRateBackoff
     ? `backoff actief · ${rateBackoffRemainingSec}s`
     : summary?.rateLimits.lastRetryAfterMs
-    ? `laatste backoff ${Math.max(
+    ? `geen actieve backoff · laatste ${Math.max(
         1,
         Math.round(summary.rateLimits.lastRetryAfterMs / 1000)
-      )}s`
-    : summary?.rateLimits.backoffState || "normal";
-  const rateBackoffSubtitleWithWindow = `${rateBackoffSubtitle} · ${metricsWindowLabel}`;
+      )}s (${fmtAgoShort(lastRateTriggeredAgoSec)} geleden)`
+    : "geen actieve backoff";
+  const rateBackoffSubtitleWithWindow = `${rateBackoffSubtitle} · venster ${metricsWindowLabel}`;
 
   const insights = useMemo<Insight[]>(() => {
     if (!summary) return [];

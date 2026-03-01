@@ -3659,6 +3659,10 @@ export default function SpotifyPlayer({
     });
 
     const onSdkReady = async ({ device_id }: { device_id: string }) => {
+      const hasUserPlaybackIntent =
+        playbackTouched ||
+        userIntentSeqRef.current > 0 ||
+        Boolean(pendingPlayIntentRef.current);
       const shouldPreferSdk =
         preferSdkDeviceRef.current ||
         !activeDeviceIdRef.current ||
@@ -3672,9 +3676,9 @@ export default function SpotifyPlayer({
       setSdkLifecycle("ready");
       reconnectAttemptsRef.current = 0;
       lastSdkEventAtRef.current = Date.now();
-      if (shouldPreferSdk) {
+      if (shouldPreferSdk && hasUserPlaybackIntent) {
         preferSdkDeviceRef.current = true;
-        // Default Spotify Connect selection to the web player on load.
+        // Prefer local webplayer only after explicit playback intent.
         setActiveDevice(device_id, localWebplayerName);
         setActiveDeviceRestricted(false);
         setActiveDevicePrivateSession(false);
@@ -3682,7 +3686,7 @@ export default function SpotifyPlayer({
       }
       if (accessTokenRef.current) {
         let ready = true;
-        if (shouldPreferSdk) {
+        if (shouldPreferSdk && hasUserPlaybackIntent) {
           ready = await ensureActiveDevice(device_id, accessTokenRef.current, false);
           if (!ready) {
             await new Promise((resolve) => setTimeout(resolve, 700));
@@ -3796,9 +3800,11 @@ export default function SpotifyPlayer({
         setShuffleOn(false);
         shuffleOnRef.current = false;
         rebuildQueueOrder(false, true);
-        await setRemoteShuffleState(false, device_id, accessTokenRef.current, false).catch(
-          () => undefined
-        );
+        if (hasUserPlaybackIntent) {
+          await setRemoteShuffleState(false, device_id, accessTokenRef.current, false).catch(
+            () => undefined
+          );
+        }
       }
     };
 

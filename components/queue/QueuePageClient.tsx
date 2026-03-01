@@ -180,18 +180,36 @@ export default function QueuePageClient() {
 
   useEffect(() => {
     if (!activeQueueId) return;
+    // Keep queue position stable on load/refresh; only auto-focus when user explicitly starts
+    // playback from a queue row.
+    if (playback.startingQueueId !== activeQueueId) return;
+
     const container = queueRowsRef.current;
     if (!container) return;
     const row = container.querySelector<HTMLElement>(`[data-queue-id="${activeQueueId}"]`);
     if (!row) return;
-    const rowTop = row.offsetTop;
-    const centeredTop = rowTop - Math.max(0, (container.clientHeight - row.offsetHeight) / 2);
-    animateScrollTop(container, centeredTop, {
-      minDurationMs: 340,
-      maxDurationMs: 980,
-      pxPerMs: 2.1,
+
+    const margin = 16;
+    const top = row.offsetTop;
+    const bottom = top + row.offsetHeight;
+    const viewTop = container.scrollTop;
+    const viewBottom = viewTop + container.clientHeight;
+    let targetTop = viewTop;
+
+    if (top - margin < viewTop) {
+      targetTop = Math.max(0, top - margin);
+    } else if (bottom + margin > viewBottom) {
+      targetTop = bottom + margin - container.clientHeight;
+    } else {
+      return;
+    }
+
+    animateScrollTop(container, targetTop, {
+      minDurationMs: 220,
+      maxDurationMs: 520,
+      pxPerMs: 2.4,
     });
-  }, [activeQueueId]);
+  }, [activeQueueId, playback.startingQueueId]);
 
   function handleDragStart(queueId: string, event: DragEvent<HTMLLIElement>) {
     setDraggingQueueId(queueId);

@@ -21,6 +21,30 @@ const RETRY_AFTER_MIN_MS = 1_000;
 const RETRY_AFTER_MAX_MS = Number(
   process.env.SPOTIFY_RETRY_AFTER_MAX_MS || "120000"
 );
+const MIN_INTERVAL_ME_PLAYER_STATE_GET_MS = Number(
+  process.env.SPOTIFY_MIN_INTERVAL_ME_PLAYER_STATE_GET_MS || "750"
+);
+const MIN_INTERVAL_ME_PLAYER_DEVICES_GET_MS = Number(
+  process.env.SPOTIFY_MIN_INTERVAL_ME_PLAYER_DEVICES_GET_MS || "1200"
+);
+const MIN_INTERVAL_ME_PLAYER_QUEUE_GET_MS = Number(
+  process.env.SPOTIFY_MIN_INTERVAL_ME_PLAYER_QUEUE_GET_MS || "1200"
+);
+const MIN_INTERVAL_CURRENTLY_PLAYING_GET_MS = Number(
+  process.env.SPOTIFY_MIN_INTERVAL_CURRENTLY_PLAYING_GET_MS || "900"
+);
+const MIN_DEDUPE_ME_PLAYER_STATE_GET_MS = Number(
+  process.env.SPOTIFY_MIN_DEDUPE_ME_PLAYER_STATE_GET_MS || "600"
+);
+const MIN_DEDUPE_ME_PLAYER_DEVICES_GET_MS = Number(
+  process.env.SPOTIFY_MIN_DEDUPE_ME_PLAYER_DEVICES_GET_MS || "900"
+);
+const MIN_DEDUPE_ME_PLAYER_QUEUE_GET_MS = Number(
+  process.env.SPOTIFY_MIN_DEDUPE_ME_PLAYER_QUEUE_GET_MS || "900"
+);
+const MIN_DEDUPE_CURRENTLY_PLAYING_GET_MS = Number(
+  process.env.SPOTIFY_MIN_DEDUPE_CURRENTLY_PLAYING_GET_MS || "700"
+);
 
 export class SpotifyApiError extends Error {
   status: number;
@@ -163,7 +187,11 @@ function endpointGroup(url: string): string {
   try {
     const parsed = new URL(url);
     if (parsed.pathname.startsWith("/v1/me/player/devices")) return "me_player_devices";
-    if (parsed.pathname.startsWith("/v1/me/player")) return "me_player";
+    if (parsed.pathname.startsWith("/v1/me/player/queue")) return "me_player_queue";
+    if (parsed.pathname.startsWith("/v1/me/player/currently-playing"))
+      return "me_player_currently_playing";
+    if (parsed.pathname === "/v1/me/player") return "me_player_state";
+    if (parsed.pathname.startsWith("/v1/me/player")) return "me_player_command";
     if (parsed.pathname.startsWith("/v1/me/tracks")) return "me_tracks";
     if (parsed.pathname.startsWith("/v1/me/playlists")) return "me_playlists";
     if (parsed.pathname.startsWith("/api/token")) return "oauth_token";
@@ -172,6 +200,50 @@ function endpointGroup(url: string): string {
   } catch {
     return "unknown";
   }
+}
+
+function getReadMinIntervalMs(args: { group: string; method: string }): number {
+  if (args.method !== "GET") return 0;
+  if (args.group === "me_player_state") {
+    return Math.max(0, Math.floor(MIN_INTERVAL_ME_PLAYER_STATE_GET_MS));
+  }
+  if (args.group === "me_player_devices") {
+    return Math.max(0, Math.floor(MIN_INTERVAL_ME_PLAYER_DEVICES_GET_MS));
+  }
+  if (args.group === "me_player_queue") {
+    return Math.max(0, Math.floor(MIN_INTERVAL_ME_PLAYER_QUEUE_GET_MS));
+  }
+  if (args.group === "me_player_currently_playing") {
+    return Math.max(0, Math.floor(MIN_INTERVAL_CURRENTLY_PLAYING_GET_MS));
+  }
+  return 0;
+}
+
+function getMinDedupeWindowMs(args: { group: string; method: string }): number {
+  if (args.method !== "GET") return 0;
+  if (args.group === "me_player_state") {
+    return Math.max(1, Math.floor(MIN_DEDUPE_ME_PLAYER_STATE_GET_MS));
+  }
+  if (args.group === "me_player_devices") {
+    return Math.max(1, Math.floor(MIN_DEDUPE_ME_PLAYER_DEVICES_GET_MS));
+  }
+  if (args.group === "me_player_queue") {
+    return Math.max(1, Math.floor(MIN_DEDUPE_ME_PLAYER_QUEUE_GET_MS));
+  }
+  if (args.group === "me_player_currently_playing") {
+    return Math.max(1, Math.floor(MIN_DEDUPE_CURRENTLY_PLAYING_GET_MS));
+  }
+  return 0;
+}
+
+const pacingSlotByKey = new Map<string, number>();
+
+function reservePacingDelayMs(key: string, minIntervalMs: number, at = Date.now()): number {
+  if (!Number.isFinite(minIntervalMs) || minIntervalMs <= 0) return 0;
+  const currentSlot = pacingSlotByKey.get(key) ?? 0;
+  const scheduledAt = Math.max(at, currentSlot);
+  pacingSlotByKey.set(key, scheduledAt + minIntervalMs);
+  return Math.max(0, scheduledAt - at);
 }
 
 function stableStringify(value: unknown): string {
@@ -260,6 +332,8 @@ export async function spotifyApiRequest<T>(params: {
     typeof params.dedupeWindowMs === "number"
       ? Math.max(1, Math.floor(params.dedupeWindowMs))
       : defaultDedupeWindowMs(method, params.url);
+  const minDedupeWindowMs = getMinDedupeWindowMs({ group, method });
+  const effectiveDedupeWindowMs = Math.max(dedupeWindowMs, minDedupeWindowMs);
   const cacheVersion =
     method === "GET" && !params.bypassCache
       ? await getUserCacheVersion(userKey)
@@ -287,12 +361,25 @@ export async function spotifyApiRequest<T>(params: {
 
   return coalesceInflight<T | undefined>(
     cacheKey,
-    dedupeWindowMs,
+    effectiveDedupeWindowMs,
     async () => {
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const started = Date.now();
 
       try {
+        const minIntervalMs = getReadMinIntervalMs({ group, method });
+        if (minIntervalMs > 0) {
+          const pacingKey = `${userKey}:${group}:${method}`;
+          const delayMs = reservePacingDelayMs(pacingKey, minIntervalMs, Date.now());
+          if (delayMs > 0) {
+            observeHistogram("spotify_read_pacing_delay_ms", delayMs, {
+              endpoint: group,
+              method,
+            });
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
+        }
+
         const result = await scheduleSpotifyRequest({
           userKey,
           endpoint: group,

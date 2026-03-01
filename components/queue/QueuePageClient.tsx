@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { type DragEvent, useEffect, useMemo, useState } from "react";
+import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
 import { type QueueItem } from "@/lib/queue/types";
@@ -145,6 +145,7 @@ export default function QueuePageClient() {
   const [draggingQueueId, setDraggingQueueId] = useState<string | null>(null);
   const [dragOverQueueId, setDragOverQueueId] = useState<string | null>(null);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
+  const queueRowsRef = useRef<HTMLOListElement | null>(null);
   const activeQueueId = playback.startingQueueId ?? playback.activeQueueId ?? queue.currentQueueId;
 
   const currentIndex = useMemo(() => {
@@ -175,6 +176,18 @@ export default function QueuePageClient() {
       window.removeEventListener("focus", syncSelection);
     };
   }, []);
+
+  useEffect(() => {
+    if (!activeQueueId) return;
+    const container = queueRowsRef.current;
+    if (!container) return;
+    const row = container.querySelector<HTMLElement>(`[data-queue-id="${activeQueueId}"]`);
+    if (!row) return;
+    row.scrollIntoView({
+      block: "nearest",
+      behavior: "smooth",
+    });
+  }, [activeQueueId]);
 
   function handleDragStart(queueId: string, event: DragEvent<HTMLLIElement>) {
     setDraggingQueueId(queueId);
@@ -305,7 +318,11 @@ export default function QueuePageClient() {
             <div className={styles.durationHeader}>Duur</div>
             <div className={styles.actionsHeader}>Acties</div>
           </div>
-          <ol className={styles.queueRows} aria-label="Georgies Queue tracks">
+          <ol
+            className={styles.queueRows}
+            aria-label="Georgies Queue tracks"
+            ref={queueRowsRef}
+          >
             {queue.items.map((item) => {
               const isStarting = playback.startingQueueId === item.queueId;
               const isCurrent =
@@ -323,6 +340,7 @@ export default function QueuePageClient() {
               return (
                 <li
                   key={item.queueId}
+                  data-queue-id={item.queueId}
                   className={`track-row ${styles.queueRow}`}
                   draggable
                   onDragStart={(event) => handleDragStart(item.queueId, event)}

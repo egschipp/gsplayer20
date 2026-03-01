@@ -1,6 +1,9 @@
 .page {
   display: grid;
   gap: 18px;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .header {
@@ -59,7 +62,11 @@
 .tableWrap {
   --queue-columns: 132px minmax(0, 1fr) minmax(124px, 0.62fr) 72px 118px;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
   overflow-x: auto;
   padding-bottom: 4px;
 }
@@ -103,6 +110,12 @@
   padding: 0;
   display: grid;
   gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 6px;
 }
 
 .queueRow {

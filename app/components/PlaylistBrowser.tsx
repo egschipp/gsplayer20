@@ -33,6 +33,13 @@ import { formatTrackMeta } from "@/lib/chatgpt/trackMeta";
 import { useStableMenu } from "@/lib/hooks/useStableMenu";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import {
+  clampNumber,
+  computeTrackListHeight,
+  isCompactTrackLayout,
+  resolveTrackHeaderClass,
+} from "@/lib/responsive/layout";
+import { useViewport } from "@/lib/responsive/useViewport";
+import {
   TRACK_GRID_COLUMNS_COMPACT,
   TRACK_GRID_COLUMNS_FULL,
   TRACK_ROW_HEIGHT,
@@ -180,6 +187,21 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
     artworkUrl,
     playlists,
   };
+}
+
+function smoothScrollVirtualListToIndex(
+  outer: HTMLDivElement | null,
+  index: number,
+  rowHeight: number
+) {
+  if (!outer || index < 0) return;
+  const maxTop = Math.max(0, outer.scrollHeight - outer.clientHeight);
+  const targetTop = Math.min(maxTop, Math.max(0, index * rowHeight));
+  if (Math.abs(outer.scrollTop - targetTop) < 1) return;
+  outer.scrollTo({
+    top: targetTop,
+    behavior: "smooth",
+  });
 }
 
 function normalizeTrackName(value: string | null | undefined) {
@@ -1028,7 +1050,11 @@ export default function PlaylistBrowser() {
   const [removingTargetKey, setRemovingTargetKey] = useState<string | null>(null);
   const [selectedTrackKeys, setSelectedTrackKeys] = useState<Set<string>>(new Set());
   const { api: playerApi, playbackFocus } = usePlayer();
+  const viewport = useViewport();
   const queue = useQueueStore();
+  const listContainerRef = useRef<HTMLDivElement | null>(null);
+  const trackRowsOuterRef = useRef<HTMLDivElement | null>(null);
+  const trackItemsOuterRef = useRef<HTMLDivElement | null>(null);
   const comboListRef = useRef<HTMLDivElement | null>(null);
   const loadingMoreTracksRef = useRef(false);
   const tracksRef = useRef<TrackRow[]>([]);
@@ -1041,7 +1067,17 @@ export default function PlaylistBrowser() {
     failed: 0,
   });
   const MAX_PLAYLIST_CHIPS = 2;
-  const [listHeight, setListHeight] = useState(560);
+  const [listHeight, setListHeight] = useState(() =>
+    computeTrackListHeight(viewport.visualHeight || viewport.height)
+  );
+  const compactTrackLayout = useMemo(
+    () => isCompactTrackLayout(viewport.width),
+    [viewport.width]
+  );
+  const trackHeaderClassName = useMemo(
+    () => resolveTrackHeaderClass(compactTrackLayout),
+    [compactTrackLayout]
+  );
   const hydratedSelectionRef = useRef(false);
   const skipModeResetRef = useRef(true);
   const [tracksContextKey, setTracksContextKey] = useState<string | null>(null);
@@ -1070,8 +1106,6 @@ export default function PlaylistBrowser() {
   const comboMenu = useStableMenu<HTMLDivElement>({
     onClose: () => setOpen(false),
   });
-  const trackRowsListRef = useRef<any>(null);
-  const trackItemsListRef = useRef<any>(null);
   const selectorDockOpenDelayTimerRef = useRef<number | null>(null);
   const selectorDockCloseDelayTimerRef = useRef<number | null>(null);
   const autoTrackOptionsPrefetchCountRef = useRef(0);
@@ -1083,6 +1117,24 @@ export default function PlaylistBrowser() {
   const SELECTOR_DOCK_PIN_KEY = "gs_selector_dock_pinned_v1";
   const selectorDockOpen =
     selectorDockPinned || selectorDockManualOpen || selectorDockHovered || open;
+
+  const recomputeListHeight = useCallback(() => {
+    const viewportHeight = viewport.visualHeight || viewport.height;
+    if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
+    const fallback = computeTrackListHeight(viewportHeight);
+    const top =
+      listContainerRef.current?.getBoundingClientRect().top ??
+      Math.round(viewportHeight * 0.36);
+    const available = Math.floor(viewportHeight - top - 10);
+    if (!Number.isFinite(available) || available <= 0) {
+      setListHeight((prev) => (prev === fallback ? prev : fallback));
+      return;
+    }
+    const minHeight = TRACK_ROW_HEIGHT * 3;
+    const maxHeight = Math.max(minHeight, Math.floor(viewportHeight - 92));
+    const next = clampNumber(available, minHeight, maxHeight);
+    setListHeight((prev) => (prev === next ? prev : next));
+  }, [viewport.height, viewport.visualHeight]);
   const allPlaylistNames = useMemo(() => {
     return playlistOptions
       .map((pl) => pl.name || "Untitled playlist")
@@ -1245,18 +1297,6 @@ export default function PlaylistBrowser() {
     []
   );
 
-
-  useEffect(() => {
-    function handleResize() {
-      if (typeof window === "undefined") return;
-      const next = Math.min(720, Math.max(360, Math.round(window.innerHeight * 0.6)));
-      setListHeight(next);
-    }
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-
   useEffect(() => {
     if (typeof window === "undefined" || hydratedSelectionRef.current) return;
     const stored = safeReadStorage(window.localStorage, "gs_playlist_selection");
@@ -1285,6 +1325,35 @@ export default function PlaylistBrowser() {
       skipModeResetRef.current = false;
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const frameId = window.requestAnimationFrame(recomputeListHeight);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [
+    recomputeListHeight,
+    mode,
+    selectorDockOpen,
+    authRequired,
+    error,
+    loadingTracks,
+    loadingTracksList,
+    loadingArtists,
+    loadingPlaylists,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      recomputeListHeight();
+    });
+    if (listContainerRef.current) observer.observe(listContainerRef.current);
+    const playerShell = document.querySelector(".shell.player-shell-wrap");
+    if (playerShell instanceof HTMLElement) observer.observe(playerShell);
+    const headerShell = document.querySelector(".shell.header-shell");
+    if (headerShell instanceof HTMLElement) observer.observe(headerShell);
+    return () => observer.disconnect();
+  }, [recomputeListHeight, mode, selectorDockOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2153,20 +2222,20 @@ export default function PlaylistBrowser() {
   useEffect(() => {
     if (activeTrackIndexInRows < 0) return;
     if (mode !== "playlists" && mode !== "artists") return;
-    const list = trackRowsListRef.current;
-    if (!list || typeof list.scrollToItem !== "function") return;
     window.requestAnimationFrame(() => {
-      list.scrollToItem(activeTrackIndexInRows, "start");
+      smoothScrollVirtualListToIndex(trackRowsOuterRef.current, activeTrackIndexInRows, TRACK_ROW_HEIGHT);
     });
   }, [activeTrackIndexInRows, mode]);
 
   useEffect(() => {
     if (activeTrackIndexInItems < 0) return;
     if (mode !== "tracks" && mode !== "albums") return;
-    const list = trackItemsListRef.current;
-    if (!list || typeof list.scrollToItem !== "function") return;
     window.requestAnimationFrame(() => {
-      list.scrollToItem(activeTrackIndexInItems, "start");
+      smoothScrollVirtualListToIndex(
+        trackItemsOuterRef.current,
+        activeTrackIndexInItems,
+        TRACK_ROW_HEIGHT
+      );
     });
   }, [activeTrackIndexInItems, mode]);
 
@@ -4377,7 +4446,7 @@ export default function PlaylistBrowser() {
         </div>
       ) : null}
       {mode === "playlists" || mode === "artists" ? (
-        <div className="track-list" style={{ marginTop: 16 }}>
+        <div className="track-list" style={{ marginTop: 16 }} ref={listContainerRef}>
           {!isContextSwitchLoading &&
           !loadingTracks &&
           !tracks.length &&
@@ -4391,7 +4460,7 @@ export default function PlaylistBrowser() {
             </div>
           ) : null}
           {tracks.length ? (
-            <div className="track-header columns-6">
+            <div className={trackHeaderClassName}>
               <div className="track-col-select-header">
                 {selectedTrackCount > 0 ? (
                   <button
@@ -4406,20 +4475,24 @@ export default function PlaylistBrowser() {
                 )}
               </div>
               <div>Track</div>
-              <div className="track-col-year">Jaar</div>
-              <div className="track-col-playlists">Playlists</div>
-              <div className="track-col-duration">Duur</div>
+              {!compactTrackLayout ? <div className="track-col-year">Jaar</div> : null}
+              {!compactTrackLayout ? (
+                <div className="track-col-playlists">Playlists</div>
+              ) : null}
+              {!compactTrackLayout ? (
+                <div className="track-col-duration">Duur</div>
+              ) : null}
               <div className="track-col-actions">Acties</div>
             </div>
           ) : null}
           {tracks.length ? (
             <List
-              ref={trackRowsListRef}
               height={listHeight}
               itemCount={tracks.length}
               itemSize={TRACK_ROW_HEIGHT}
               width="100%"
               overscanCount={6}
+              outerRef={trackRowsOuterRef}
               onItemsRendered={({ visibleStopIndex }) => {
                 if (nextCursor && visibleStopIndex >= tracks.length - 4) {
                   loadMore();
@@ -4438,6 +4511,7 @@ export default function PlaylistBrowser() {
               itemData={{
                 items: tracks,
                 mode,
+                compactTrackLayout,
                 isTrackSelected,
                 toggleTrackSelection,
                 resolveTracksForPlaylistApply,
@@ -4465,7 +4539,7 @@ export default function PlaylistBrowser() {
           ) : null}
         </div>
       ) : (
-        <div className="track-list" style={{ marginTop: 16 }}>
+        <div className="track-list" style={{ marginTop: 16 }} ref={listContainerRef}>
           {!loadingTracksList &&
           (mode === "tracks" ? selectedTrackId : selectedAlbumId) &&
           !localFilteredTrackItems.length ? (
@@ -4479,7 +4553,7 @@ export default function PlaylistBrowser() {
             </div>
           ) : null}
           {localFilteredTrackItems.length ? (
-            <div className="track-header columns-6">
+            <div className={trackHeaderClassName}>
               <div className="track-col-select-header">
                 {selectedTrackCount > 0 ? (
                   <button
@@ -4494,20 +4568,24 @@ export default function PlaylistBrowser() {
                 )}
               </div>
               <div>Track</div>
-              <div className="track-col-year">Jaar</div>
-              <div className="track-col-playlists">Playlists</div>
-              <div className="track-col-duration">Duur</div>
+              {!compactTrackLayout ? <div className="track-col-year">Jaar</div> : null}
+              {!compactTrackLayout ? (
+                <div className="track-col-playlists">Playlists</div>
+              ) : null}
+              {!compactTrackLayout ? (
+                <div className="track-col-duration">Duur</div>
+              ) : null}
               <div className="track-col-actions">Acties</div>
             </div>
           ) : null}
           {localFilteredTrackItems.length ? (
             <List
-              ref={trackItemsListRef}
               height={listHeight}
               itemCount={localFilteredTrackItems.length}
               itemSize={TRACK_ROW_HEIGHT}
               width="100%"
               overscanCount={6}
+              outerRef={trackItemsOuterRef}
               itemKey={(index: number, data: TrackItemData) => {
                 const item = data.items[index];
                 return (
@@ -4519,6 +4597,7 @@ export default function PlaylistBrowser() {
               }}
               itemData={{
                 items: localFilteredTrackItems,
+                compactTrackLayout,
                 isTrackSelected,
                 toggleTrackSelection,
                 resolveTracksForPlaylistApply,
@@ -5242,6 +5321,7 @@ function AddToQueueButton({ track, onAdd, active = false }: AddToQueueButtonProp
 type TrackRowData = {
   items: TrackRow[];
   mode: Mode;
+  compactTrackLayout: boolean;
   isTrackSelected: (track: TrackRow | TrackItem) => boolean;
   toggleTrackSelection: (track: TrackRow | TrackItem) => void;
   resolveTracksForPlaylistApply: (
@@ -5279,6 +5359,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
   const track = data.items[index];
   const isSelected = data.isTrackSelected(track);
   const isGrid = data.mode === "artists" || data.mode === "playlists";
+  const showExtendedColumns = isGrid && !data.compactTrackLayout;
   const artistLine = resolveTrackRowArtistNames(track);
   const primaryArtistName =
     artistLine
@@ -5292,7 +5373,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
   const isStale = isTrackActive && data.activeTrackIsStale;
   const rowColumnsStyle = {
     ["--track-row-height" as const]: `${TRACK_ROW_HEIGHT}px`,
-    ["--track-row-columns" as const]: isGrid
+    ["--track-row-columns" as const]: showExtendedColumns
       ? TRACK_GRID_COLUMNS_FULL
       : TRACK_GRID_COLUMNS_COMPACT,
   } as CSSProperties;
@@ -5394,10 +5475,10 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             </button>
           ) : null}
         </div>
-        {isGrid ? (
+        {showExtendedColumns ? (
           <div className="text-subtle track-col-year">{track.releaseYear ?? "—"}</div>
         ) : null}
-        {isGrid ? (
+        {showExtendedColumns ? (
           <div className="track-col-playlists">
             <PlaylistChips
               playlists={track.playlists}
@@ -5406,7 +5487,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             />
           </div>
         ) : null}
-        {isGrid ? (
+        {showExtendedColumns ? (
           <div className="text-subtle track-col-duration">{formatDuration(track.durationMs)}</div>
         ) : null}
         <div className="track-col-actions track-actions-group">
@@ -5478,6 +5559,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
 
 type TrackItemData = {
   items: TrackItem[];
+  compactTrackLayout: boolean;
   isTrackSelected: (track: TrackRow | TrackItem) => boolean;
   toggleTrackSelection: (track: TrackRow | TrackItem) => void;
   resolveTracksForPlaylistApply: (
@@ -5518,6 +5600,7 @@ function TrackItemRenderer({
 }: ListChildComponentProps<TrackItemData>) {
   const track = data.items[index];
   const isSelected = data.isTrackSelected(track);
+  const showExtendedColumns = !data.compactTrackLayout;
   const isTrackActive = isCurrentTrackMatch(track, data.activeTrackId);
   const isPlaying = isTrackActive && data.activeTrackIsPlaying;
   const isPaused = isTrackActive && !data.activeTrackIsPlaying;
@@ -5538,7 +5621,9 @@ function TrackItemRenderer({
   const albumLine = String(track.album?.name ?? "").trim();
   const rowColumnsStyle = {
     ["--track-row-height" as const]: `${TRACK_ROW_HEIGHT}px`,
-    ["--track-row-columns" as const]: TRACK_GRID_COLUMNS_FULL,
+    ["--track-row-columns" as const]: showExtendedColumns
+      ? TRACK_GRID_COLUMNS_FULL
+      : TRACK_GRID_COLUMNS_COMPACT,
   } as CSSProperties;
   return (
     <div
@@ -5637,15 +5722,23 @@ function TrackItemRenderer({
             </button>
           ) : null}
         </div>
-        <div className="text-subtle track-col-year">{track.releaseYear ?? "—"}</div>
-        <div className="track-col-playlists">
-          <PlaylistChips
-            playlists={track.playlists}
-            maxVisible={data.MAX_PLAYLIST_CHIPS}
-            onSelectPlaylist={data.selectPlaylistInMyMusic}
-          />
-        </div>
-        <div className="text-subtle track-col-duration">{formatDuration(track.durationMs)}</div>
+        {showExtendedColumns ? (
+          <div className="text-subtle track-col-year">{track.releaseYear ?? "—"}</div>
+        ) : null}
+        {showExtendedColumns ? (
+          <div className="track-col-playlists">
+            <PlaylistChips
+              playlists={track.playlists}
+              maxVisible={data.MAX_PLAYLIST_CHIPS}
+              onSelectPlaylist={data.selectPlaylistInMyMusic}
+            />
+          </div>
+        ) : null}
+        {showExtendedColumns ? (
+          <div className="text-subtle track-col-duration">
+            {formatDuration(track.durationMs)}
+          </div>
+        ) : null}
         <div className="track-col-actions track-actions-group">
           <AddToQueueButton
             track={track}

@@ -1,5 +1,4 @@
 import {
-  DEFAULT_PLAYBACK_FOCUS,
   resolvePlaybackFocusStatus,
   type PlaybackFocus,
   type PlaybackFocusSource,
@@ -14,6 +13,14 @@ export type PlaybackSnapshot = {
   currentTrackId: string | null;
   matchTrackIds: string[];
   status: PlaybackFocusStatus;
+  uiStatus: "empty" | "loading" | "ready" | "error";
+  verifiedPlayable: boolean;
+  reason:
+    | "ok"
+    | "no_track"
+    | "missing_match"
+    | "controller_initializing"
+    | "controller_error";
   stale: boolean;
   source: PlaybackFocusSource;
   updatedAt: number;
@@ -30,8 +37,6 @@ export type DerivePlaybackSnapshotInput = {
   controllerError: string | null;
   runtimeError: string | null;
   now?: number;
-  latchWindowMs?: number;
-  activePlaybackLatchMs?: number;
 };
 
 function clampMs(value: number | null | undefined) {
@@ -66,8 +71,6 @@ export function derivePlaybackSnapshot({
   controllerError,
   runtimeError,
   now = Date.now(),
-  latchWindowMs = 2500,
-  activePlaybackLatchMs = 15 * 60 * 1000,
 }: DerivePlaybackSnapshotInput): {
   snapshot: PlaybackSnapshot;
   nextStableFocus: PlaybackFocus;
@@ -86,78 +89,74 @@ export function derivePlaybackSnapshot({
   let positionMs = clampMs(focus.positionMs);
   let durationMs = clampMs(focus.durationMs);
   let errorMessage = focus.errorMessage || controllerError || runtimeError || null;
+  let reason: PlaybackSnapshot["reason"] = "ok";
+  let verifiedPlayable = false;
+  let uiStatus: PlaybackSnapshot["uiStatus"] = "empty";
 
   let nextStableFocus = lastStableFocus;
-  if (currentId) {
+
+  const hasControllerError = Boolean(controllerError || runtimeError);
+  const hasActiveTrack = Boolean(currentId && matchTrackIds.length > 0);
+  if (hasControllerError && !hasActiveTrack) {
+    status = "error";
+    uiStatus = "error";
+    verifiedPlayable = false;
+    reason = "controller_error";
+    errorMessage = controllerError || runtimeError;
+    currentId = null;
+    matchTrackIds = [];
+    stale = false;
+  } else if (!hasActiveTrack) {
+    if (
+      pendingCommand === "play" ||
+      pendingCommand === "toggle" ||
+      pendingCommand === "transfer" ||
+      controllerStatus === "loading"
+    ) {
+      status = "loading";
+      uiStatus = "loading";
+      verifiedPlayable = false;
+      reason = "controller_initializing";
+    } else {
+      status = "idle";
+      uiStatus = "empty";
+      verifiedPlayable = false;
+      reason = currentId ? "missing_match" : "no_track";
+    }
+    currentId = null;
+    matchTrackIds = [];
+    stale = false;
+    errorMessage = hasControllerError ? errorMessage : null;
+    positionMs = 0;
+    durationMs = 0;
+  } else {
+    verifiedPlayable = true;
+    stale = false;
+    reason = "ok";
+    if (status === "error") {
+      uiStatus = "error";
+      verifiedPlayable = false;
+      currentId = null;
+      matchTrackIds = [];
+    } else if (status === "loading") {
+      uiStatus = "loading";
+    } else {
+      uiStatus = "ready";
+      if (status === "idle" || status === "ended") {
+        status = focus.isPlaying === false ? "paused" : "playing";
+      }
+    }
     nextStableFocus = {
       ...focus,
+      trackId: currentId,
+      matchTrackIds,
       status,
+      stale: false,
       positionMs,
       durationMs,
       errorMessage,
       updatedAt,
     };
-  } else {
-    const playbackLikelyActive =
-      focus.isPlaying === true ||
-      focus.status === "playing" ||
-      focus.status === "paused" ||
-      focus.status === "loading" ||
-      controllerStatus === "playing" ||
-      controllerStatus === "paused" ||
-      pendingCommand === "play" ||
-      pendingCommand === "toggle" ||
-      pendingCommand === "transfer";
-    const withinLatchWindow =
-      Boolean(lastStableFocus.trackId) &&
-      now - Math.max(0, lastStableFocus.updatedAt) <= latchWindowMs;
-    const withinActivePlaybackLatchWindow =
-      Boolean(lastStableFocus.trackId) &&
-      now - Math.max(0, lastStableFocus.updatedAt) <= activePlaybackLatchMs;
-    const transientState =
-      playbackLikelyActive || controllerStatus === "initializing" || status === "loading";
-    const shouldLatch =
-      lastStableFocus.trackId &&
-      transientState &&
-      (withinLatchWindow || (playbackLikelyActive && withinActivePlaybackLatchWindow));
-    if (shouldLatch) {
-      currentId = lastStableFocus.trackId;
-      matchTrackIds = normalizeMatchTrackIds(
-        lastStableFocus.trackId,
-        lastStableFocus.matchTrackIds
-      );
-      stale = true;
-      source = lastStableFocus.source;
-      updatedAt = now;
-      positionMs = clampMs(lastStableFocus.positionMs);
-      durationMs = clampMs(lastStableFocus.durationMs);
-      if (status !== "error") {
-        status = lastStableFocus.status;
-      }
-    } else if (!withinLatchWindow && !withinActivePlaybackLatchWindow) {
-      nextStableFocus = DEFAULT_PLAYBACK_FOCUS;
-    }
-  }
-
-  const hasControllerError = Boolean(controllerError || runtimeError);
-  const hasActiveTrack = Boolean(currentId);
-  if (
-    hasControllerError &&
-    (!hasActiveTrack || status === "idle" || status === "ended")
-  ) {
-    status = "error";
-    errorMessage = controllerError || runtimeError;
-  } else if (
-    (pendingCommand === "play" ||
-      pendingCommand === "toggle" ||
-      pendingCommand === "transfer") &&
-    (status === "idle" || status === "paused" || status === "ended")
-  ) {
-    status = "loading";
-  } else if (status === "idle" && controllerStatus === "playing") {
-    status = "playing";
-  } else if (status === "idle" && controllerStatus === "paused") {
-    status = "paused";
   }
 
   return {
@@ -165,6 +164,9 @@ export function derivePlaybackSnapshot({
       currentTrackId: currentId,
       matchTrackIds: normalizeMatchTrackIds(currentId, matchTrackIds),
       status,
+      uiStatus,
+      verifiedPlayable,
+      reason,
       stale,
       source,
       updatedAt,

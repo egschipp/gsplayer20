@@ -26,7 +26,7 @@ test("derivePlaybackSnapshot reflects active playing track state", () => {
   const { snapshot } = derivePlaybackSnapshot({
     focus,
     lastStableFocus: DEFAULT_PLAYBACK_FOCUS,
-    controllerStatus: "playing",
+    controllerStatus: "ready",
     pendingCommand: null,
     controllerError: null,
     runtimeError: null,
@@ -34,12 +34,15 @@ test("derivePlaybackSnapshot reflects active playing track state", () => {
   });
   assert.equal(snapshot.currentTrackId, TRACK_A);
   assert.equal(snapshot.status, "playing");
+  assert.equal(snapshot.uiStatus, "ready");
+  assert.equal(snapshot.verifiedPlayable, true);
+  assert.equal(snapshot.reason, "ok");
   assert.equal(snapshot.stale, false);
   assert.equal(snapshot.positionMs, 12_500);
   assert.equal(snapshot.durationMs, 200_000);
 });
 
-test("derivePlaybackSnapshot latches recent track when transiently missing", () => {
+test("derivePlaybackSnapshot returns loading when playback command is pending but track is unknown", () => {
   const focus = createFocus({
     trackId: null,
     isPlaying: null,
@@ -59,18 +62,21 @@ test("derivePlaybackSnapshot latches recent track when transiently missing", () 
   const { snapshot } = derivePlaybackSnapshot({
     focus,
     lastStableFocus: lastStable,
-    controllerStatus: "playing",
+    controllerStatus: "loading",
     pendingCommand: "play",
     controllerError: null,
     runtimeError: null,
     now: 2_200,
   });
-  assert.equal(snapshot.currentTrackId, TRACK_A);
-  assert.equal(snapshot.status, "playing");
-  assert.equal(snapshot.stale, true);
+  assert.equal(snapshot.currentTrackId, null);
+  assert.equal(snapshot.status, "loading");
+  assert.equal(snapshot.uiStatus, "loading");
+  assert.equal(snapshot.verifiedPlayable, false);
+  assert.equal(snapshot.reason, "controller_initializing");
+  assert.equal(snapshot.stale, false);
 });
 
-test("derivePlaybackSnapshot clears stale latch after timeout", () => {
+test("derivePlaybackSnapshot keeps empty when no track exists", () => {
   const focus = createFocus({
     trackId: null,
     status: "idle",
@@ -92,6 +98,10 @@ test("derivePlaybackSnapshot clears stale latch after timeout", () => {
   });
   assert.equal(snapshot.currentTrackId, null);
   assert.equal(snapshot.status, "idle");
+  assert.equal(snapshot.uiStatus, "empty");
+  assert.equal(snapshot.verifiedPlayable, false);
+  assert.equal(snapshot.reason, "no_track");
+  assert.equal(snapshot.stale, false);
 });
 
 test("derivePlaybackSnapshot marks paused state as loading while play command is pending", () => {
@@ -103,7 +113,7 @@ test("derivePlaybackSnapshot marks paused state as loading while play command is
   const { snapshot } = derivePlaybackSnapshot({
     focus,
     lastStableFocus: DEFAULT_PLAYBACK_FOCUS,
-    controllerStatus: "initializing",
+    controllerStatus: "loading",
     pendingCommand: "play",
     controllerError: null,
     runtimeError: null,
@@ -111,6 +121,8 @@ test("derivePlaybackSnapshot marks paused state as loading while play command is
   });
   assert.equal(snapshot.currentTrackId, TRACK_B);
   assert.equal(snapshot.status, "loading");
+  assert.equal(snapshot.uiStatus, "loading");
+  assert.equal(snapshot.verifiedPlayable, true);
 });
 
 test("derivePlaybackSnapshot keeps active playback status despite controller error", () => {
@@ -123,13 +135,15 @@ test("derivePlaybackSnapshot keeps active playback status despite controller err
   const { snapshot } = derivePlaybackSnapshot({
     focus,
     lastStableFocus: DEFAULT_PLAYBACK_FOCUS,
-    controllerStatus: "playing",
+    controllerStatus: "ready",
     pendingCommand: null,
     controllerError: "NETWORK_TIMEOUT",
     runtimeError: null,
     now: 8_000,
   });
   assert.equal(snapshot.status, "playing");
+  assert.equal(snapshot.uiStatus, "ready");
+  assert.equal(snapshot.verifiedPlayable, true);
   assert.equal(snapshot.errorMessage, "NETWORK_TIMEOUT");
 });
 
@@ -149,6 +163,9 @@ test("derivePlaybackSnapshot reports error when no active track exists", () => {
     now: 9_000,
   });
   assert.equal(snapshot.status, "error");
+  assert.equal(snapshot.uiStatus, "error");
   assert.equal(snapshot.currentTrackId, null);
+  assert.equal(snapshot.verifiedPlayable, false);
+  assert.equal(snapshot.reason, "controller_error");
   assert.equal(snapshot.errorMessage, "PLAYER_UNAVAILABLE");
 });

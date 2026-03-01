@@ -74,7 +74,7 @@ const INITIAL_RUNTIME: PlayerRuntimeState = {
 };
 
 const NOOP_CONTROLLER: PlayerController = {
-  playbackStatus: "idle",
+  playbackStatus: "empty",
   pendingCommand: null,
   lastCommandId: null,
   runtime: INITIAL_RUNTIME,
@@ -99,6 +99,9 @@ const PlayerContext = createContext<PlayerContextValue>({
     currentTrackId: null,
     matchTrackIds: [],
     status: "idle",
+    uiStatus: "empty",
+    verifiedPlayable: false,
+    reason: "no_track",
     stale: false,
     source: "system",
     updatedAt: 0,
@@ -321,14 +324,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   const controllerPlaybackStatus = useMemo<PlayerPlaybackStatus>(() => {
     if (controllerError || controllerRuntime.lastError) return "error";
-    if (commandDepth > 0 || pendingCommand) return "initializing";
-    if (!handlersReady && !api && !controllerRuntime.sdkReady) return "idle";
-    if (playbackFocus.isPlaying === true) return "playing";
-    if (playbackFocus.isPlaying === false) return "paused";
+    if (commandDepth > 0 || pendingCommand) return "loading";
+    if (playbackFocus.status === "error") return "error";
+    if (playbackFocus.status === "loading") return "loading";
+    if (playbackFocus.trackId && !playbackFocus.stale) return "ready";
+    if (!handlersReady && !api && !controllerRuntime.sdkReady) return "empty";
     if (controllerRuntime.sdkReady || Boolean(controllerRuntime.deviceId) || Boolean(api)) {
-      return "ready";
+      return "loading";
     }
-    return "initializing";
+    return "empty";
   }, [
     api,
     commandDepth,
@@ -338,7 +342,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     controllerRuntime.sdkReady,
     handlersReady,
     pendingCommand,
-    playbackFocus.isPlaying,
+    playbackFocus.status,
+    playbackFocus.stale,
+    playbackFocus.trackId,
   ]);
 
   const controller = useMemo<PlayerController>(
@@ -349,9 +355,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       runtime: controllerRuntime,
       error: controllerError ?? controllerRuntime.lastError,
       ready:
-        controllerPlaybackStatus === "ready" ||
-        controllerPlaybackStatus === "playing" ||
-        controllerPlaybackStatus === "paused",
+        controllerPlaybackStatus === "ready",
       playTrack,
       playQueue,
       playContext,

@@ -2177,6 +2177,25 @@ details[open] > .details-summary::after {
   border-color: rgba(29, 185, 84, 0.45);
 }
 
+.player-queue-item.active.loading {
+  background: rgba(29, 185, 84, 0.1);
+  border-color: rgba(29, 185, 84, 0.35);
+}
+
+.player-queue-item.active.paused {
+  background: rgba(29, 185, 84, 0.1);
+  border-color: rgba(29, 185, 84, 0.35);
+}
+
+.player-queue-item.active.error {
+  background: rgba(255, 128, 128, 0.08);
+  border-color: rgba(255, 128, 128, 0.35);
+}
+
+.player-queue-item.active.stale {
+  border-style: dashed;
+}
+
 .player-queue-cover {
   width: 40px;
   height: 40px;

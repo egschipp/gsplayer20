@@ -1,9 +1,7 @@
 export type PlayerPlaybackStatus =
-  | "idle"
-  | "initializing"
+  | "empty"
+  | "loading"
   | "ready"
-  | "playing"
-  | "paused"
   | "error";
 
 export type PlayerCommandType =

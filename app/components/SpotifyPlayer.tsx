@@ -53,7 +53,6 @@ const PLAYBACK_RESTRICTION_COOLDOWN_MS = 4_000;
 const PLAYER_TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
 const PLAYER_LIKED_PLAYLIST_ID = "liked";
 const CONNECT_DOCK_PIN_KEY = "gs_connect_dock_pinned_v1";
-const PLAYBACK_FOCUS_STALE_HOLD_MS = 15_000;
 const PLAYBACK_READY_TIMEOUT_MS = 9_000;
 const PLAYBACK_READY_POLL_MS = 240;
 const PLAYBACK_READY_REFRESH_EVERY_MS = 1_200;
@@ -100,6 +99,7 @@ type DeviceSwitchContext = {
 type QueueTrackItem = {
   id: string;
   uri: string | null;
+  matchTrackIds: string[];
   name: string;
   artists: string;
   coverUrl: string | null;
@@ -280,10 +280,12 @@ function resolvePlaybackTrackIds(item: any) {
 
 function mapQueueTrackItem(track: any, fallbackIndex = 0): QueueTrackItem {
   const normalizedId = resolvePlaybackTrackId(track);
+  const matchTrackIds = resolvePlaybackTrackIds(track);
   const uri = typeof track?.uri === "string" ? track.uri : null;
   return {
     id: normalizedId ?? `${uri ?? "queue-track"}:${fallbackIndex}`,
     uri,
+    matchTrackIds,
     name: track?.name ?? "Onbekend nummer",
     artists: Array.isArray(track?.artists)
       ? track.artists.map((a: any) => a?.name).filter(Boolean).join(", ")
@@ -322,6 +324,134 @@ function createCommandId() {
     // fallback below
   }
   return `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeTrackIdCollection(values: Array<string | null | undefined>) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const normalized = normalizePlaybackTrackId(value);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function findBestQueueMatchIndex(items: QueueTrackItem[], activeTrackIds: Set<string>) {
+  if (!items.length || !activeTrackIds.size) return -1;
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const candidates = normalizeTrackIdCollection([item.id, item.uri, ...item.matchTrackIds]);
+    if (candidates.some((candidate) => activeTrackIds.has(candidate))) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function emitPlaybackDebugEvent(
+  event: string,
+  payload: Record<string, unknown>
+) {
+  if (process.env.NODE_ENV === "production") return;
+  try {
+    console.debug(`[player:${event}]`, payload);
+  } catch {
+    // ignore logger issues
+  }
+}
+
+function ActiveTrackIndicator({
+  status,
+  isStale,
+}: {
+  status: PlaybackFocusStatus;
+  isStale: boolean;
+}) {
+  const ariaLabel =
+    status === "playing"
+      ? "Now playing"
+      : status === "paused"
+      ? "Gepauzeerd"
+      : status === "loading"
+      ? "Buffering"
+      : status === "ended"
+      ? "Track beëindigd"
+      : status === "error"
+      ? "Playback fout"
+      : "Actieve track";
+  return (
+    <span
+      className={`playing-indicator ${status}${isStale ? " stale" : ""}`}
+      aria-label={ariaLabel}
+    >
+      {status === "playing" ? (
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 16 16"
+          width="12"
+          height="12"
+          className="playing-indicator-icon equalizer"
+        >
+          <rect x="1" y="7" width="2.2" height="8" rx="1" />
+          <rect x="6.1" y="3" width="2.2" height="12" rx="1" />
+          <rect x="11.2" y="5.5" width="2.2" height="9.5" rx="1" />
+        </svg>
+      ) : status === "loading" ? (
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 16 16"
+          width="12"
+          height="12"
+          className="playing-indicator-icon spinner"
+        >
+          <circle cx="8" cy="8" r="5.5" fill="none" strokeWidth="2.2" opacity="0.35" />
+          <path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5" fill="none" strokeWidth="2.2" />
+        </svg>
+      ) : status === "paused" ? (
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 16 16"
+          width="12"
+          height="12"
+          className="playing-indicator-icon"
+        >
+          <path d="M4.2 3.2h2.6v9.6H4.2zM9.2 3.2h2.6v9.6H9.2z" />
+        </svg>
+      ) : status === "ended" ? (
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 16 16"
+          width="12"
+          height="12"
+          className="playing-indicator-icon"
+        >
+          <path d="M8 2.2a5.8 5.8 0 1 0 5.65 7.1h-1.8A4.2 4.2 0 1 1 8 3.8c1.1 0 2.08.42 2.82 1.1L8.9 6.82h4.9v-4.9l-1.74 1.74A5.73 5.73 0 0 0 8 2.2Z" />
+        </svg>
+      ) : status === "error" ? (
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 16 16"
+          width="12"
+          height="12"
+          className="playing-indicator-icon"
+        >
+          <path d="M8 1.8 1.6 13.6h12.8L8 1.8Zm-.8 4.1h1.6v4.3H7.2V5.9Zm0 5.3h1.6v1.6H7.2v-1.6Z" />
+        </svg>
+      ) : (
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 16 16"
+          width="12"
+          height="12"
+          className="playing-indicator-icon"
+        >
+          <path d="M4.4 3.2v9.6l8-4.8-8-4.8Z" />
+        </svg>
+      )}
+    </span>
+  );
 }
 
 function resolveDeviceTypeIcon(type: string | null | undefined) {
@@ -677,6 +807,15 @@ export default function SpotifyPlayer({
         previous.durationMs !== normalized.durationMs ||
         previous.errorMessage !== normalized.errorMessage;
       if (!changed) return;
+      emitPlaybackDebugEvent("state_transition", {
+        fromStatus: previous.status,
+        toStatus: normalized.status,
+        fromTrackId: previous.trackId,
+        toTrackId: normalized.trackId,
+        stale: normalized.stale,
+        source: normalized.source,
+        updatedAt: normalized.updatedAt,
+      });
       playbackFocusRef.current = normalized;
       setPlaybackFocusState(normalized);
       if (onPlaybackFocusChange) {
@@ -1041,49 +1180,53 @@ export default function SpotifyPlayer({
     if (!currentTrackIdState) return false;
     return customQueue.items.some((item) => item.trackId === currentTrackIdState);
   }, [currentTrackIdState, customQueue.items]);
+  const activeTrackIdsOrdered = useMemo(
+    () =>
+      normalizeTrackIdCollection([
+        ...(Array.isArray(playbackFocusState.matchTrackIds)
+          ? playbackFocusState.matchTrackIds
+          : []),
+        playbackFocusState.trackId,
+        currentTrackIdState,
+      ]),
+    [currentTrackIdState, playbackFocusState.matchTrackIds, playbackFocusState.trackId]
+  );
+  const activeTrackIdSet = useMemo(
+    () => new Set(activeTrackIdsOrdered),
+    [activeTrackIdsOrdered]
+  );
+  const activeQueueTrackStatus: PlaybackFocusStatus = playbackFocusState.status;
+  const activeQueueTrackIsStale = Boolean(playbackFocusState.stale);
   const queueDisplayItems = useMemo(() => {
     if (!queueItems.length) return [];
-    const activeCandidates = new Set<string>();
-    const pushActiveCandidate = (value: unknown) => {
-      const id = normalizePlaybackTrackId(value);
-      if (!id) return;
-      activeCandidates.add(id);
-    };
-    pushActiveCandidate(playbackFocusState.trackId);
-    for (const value of playbackFocusState.matchTrackIds) {
-      pushActiveCandidate(value);
-    }
-    pushActiveCandidate(currentTrackIdState);
     const fallbackActiveId = lastQueueActiveTrackIdRef.current;
-    const normalized = queueItems.map((item, index) => ({
+    const indexed = queueItems.map((item, index) => ({
       ...item,
       _index: index,
-      _normalizedId: normalizePlaybackTrackId(item.id),
+      _normalizedId:
+        normalizePlaybackTrackId(item.id) ??
+        normalizeTrackIdCollection([item.uri, ...item.matchTrackIds])[0] ??
+        null,
     }));
 
-    let activeIndex = -1;
-    if (activeCandidates.size > 0) {
-      activeIndex = normalized.findIndex(
-        (item) => Boolean(item._normalizedId) && activeCandidates.has(item._normalizedId as string)
-      );
-    }
+    let activeIndex = findBestQueueMatchIndex(indexed, activeTrackIdSet);
     if (activeIndex < 0 && fallbackActiveId) {
-      activeIndex = normalized.findIndex(
+      activeIndex = indexed.findIndex(
         (item) => Boolean(item._normalizedId) && item._normalizedId === fallbackActiveId
       );
     }
     if (activeIndex < 0) {
-      activeIndex = normalized.findIndex((item) => item.isCurrent);
+      activeIndex = indexed.findIndex((item) => item.isCurrent);
     }
 
     if (activeIndex >= 0) {
-      const activeNormalizedId = normalized[activeIndex]?._normalizedId;
+      const activeNormalizedId = indexed[activeIndex]?._normalizedId;
       if (activeNormalizedId) {
         lastQueueActiveTrackIdRef.current = activeNormalizedId;
       }
     }
 
-    const marked = normalized.map((item, index) => ({
+    const marked = indexed.map((item, index) => ({
       ...item,
       isCurrent: activeIndex >= 0 && index === activeIndex,
     }));
@@ -1095,7 +1238,7 @@ export default function SpotifyPlayer({
     const before = marked.slice(0, activeIndex);
     const after = marked.slice(activeIndex + 1);
     return [activeItem, ...before, ...after];
-  }, [currentTrackIdState, playbackFocusState.matchTrackIds, playbackFocusState.trackId, queueItems]);
+  }, [activeTrackIdSet, queueItems]);
   const selectableDevicesCount = useMemo(
     () => devices.filter((device) => device.selectable).length,
     [devices]
@@ -2013,6 +2156,11 @@ export default function SpotifyPlayer({
         deduped.push({
           ...currentMapped,
           id: currentId,
+          matchTrackIds: normalizeTrackIdCollection([
+            ...currentMapped.matchTrackIds,
+            currentId,
+            currentMapped.uri,
+          ]),
           isCurrent: true,
         });
         seen.add(currentId);
@@ -2024,6 +2172,11 @@ export default function SpotifyPlayer({
         deduped.push({
           ...item,
           id: normalizedId,
+          matchTrackIds: normalizeTrackIdCollection([
+            ...item.matchTrackIds,
+            normalizedId,
+            item.uri,
+          ]),
           isCurrent: false,
         });
       }
@@ -2124,39 +2277,11 @@ export default function SpotifyPlayer({
       const isPlaying = Boolean(data?.is_playing);
       if (!data?.item) {
         hasConfirmedLivePlaybackRef.current = false;
-        const now = Date.now();
-        const previousTrackId = currentTrackIdRef.current || lastTrackIdRef.current;
-        const previousFocus = playbackFocusRef.current;
-        const canHoldStaleFocus =
-          Boolean(previousTrackId) && now - previousFocus.updatedAt < PLAYBACK_FOCUS_STALE_HOLD_MS;
-        if (canHoldStaleFocus && previousTrackId) {
-          setPlaybackTrackState(previousTrackId, {
-            isPlaying:
-              typeof data?.is_playing === "boolean"
-                ? data.is_playing
-                : previousFocus.isPlaying,
-            status:
-              typeof data?.is_playing === "boolean"
-                ? data.is_playing
-                  ? "playing"
-                  : "paused"
-                : previousFocus.status,
-            stale: true,
-            source,
-            confidence: 0.45,
-            positionMs: lastKnownPositionRef.current,
-            durationMs: durationMsRef.current,
-            errorMessage: null,
-            updatedAt: now,
-          });
-          emitPlaybackMetric("focus_stale_hold", 1, { source });
-        } else {
-          clearPlaybackViewState(
-            responseReceivedAtMonoMs,
-            source,
-            typeof data?.is_playing === "boolean" ? data.is_playing : null
-          );
-        }
+        clearPlaybackViewState(
+          responseReceivedAtMonoMs,
+          source,
+          typeof data?.is_playing === "boolean" ? data.is_playing : null
+        );
         if (typeof data?.is_playing === "boolean") {
           lastIsPlayingRef.current = data.is_playing;
         }
@@ -2173,6 +2298,15 @@ export default function SpotifyPlayer({
       hasConfirmedLivePlaybackRef.current = true;
       const trackId = resolvePlaybackTrackId(item);
       const matchTrackIds = resolvePlaybackTrackIds(item);
+      if (!trackId || matchTrackIds.length === 0) {
+        hasConfirmedLivePlaybackRef.current = false;
+        clearPlaybackViewState(
+          responseReceivedAtMonoMs,
+          source,
+          typeof data?.is_playing === "boolean" ? data.is_playing : null
+        );
+        return isPlaying;
+      }
       const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
       if (isNewTrack) {
         lastTrackIdRef.current = trackId;
@@ -2244,20 +2378,6 @@ export default function SpotifyPlayer({
       syncQueuePositionFromTrack(trackId);
       if (trackId && Date.now() - lastProgressSyncRef.current > 5000) {
         lastProgressSyncRef.current = Date.now();
-        try {
-          window.localStorage.setItem(
-            "gs_last_playback",
-            JSON.stringify({
-              trackId,
-              positionMs: reconciledPosition,
-              deviceId: device?.id ?? null,
-              source,
-              updatedAt: Date.now(),
-            })
-          );
-        } catch {
-          // ignore storage issues
-        }
       }
       if (typeof data?.is_playing === "boolean") {
         lastIsPlayingRef.current = data.is_playing;
@@ -2812,6 +2932,10 @@ export default function SpotifyPlayer({
       if (!allowBootstrapFromSdk) {
         return;
       }
+      if (!trackId || matchTrackIds.length === 0) {
+        clearPlaybackViewState(eventMonoMs, "sdk", sdkSaysPlaying);
+        return;
+      }
       const rawPosition = state.position ?? 0;
       const nextDuration = current?.duration_ms ?? 0;
       const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
@@ -2890,19 +3014,6 @@ export default function SpotifyPlayer({
       syncQueuePositionFromTrack(trackId);
       if (trackId && Date.now() - lastProgressSyncRef.current > 5000) {
         lastProgressSyncRef.current = Date.now();
-        try {
-          window.localStorage.setItem(
-            "gs_last_playback",
-            JSON.stringify({
-              trackId,
-              positionMs: reconciledPosition,
-              deviceId: stateDeviceId,
-              updatedAt: Date.now(),
-            })
-          );
-        } catch {
-          // ignore storage issues
-        }
       }
       if (trackId) {
         hasConfirmedLivePlaybackRef.current = true;
@@ -2911,6 +3022,7 @@ export default function SpotifyPlayer({
     [
       applyPendingSeekGuard,
       applyProgressPosition,
+      clearPlaybackViewState,
       getMonotonicNow,
       playbackTouched,
       reconcileProgressPosition,
@@ -3712,13 +3824,15 @@ export default function SpotifyPlayer({
     };
 
     const onStateChanged = (state: any) => {
-      applySdkState(state);
-      if (state) {
-        setSdkReadyState(true);
-        setDeviceReady(true);
-        setSdkLastError(null);
-        setSdkLifecycle("ready");
+      if (!state) {
+        clearPlaybackViewState(getMonotonicNow(), "sdk", false);
+        return;
       }
+      applySdkState(state);
+      setSdkReadyState(true);
+      setDeviceReady(true);
+      setSdkLastError(null);
+      setSdkLifecycle("ready");
       if (state && !state.paused) {
         setError(null);
       }
@@ -5979,11 +6093,25 @@ export default function SpotifyPlayer({
             <div className="text-subtle">Geen volgende nummers.</div>
           ) : (
             <div className="player-queue-list">
-              {queueDisplayItems.slice(0, 10).map((track) => (
-                <div
-                  key={`${track.id}:${track.uri ?? "nouri"}`}
-                  className={`player-queue-item${track.isCurrent ? " active" : ""}`}
-                >
+              {queueDisplayItems.slice(0, 10).map((track) => {
+                const trackStatus: PlaybackFocusStatus = track.isCurrent
+                  ? activeQueueTrackStatus
+                  : "idle";
+                const isPaused = trackStatus === "paused";
+                const isLoading = trackStatus === "loading";
+                const isEnded = trackStatus === "ended";
+                const isError = trackStatus === "error";
+                const isStale = track.isCurrent && activeQueueTrackIsStale;
+                const stateClasses = `${track.isCurrent ? " active" : ""}${
+                  isPaused ? " paused" : ""
+                }${isStale ? " stale" : ""}${isLoading ? " loading" : ""}${
+                  isEnded ? " ended" : ""
+                }${isError ? " error" : ""}`;
+                return (
+                  <div
+                    key={`${track.id}:${track.uri ?? "nouri"}`}
+                    className={`player-queue-item${stateClasses}`}
+                  >
                   {track.coverUrl ? (
                     <Image
                       src={track.coverUrl}
@@ -5999,7 +6127,13 @@ export default function SpotifyPlayer({
                     <div className="player-queue-name">
                       {track.name}
                       {track.isCurrent ? (
-                        <span className="player-queue-nowplaying">Nu spelend</span>
+                        <>
+                          <ActiveTrackIndicator
+                            status={trackStatus}
+                            isStale={isStale}
+                          />
+                          <span className="player-queue-nowplaying">Nu spelend</span>
+                        </>
                       ) : null}
                     </div>
                     <div className="text-subtle">{track.artists}</div>
@@ -6011,8 +6145,9 @@ export default function SpotifyPlayer({
                       {track.uri ? ` • ${track.uri}` : ""}
                     </div>
                   </div>
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

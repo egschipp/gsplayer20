@@ -17,6 +17,10 @@ function formatDuration(ms: number | null) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function readSelectedPlaylistId() {
   if (typeof window === "undefined") return null;
   try {
@@ -189,25 +193,31 @@ export default function QueuePageClient() {
     const row = container.querySelector<HTMLElement>(`[data-queue-id="${activeQueueId}"]`);
     if (!row) return;
 
-    const margin = 16;
     const top = row.offsetTop;
     const bottom = top + row.offsetHeight;
+    const rowMid = top + row.offsetHeight / 2;
     const viewTop = container.scrollTop;
-    const viewBottom = viewTop + container.clientHeight;
-    let targetTop = viewTop;
+    const viewportHeight = container.clientHeight;
+    const viewBottom = viewTop + viewportHeight;
 
-    if (top - margin < viewTop) {
-      targetTop = Math.max(0, top - margin);
-    } else if (bottom + margin > viewBottom) {
-      targetTop = bottom + margin - container.clientHeight;
-    } else {
+    // Keep the active row in a comfortable center band, instead of pinning near the top.
+    const focusBandTop = viewTop + viewportHeight * 0.3;
+    const focusBandBottom = viewTop + viewportHeight * 0.7;
+    const rowFullyVisible = top >= viewTop + 6 && bottom <= viewBottom - 6;
+    const rowInsideFocusBand = rowMid >= focusBandTop && rowMid <= focusBandBottom;
+    if (rowFullyVisible && rowInsideFocusBand) {
       return;
     }
 
+    const targetVisibleRatio = 0.5;
+    const desiredTop = rowMid - viewportHeight * targetVisibleRatio;
+    const maxScrollTop = Math.max(0, container.scrollHeight - viewportHeight);
+    const targetTop = clampNumber(desiredTop, 0, maxScrollTop);
+
     animateScrollTop(container, targetTop, {
-      minDurationMs: 220,
-      maxDurationMs: 520,
-      pxPerMs: 2.4,
+      minDurationMs: 300,
+      maxDurationMs: 760,
+      pxPerMs: 1.7,
     });
   }, [activeQueueId, playback.startingQueueId]);
 

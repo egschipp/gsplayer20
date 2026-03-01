@@ -246,6 +246,27 @@ function resolvePlaybackTrackId(item: any) {
   );
 }
 
+function resolvePlaybackTrackIds(item: any) {
+  const values = [
+    item?.id,
+    item?.uri,
+    item?.href,
+    item?.linked_from?.id,
+    item?.linked_from?.uri,
+    item?.linked_from?.href,
+    item?.external_urls?.spotify,
+  ];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const normalized = normalizePlaybackTrackId(value);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
 function extractProxyPayload(body: RequestInit["body"]) {
   if (!body) return undefined;
   if (typeof body === "string") {
@@ -559,32 +580,71 @@ export default function SpotifyPlayer({
 
   const updatePlaybackFocus = useCallback(
     (
-      next: Omit<PlaybackFocus, "source"> & {
+      next: {
+        trackId?: string | null;
+        matchTrackIds?: string[] | null;
+        isPlaying?: boolean | null;
+        status?: PlaybackFocusStatus;
+        stale?: boolean;
         source: PlaybackSource | PlaybackFocusSource;
+        confidence?: number;
+        positionMs?: number;
+        durationMs?: number;
+        errorMessage?: string | null;
+        updatedAt?: number;
       }
     ) => {
+      const nextTrackId = next.trackId ?? null;
+      const nextMatchTrackIds = Array.isArray(next.matchTrackIds)
+        ? next.matchTrackIds
+        : [];
+      const normalizedMatchTrackIds: string[] = [];
+      const seen = new Set<string>();
+      const pushMatchId = (value: unknown) => {
+        const id = normalizePlaybackTrackId(value);
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        normalizedMatchTrackIds.push(id);
+      };
+      for (const value of nextMatchTrackIds) {
+        pushMatchId(value);
+      }
+      pushMatchId(nextTrackId);
+
       const normalized: PlaybackFocus = {
-        trackId: next.trackId ?? null,
+        trackId: nextTrackId,
+        matchTrackIds: normalizedMatchTrackIds,
         isPlaying: typeof next.isPlaying === "boolean" ? next.isPlaying : null,
         status: resolvePlaybackFocusStatus(
           next.status,
           typeof next.isPlaying === "boolean" ? next.isPlaying : null,
-          Boolean(next.trackId)
+          Boolean(nextTrackId)
         ),
         stale: Boolean(next.stale),
         source: next.source,
         confidence: Math.max(0, Math.min(1, Number(next.confidence ?? 0))),
-        positionMs: Number.isFinite(next.positionMs) ? Math.max(0, Math.floor(next.positionMs)) : 0,
-        durationMs: Number.isFinite(next.durationMs) ? Math.max(0, Math.floor(next.durationMs)) : 0,
+        positionMs:
+          typeof next.positionMs === "number" && Number.isFinite(next.positionMs)
+            ? Math.max(0, Math.floor(next.positionMs))
+            : 0,
+        durationMs:
+          typeof next.durationMs === "number" && Number.isFinite(next.durationMs)
+            ? Math.max(0, Math.floor(next.durationMs))
+            : 0,
         errorMessage:
           typeof next.errorMessage === "string" && next.errorMessage.trim()
             ? next.errorMessage.trim()
             : null,
-        updatedAt: Number.isFinite(next.updatedAt) ? next.updatedAt : Date.now(),
+        updatedAt:
+          typeof next.updatedAt === "number" && Number.isFinite(next.updatedAt)
+            ? next.updatedAt
+            : Date.now(),
       };
       const previous = playbackFocusRef.current;
       const changed =
         previous.trackId !== normalized.trackId ||
+        previous.matchTrackIds.length !== normalized.matchTrackIds.length ||
+        previous.matchTrackIds.some((value, index) => value !== normalized.matchTrackIds[index]) ||
         previous.isPlaying !== normalized.isPlaying ||
         previous.status !== normalized.status ||
         previous.stale !== normalized.stale ||
@@ -615,6 +675,7 @@ export default function SpotifyPlayer({
         durationMs?: number;
         errorMessage?: string | null;
         updatedAt?: number;
+        matchTrackIds?: string[] | null;
       }
     ) => {
       const nextTrackId = trackId ?? null;
@@ -623,6 +684,12 @@ export default function SpotifyPlayer({
       if (onTrackChange) onTrackChange(nextTrackId);
       updatePlaybackFocus({
         trackId: nextTrackId,
+        matchTrackIds:
+          Array.isArray(options?.matchTrackIds) && options?.matchTrackIds.length > 0
+            ? options.matchTrackIds
+            : nextTrackId
+            ? [nextTrackId]
+            : [],
         isPlaying:
           typeof options?.isPlaying === "boolean"
             ? options.isPlaying
@@ -2011,6 +2078,7 @@ export default function SpotifyPlayer({
 
       const item = data.item;
       const trackId = resolvePlaybackTrackId(item);
+      const matchTrackIds = resolvePlaybackTrackIds(item);
       const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
       if (isNewTrack) {
         lastTrackIdRef.current = trackId;
@@ -2068,6 +2136,7 @@ export default function SpotifyPlayer({
       }
       setDurationMs(item.duration_ms ?? 0);
       setPlaybackTrackState(trackId, {
+        matchTrackIds,
         isPlaying,
         status: isPlaying ? "playing" : "paused",
         stale: false,
@@ -2642,6 +2711,7 @@ export default function SpotifyPlayer({
       }
       const current = state.track_window?.current_track;
       const trackId = resolvePlaybackTrackId(current);
+      const matchTrackIds = resolvePlaybackTrackIds(current);
       const rawPosition = state.position ?? 0;
       const nextDuration = current?.duration_ms ?? 0;
       const isNewTrack = trackId && trackId !== lastTrackIdRef.current;
@@ -2698,6 +2768,7 @@ export default function SpotifyPlayer({
       }
       setDurationMs(nextDuration);
       setPlaybackTrackState(trackId, {
+        matchTrackIds,
         isPlaying: !state.paused,
         status: state.paused ? "paused" : "playing",
         stale: false,
@@ -3459,7 +3530,9 @@ export default function SpotifyPlayer({
               }
               setDurationMs(item.duration_ms ?? 0);
               const bootstrapTrackId = resolvePlaybackTrackId(item);
+              const bootstrapMatchTrackIds = resolvePlaybackTrackIds(item);
               setPlaybackTrackState(bootstrapTrackId, {
+                matchTrackIds: bootstrapMatchTrackIds,
                 isPlaying: Boolean(data?.is_playing),
                 status: data?.is_playing ? "playing" : "paused",
                 stale: false,

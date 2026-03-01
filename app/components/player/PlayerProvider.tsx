@@ -97,6 +97,7 @@ const PlayerContext = createContext<PlayerContextValue>({
   playbackFocus: DEFAULT_PLAYBACK_FOCUS,
   playbackState: {
     currentTrackId: null,
+    matchTrackIds: [],
     status: "idle",
     stale: false,
     source: "system",

@@ -120,7 +120,7 @@ export async function GET(
   if (targetTrackId) {
     const lookupStartedAt = Date.now();
     const directWhere = and(baseWhere, eq(playlistItems.trackId, targetTrackId));
-    let targetRow = await db
+    const targetRow = await db
       .select({
         position: playlistItems.position,
       })
@@ -134,24 +134,6 @@ export async function GET(
       .orderBy(asc(playlistItems.position), asc(playlistItems.itemId))
       .limit(1)
       .get();
-    // Fallback to linked_from only when no strict trackId hit exists.
-    if (!targetRow) {
-      const linkedWhere = and(baseWhere, eq(tracks.linkedFromTrackId, targetTrackId));
-      targetRow = await db
-        .select({
-          position: playlistItems.position,
-        })
-        .from(playlistItems)
-        .innerJoin(
-          userPlaylists,
-          eq(userPlaylists.playlistId, playlistItems.playlistId)
-        )
-        .leftJoin(tracks, eq(tracks.trackId, playlistItems.trackId))
-        .where(linkedWhere)
-        .orderBy(asc(playlistItems.position), asc(playlistItems.itemId))
-        .limit(1)
-        .get();
-    }
     const found = Boolean(targetRow && typeof targetRow.position === "number");
     target = {
       trackId: targetTrackId,

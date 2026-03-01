@@ -12,6 +12,7 @@ import type {
 
 export type PlaybackSnapshot = {
   currentTrackId: string | null;
+  matchTrackIds: string[];
   status: PlaybackFocusStatus;
   stale: boolean;
   source: PlaybackFocusSource;
@@ -37,6 +38,26 @@ function clampMs(value: number | null | undefined) {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value as number)) : 0;
 }
 
+function normalizeMatchTrackIds(
+  currentTrackId: string | null,
+  values: string[] | null | undefined
+) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: unknown) => {
+    if (typeof value !== "string") return;
+    const id = value.trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  };
+  if (Array.isArray(values)) {
+    for (const value of values) push(value);
+  }
+  push(currentTrackId);
+  return out;
+}
+
 export function derivePlaybackSnapshot({
   focus,
   lastStableFocus,
@@ -57,6 +78,7 @@ export function derivePlaybackSnapshot({
     Boolean(focus.trackId)
   );
   let currentId = focus.trackId;
+  let matchTrackIds = normalizeMatchTrackIds(focus.trackId, focus.matchTrackIds);
   let status: PlaybackFocusStatus = baseStatus;
   let stale = Boolean(focus.stale);
   let source: PlaybackFocusSource = focus.source;
@@ -100,6 +122,10 @@ export function derivePlaybackSnapshot({
       (withinLatchWindow || (playbackLikelyActive && withinActivePlaybackLatchWindow));
     if (shouldLatch) {
       currentId = lastStableFocus.trackId;
+      matchTrackIds = normalizeMatchTrackIds(
+        lastStableFocus.trackId,
+        lastStableFocus.matchTrackIds
+      );
       stale = true;
       source = lastStableFocus.source;
       updatedAt = now;
@@ -137,6 +163,7 @@ export function derivePlaybackSnapshot({
   return {
     snapshot: {
       currentTrackId: currentId,
+      matchTrackIds: normalizeMatchTrackIds(currentId, matchTrackIds),
       status,
       stale,
       source,

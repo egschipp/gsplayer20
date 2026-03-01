@@ -17,6 +17,9 @@ export type PlaybackFocusStatus =
 
 export type PlaybackFocus = {
   trackId: string | null;
+  // Ordered track-id candidates for deterministic relink/alias matching in lists.
+  // The first id is the primary id used as canonical currentTrackId.
+  matchTrackIds: string[];
   isPlaying: boolean | null;
   status: PlaybackFocusStatus;
   stale: boolean;
@@ -42,6 +45,7 @@ export function resolvePlaybackFocusStatus(
 
 export const DEFAULT_PLAYBACK_FOCUS: PlaybackFocus = {
   trackId: null,
+  matchTrackIds: [],
   isPlaying: null,
   status: "idle",
   stale: false,

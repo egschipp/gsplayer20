@@ -19,15 +19,34 @@
   --list-inner-max-width: calc(1200px - 32px);
   --shadow-glow: 0 0 16px rgba(29, 185, 84, 0.25);
   --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
+  --app-content-max-height: 100dvh;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
+body {
+  min-height: 100%;
+}
+
+@supports (-webkit-touch-callout: none) {
+  body,
+  .login-shell {
+    min-height: -webkit-fill-available;
+  }
+}
+
 body {
   margin: 0;
   min-height: 100vh;
+  min-height: 100svh;
+  min-height: 100dvh;
   color: var(--text-primary);
   font-family: var(--font-body), system-ui, sans-serif;
   background:
@@ -48,6 +67,8 @@ a:hover {
 
 .page {
   padding: 32px 16px;
+  padding-left: max(16px, var(--safe-area-left));
+  padding-right: max(16px, var(--safe-area-right));
   max-width: 1200px;
   margin: 0 auto;
 }
@@ -60,6 +81,8 @@ a:hover {
 
   .page {
     padding: 32px;
+    padding-left: max(32px, var(--safe-area-left));
+    padding-right: max(32px, var(--safe-area-right));
   }
 }
 
@@ -72,11 +95,15 @@ a:hover {
   max-width: 1200px;
   margin: 0 auto;
   padding: 0 16px;
+  padding-left: max(16px, var(--safe-area-left));
+  padding-right: max(16px, var(--safe-area-right));
 }
 
 @media (min-width: 768px) {
   .shell {
     padding: 0 32px;
+    padding-left: max(32px, var(--safe-area-left));
+    padding-right: max(32px, var(--safe-area-right));
   }
 }
 
@@ -415,6 +442,8 @@ header.panel {
 
 .login-shell {
   min-height: 100vh;
+  min-height: 100svh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: 2rem;
@@ -688,6 +717,7 @@ a:focus-visible {
 .track-list {
   display: grid;
   gap: 8px;
+  min-height: 0;
 }
 
 .track-header {
@@ -715,6 +745,10 @@ a:focus-visible {
 
 .track-header.columns-6 {
   grid-template-columns: 124px minmax(0, 1fr) 80px minmax(0, 1fr) 72px 148px;
+}
+
+.track-header.columns-3 {
+  grid-template-columns: 124px minmax(0, 1fr) 148px;
 }
 
 .track-col-select-header {
@@ -969,14 +1003,31 @@ a:focus-visible {
 
 .library-browser {
   margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .page.page-mymusic {
   padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: var(--app-content-max-height);
+  max-height: var(--app-content-max-height);
+  overflow: hidden;
 }
 
 .page.page-queue {
   padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: var(--app-content-max-height);
+  max-height: var(--app-content-max-height);
+  overflow: hidden;
 }
 
 .player-library-dock-slot {
@@ -1515,6 +1566,12 @@ details[open] > .details-summary::after {
 
 .track-virtual-list .track-row-inner {
   border-radius: 16px;
+}
+
+.track-virtual-list {
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
 }
 
 .detail-btn {
@@ -3525,6 +3582,17 @@ details[open] > .details-summary::after {
   .settings-section-tab-btn {
     flex: 1 1 0;
     text-align: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

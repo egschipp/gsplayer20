@@ -2779,6 +2779,14 @@ export default function SpotifyPlayer({
         errorMessage: null,
         updatedAt: Date.now(),
       });
+      setPlaybackDisallows((prev) => {
+        if (!prev || (!prev.pausing && !prev.resuming)) return prev;
+        return {
+          ...prev,
+          pausing: false,
+          resuming: false,
+        };
+      });
       syncQueuePositionFromTrack(trackId);
       if (trackId && Date.now() - lastProgressSyncRef.current > 5000) {
         lastProgressSyncRef.current = Date.now();
@@ -5220,9 +5228,14 @@ export default function SpotifyPlayer({
   const disallowPrevious = Boolean(playbackDisallows.skipping_prev);
   const disallowNext = Boolean(playbackDisallows.skipping_next);
   const disallowShuffle = Boolean(playbackDisallows.toggling_shuffle);
-  const disallowPlayPause = playbackPausedUi
-    ? Boolean(playbackDisallows.resuming)
-    : Boolean(playbackDisallows.pausing);
+  const localSdkControlsPlayback =
+    Boolean(deviceId) && (!activeDeviceId || activeDeviceId === deviceId);
+  const disallowPlayPause =
+    activeDeviceRestricted ||
+    (!localSdkControlsPlayback &&
+      (playbackPausedUi
+        ? Boolean(playbackDisallows.resuming)
+        : Boolean(playbackDisallows.pausing)));
 
   return (
     <div className="player-card">

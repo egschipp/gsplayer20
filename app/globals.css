@@ -2166,6 +2166,15 @@ details[open] > .details-summary::after {
   grid-template-columns: 40px 1fr;
   gap: 8px;
   align-items: center;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  transition: background-color 180ms ease, border-color 180ms ease;
+}
+
+.player-queue-item.active {
+  background: rgba(29, 185, 84, 0.14);
+  border-color: rgba(29, 185, 84, 0.45);
 }
 
 .player-queue-cover {
@@ -2178,6 +2187,17 @@ details[open] > .details-summary::after {
 
 .player-queue-name {
   font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.player-queue-nowplaying {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #1db954;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .player-meta {

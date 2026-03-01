@@ -1049,7 +1049,7 @@ export default function PlaylistBrowser() {
   const [addingTargetKey, setAddingTargetKey] = useState<string | null>(null);
   const [removingTargetKey, setRemovingTargetKey] = useState<string | null>(null);
   const [selectedTrackKeys, setSelectedTrackKeys] = useState<Set<string>>(new Set());
-  const { api: playerApi, playbackFocus } = usePlayer();
+  const { controller, playbackFocus } = usePlayer();
   const viewport = useViewport();
   const queue = useQueueStore();
   const listContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1112,6 +1112,7 @@ export default function PlaylistBrowser() {
   const autoTrackOptionsPrefetchOpenRef = useRef(false);
   const autoTrackListPrefetchCountRef = useRef(0);
   const autoTrackListPrefetchContextRef = useRef<string | null>(null);
+  const lastHandledLikedRefreshNonceRef = useRef(0);
   const CACHE_KEY = "gs_library_cache_v1";
   const LEGACY_SELECTOR_DOCK_KEY = "gs_selector_dock_open_v1";
   const SELECTOR_DOCK_PIN_KEY = "gs_selector_dock_pinned_v1";
@@ -1127,13 +1128,13 @@ export default function PlaylistBrowser() {
       Math.round(viewportHeight * 0.36);
     const available = Math.floor(viewportHeight - top - 10);
     if (!Number.isFinite(available) || available <= 0) {
-      setListHeight((prev) => (prev === fallback ? prev : fallback));
+      setListHeight((prev) => (Math.abs(prev - fallback) <= 1 ? prev : fallback));
       return;
     }
     const minHeight = TRACK_ROW_HEIGHT * 3;
     const maxHeight = Math.max(minHeight, Math.floor(viewportHeight - 92));
     const next = clampNumber(available, minHeight, maxHeight);
-    setListHeight((prev) => (prev === next ? prev : next));
+    setListHeight((prev) => (Math.abs(prev - next) <= 1 ? prev : next));
   }, [viewport.height, viewport.visualHeight]);
   const allPlaylistNames = useMemo(() => {
     return playlistOptions
@@ -2869,8 +2870,15 @@ export default function PlaylistBrowser() {
         if (!res.ok) {
           const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
           if (!cancelled) {
+            const hasVisibleContextRows = Boolean(
+              nextContextKey &&
+                nextContextKey === tracksContextKey &&
+                tracksRef.current.length > 0
+            );
             setAuthRequired(Boolean(mapped.authRequired));
-            setError(mapped.message);
+            if (!hasVisibleContextRows) {
+              setError(mapped.message);
+            }
           }
           return;
         }
@@ -2936,7 +2944,14 @@ export default function PlaylistBrowser() {
         }
       } catch {
         if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
-          setError("Tracks laden lukt nu niet.");
+          const hasVisibleContextRows = Boolean(
+            nextContextKey &&
+              nextContextKey === tracksContextKey &&
+              tracksRef.current.length > 0
+          );
+          if (!hasVisibleContextRows) {
+            setError("Tracks laden lukt nu niet.");
+          }
           setPendingTracksContextKey(null);
         }
       } finally {
@@ -2958,7 +2973,11 @@ export default function PlaylistBrowser() {
     const shouldRefreshLiked =
       mode === "playlists" &&
       selectedPlaylist?.type === "liked" &&
-      likedRefreshNonce > 0;
+      likedRefreshNonce > 0 &&
+      likedRefreshNonce !== lastHandledLikedRefreshNonceRef.current;
+    if (shouldRefreshLiked) {
+      lastHandledLikedRefreshNonceRef.current = likedRefreshNonce;
+    }
     const shouldRefreshRequested =
       tracksRefreshToken !== lastHandledRefreshTokenRef.current;
     if (shouldRefreshRequested) {
@@ -3118,7 +3137,7 @@ export default function PlaylistBrowser() {
             if (reason === "active_track_hydration" || reason === "active_track_retry") {
               setActiveTrackHydrationError(mapped.message);
               setActiveTrackHydrationRetryAfterMs(page.retryAfterMs ?? null);
-            } else {
+            } else if (reason === "scroll" && tracksRef.current.length === 0) {
               setError(mapped.message);
             }
           }
@@ -3148,7 +3167,7 @@ export default function PlaylistBrowser() {
         const fallback = "Tracks laden lukt nu niet.";
         if (reason === "active_track_hydration" || reason === "active_track_retry") {
           setActiveTrackHydrationError(fallback);
-        } else {
+        } else if (reason === "scroll" && tracksRef.current.length === 0) {
           setError(fallback);
         }
         return null;
@@ -3865,11 +3884,6 @@ export default function PlaylistBrowser() {
     rowIndex?: number
   ) {
     if (!track) return;
-    if (!playerApi) {
-      setError("Spotify player is nog niet klaar. Probeer het over een paar seconden opnieuw.");
-      return;
-    }
-    playerApi.primePlaybackGesture?.();
     try {
       if (queue.mode === "queue") {
         queue.setMode("idle");
@@ -3881,74 +3895,27 @@ export default function PlaylistBrowser() {
         trackId = track.id;
       }
       if (!trackId) return;
-
-      if (mode === "playlists" && selectedPlaylist?.id) {
-        if (
-          selectedPlaylist.type === "liked" ||
-          selectedPlaylist.type === "all_music"
-        ) {
-          const playbackQueue = buildQueue();
-          const targetUri = `spotify:track:${trackId}`;
-          const offsetPosition =
-            typeof rowIndex === "number" &&
-            Number.isFinite(rowIndex) &&
-            rowIndex >= 0 &&
-            rowIndex < playbackQueue.uris.length
-              ? Math.floor(rowIndex)
-              : null;
-          if (playbackQueue.uris.length && playbackQueue.byId.has(trackId)) {
-            await playerApi.playQueue(playbackQueue.uris, targetUri, offsetPosition);
-          } else {
-            await playerApi.playQueue([targetUri], targetUri, 0);
-          }
-          return;
-        }
-        const playbackQueue = buildQueue();
-        const targetUri = `spotify:track:${trackId}`;
-        const offsetPosition =
-          "position" in track && typeof track.position === "number"
-            ? Math.max(0, Math.floor(track.position))
-            : null;
-        const contextUri = `spotify:playlist:${selectedPlaylist.id}`;
-        if (offsetPosition !== null) {
-          await playerApi.playContext(
-            contextUri,
-            offsetPosition,
-            targetUri
-          );
-          return;
-        }
-        if (playbackQueue.uris.length && playbackQueue.byId.has(trackId)) {
-          await playerApi.playQueue(playbackQueue.uris, targetUri, offsetPosition);
-          return;
-        }
-        await playerApi.playContext(
-          contextUri,
-          offsetPosition,
-          targetUri
-        );
-        return;
-      }
-
       const playbackQueue = buildQueue();
-      const targetUri = `spotify:track:${trackId}`;
-      if (!playbackQueue.uris.length) {
-        await playerApi.playQueue([targetUri], targetUri, 0);
-        return;
-      }
-      const explicitRowOffset =
-        typeof rowIndex === "number" &&
-        Number.isFinite(rowIndex) &&
-        rowIndex >= 0 &&
-        rowIndex < playbackQueue.uris.length
-          ? Math.floor(rowIndex)
+      const rawTrackPosition =
+        "position" in track && typeof track.position === "number"
+          ? Math.max(0, Math.floor(track.position))
           : null;
-      const offsetPosition =
-        explicitRowOffset ??
-        ("position" in track && typeof track.position === "number"
-          ? track.position
-          : null);
-      await playerApi.playQueue(playbackQueue.uris, targetUri, offsetPosition);
+      await controller.playTrack({
+        trackId,
+        mode,
+        queueUris: playbackQueue.uris,
+        queueContainsTrack: playbackQueue.byId.has(trackId),
+        rowIndex:
+          typeof rowIndex === "number" && Number.isFinite(rowIndex) ? rowIndex : null,
+        trackPosition: rawTrackPosition,
+        selectedPlaylistId: selectedPlaylist?.id ?? null,
+        selectedPlaylistType:
+          selectedPlaylist?.type === "liked" ||
+          selectedPlaylist?.type === "all_music" ||
+          selectedPlaylist?.type === "playlist"
+            ? selectedPlaylist.type
+            : null,
+      });
     } catch (error) {
       const message = String(error).toLowerCase();
       if (
@@ -4398,55 +4365,8 @@ export default function PlaylistBrowser() {
         </div>
       ) : null}
       {selectorDockHost ? createPortal(selectorDock, selectorDockHost) : selectorDock}
-
-      {loadingPlaylists && mode === "playlists" ? (
-        <p className="text-body" role="status">
-          Playlists laden...
-        </p>
-      ) : null}
-      {!loadingPlaylists &&
-      mode === "playlists" &&
-      playlistOptions.length <= 2 ? (
-        <div className="empty-state">
-          <div style={{ fontWeight: 600 }}>Nog geen playlists gevonden</div>
-          <div className="text-body">
-            Werk de bibliotheek bij via Settings en probeer opnieuw.
-          </div>
-        </div>
-      ) : null}
-      {loadingArtists && mode === "artists" ? (
-        <p className="text-body" role="status">
-          Artiesten laden...
-        </p>
-      ) : null}
-      {!loadingArtists && mode === "artists" && artistOptions.length === 0 ? (
-        <div className="empty-state">
-          <div style={{ fontWeight: 600 }}>Nog geen artiesten gevonden</div>
-          <div className="text-body">
-            Werk de bibliotheek bij via Settings en probeer opnieuw.
-          </div>
-        </div>
-      ) : null}
-      {loadingTracksList && mode === "albums" ? (
-        <p className="text-body" role="status">
-          Albums laden...
-        </p>
-      ) : null}
-      {!loadingTracksList && mode === "albums" && albumOptions.length === 0 ? (
-        <div className="empty-state">
-          <div style={{ fontWeight: 600 }}>Nog geen albums gevonden</div>
-          <div className="text-body">
-            Werk de bibliotheek bij via Settings en probeer opnieuw.
-          </div>
-        </div>
-      ) : null}
-      {error ? (
-        <div style={{ color: "#fca5a5" }} role="alert">
-          <p>{error}</p>
-        </div>
-      ) : null}
       {mode === "playlists" || mode === "artists" ? (
-        <div className="track-list" style={{ marginTop: 16 }} ref={listContainerRef}>
+        <div className="track-list" style={{ marginTop: 4 }} ref={listContainerRef}>
           {!isContextSwitchLoading &&
           !loadingTracks &&
           !tracks.length &&
@@ -4539,7 +4459,7 @@ export default function PlaylistBrowser() {
           ) : null}
         </div>
       ) : (
-        <div className="track-list" style={{ marginTop: 16 }} ref={listContainerRef}>
+        <div className="track-list" style={{ marginTop: 4 }} ref={listContainerRef}>
           {!loadingTracksList &&
           (mode === "tracks" ? selectedTrackId : selectedAlbumId) &&
           !localFilteredTrackItems.length ? (
@@ -4631,7 +4551,7 @@ export default function PlaylistBrowser() {
           !(mode === "tracks" ? selectedTrackId : selectedAlbumId) && loadingTracksList ? (
             <span className="text-body">Tracks laden...</span>
           ) : null
-        ) : loadingTracks || loadingMoreTracks ? (
+        ) : loadingTracks || (loadingMoreTracks && tracks.length === 0) ? (
           <span className="text-body">Tracks laden...</span>
         ) : null}
         {activeTrackMissingInRows && activeTrackHydrating ? (
@@ -4647,6 +4567,11 @@ export default function PlaylistBrowser() {
           <div className="text-subtle">{activeTrackHydrationError}</div>
         ) : null}
       </div>
+      {error ? (
+        <div style={{ color: "#fca5a5" }} role="alert">
+          <p>{error}</p>
+        </div>
+      ) : null}
 
       {selectedTrackDetail && !selectedArtistDetail ? (
         <div

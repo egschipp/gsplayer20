@@ -259,56 +259,7 @@ export default function QueuePageClient() {
   }
 
   return (
-    <section className={styles.page} aria-labelledby="queue-title">
-      <div className={styles.header}>
-        <div>
-          <h1 id="queue-title" className="heading-2">
-            Georgies Queue
-          </h1>
-          <div className={styles.count}>{queueCountLabel}</div>
-        </div>
-        <div className={styles.headerActions}>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={handleClearQueue}
-            disabled={!hasItems || playback.busy}
-          >
-            Clear Queue
-          </button>
-        </div>
-      </div>
-
-      {playback.error ? (
-        <div className={styles.error} role="alert">
-          <span>{playback.error}</span>
-          <button type="button" className="btn btn-ghost" onClick={playback.clearError}>
-            Sluiten
-          </button>
-        </div>
-      ) : null}
-
-      {!playback.ready ? (
-        <div className={styles.info} role="status">
-          Player initialiseren...
-        </div>
-      ) : null}
-
-      {!queue.hydrated ? (
-        <div className={styles.empty} role="status">
-          Queue laden...
-        </div>
-      ) : null}
-
-      {queue.hydrated && !hasItems ? (
-        <div className={styles.empty} role="status">
-          <div className={styles.emptyTitle}>Je queue is leeg</div>
-          <p className="text-body" style={{ margin: 0 }}>
-            Voeg tracks toe met de <strong>＋ Queue</strong> knop in de lijsten.
-          </p>
-        </div>
-      ) : null}
-
+    <section className={styles.page} aria-label="Georgies Queue">
       {queue.hydrated && hasItems ? (
         <div className={`track-list ${styles.tableWrap}`}>
           <div className={`track-header ${styles.queueHeader}`}>
@@ -466,6 +417,52 @@ export default function QueuePageClient() {
               );
             })}
           </ol>
+        </div>
+      ) : null}
+
+      {!queue.hydrated ? (
+        <div className={styles.empty} role="status">
+          Queue laden...
+        </div>
+      ) : null}
+
+      {queue.hydrated && !hasItems ? (
+        <div className={styles.empty} role="status">
+          <div className={styles.emptyTitle}>Je queue is leeg</div>
+          <p className="text-body" style={{ margin: 0 }}>
+            Voeg tracks toe met de <strong>＋ Queue</strong> knop in de lijsten.
+          </p>
+        </div>
+      ) : null}
+
+      {queue.hydrated && hasItems ? (
+        <div className={styles.footerBar}>
+          <div className={styles.count}>{queueCountLabel}</div>
+          <div className={styles.headerActions}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={handleClearQueue}
+              disabled={!hasItems || playback.busy}
+            >
+              Clear Queue
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {!playback.ready ? (
+        <div className={styles.info} role="status">
+          Player initialiseren...
+        </div>
+      ) : null}
+
+      {playback.error ? (
+        <div className={styles.error} role="alert">
+          <span>{playback.error}</span>
+          <button type="button" className="btn btn-ghost" onClick={playback.clearError}>
+            Sluiten
+          </button>
         </div>
       ) : null}
     </section>

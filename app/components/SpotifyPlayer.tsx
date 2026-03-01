@@ -22,6 +22,10 @@ import { usePlaybackCommandQueue } from "./player/usePlaybackCommandQueue";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
 import { useStableMenu } from "@/lib/hooks/useStableMenu";
+import type {
+  PlayerCommandHandlers,
+  PlayerRuntimeState,
+} from "@/lib/playback/playerControllerTypes";
 
 declare global {
   interface Window {
@@ -129,6 +133,10 @@ export type PlayerApi = {
     offsetUri?: string
   ) => Promise<void>;
   togglePlay: () => Promise<void>;
+  pause: () => Promise<void>;
+  resume: () => Promise<void>;
+  seek: (ms: number) => Promise<void>;
+  transfer: (deviceId: string, play?: boolean) => Promise<void>;
   next: () => Promise<void>;
   previous: () => Promise<void>;
 };
@@ -137,6 +145,14 @@ type PlayerProps = {
   onReady: (api: PlayerApi | null) => void;
   onTrackChange?: (trackId: string | null) => void;
   onPlaybackFocusChange?: (focus: PlaybackFocus) => void;
+  controller?: {
+    toggle: () => Promise<void>;
+    pause: () => Promise<void>;
+    resume: () => Promise<void>;
+    seek: (ms: number) => Promise<void>;
+  } | null;
+  onControllerHandlersChange?: (handlers: PlayerCommandHandlers | null) => void;
+  onControllerRuntimeChange?: (runtime: PlayerRuntimeState) => void;
 };
 
 function getWebPlaybackSdkSupport() {
@@ -286,6 +302,9 @@ export default function SpotifyPlayer({
   onReady,
   onTrackChange,
   onPlaybackFocusChange,
+  controller,
+  onControllerHandlersChange,
+  onControllerRuntimeChange,
 }: PlayerProps) {
   const { data: session, status: sessionStatus } = useSession();
   const customQueue = useQueueStore();
@@ -958,6 +977,23 @@ export default function SpotifyPlayer({
   useEffect(() => {
     activeDeviceNameRef.current = activeDeviceName;
   }, [activeDeviceName]);
+
+  useEffect(() => {
+    if (!onControllerRuntimeChange) return;
+    onControllerRuntimeChange({
+      deviceId: activeDeviceId || deviceId || null,
+      isActiveDevice: Boolean(activeDeviceId || deviceId),
+      sdkReady: sdkReadyState,
+      lastError: formatPlayerError(error) || sdkLastError || null,
+    });
+  }, [
+    activeDeviceId,
+    deviceId,
+    error,
+    onControllerRuntimeChange,
+    sdkLastError,
+    sdkReadyState,
+  ]);
 
 
   useEffect(() => {
@@ -3157,6 +3193,7 @@ export default function SpotifyPlayer({
         playerCleanupRef.current = null;
       }
       onReady(null);
+      onControllerHandlersChange?.(null);
       readyRef.current = false;
       sdkReadyRef.current = false;
       autoBootAttemptedRef.current = false;
@@ -4011,12 +4048,35 @@ export default function SpotifyPlayer({
         }),
       togglePlay: async () =>
         handleTogglePlay(),
+      pause: async () =>
+        handlePausePlayback(),
+      resume: async () =>
+        handleResumePlayback(),
+      seek: async (ms: number) =>
+        handleSeek(ms),
+      transfer: async (nextDeviceId: string, play = false) => {
+        if (!nextDeviceId) return;
+        await handleDeviceChange(nextDeviceId);
+        if (play) {
+          await handleResumePlayback();
+        }
+      },
       next: async () => handleNext(),
       previous: async () => handlePrevious(),
     };
 
     playerApiRef.current = api;
     onReady(api);
+    onControllerHandlersChange?.({
+      primePlaybackGesture: api.primePlaybackGesture,
+      playQueue: api.playQueue,
+      playContext: api.playContext,
+      togglePlay: api.togglePlay,
+      pause: api.pause,
+      resume: api.resume,
+      seek: api.seek,
+      transfer: api.transfer,
+    });
 
     return () => {
       player.removeListener("ready", onSdkReady);
@@ -4036,6 +4096,7 @@ export default function SpotifyPlayer({
       setDeviceReady(false);
       playerApiRef.current = null;
       onReady(null);
+      onControllerHandlersChange?.(null);
     };
   }
 
@@ -4400,9 +4461,12 @@ export default function SpotifyPlayer({
     clearPendingDeviceIfStale();
   }
 
-  async function handleTogglePlay() {
+  async function handleSetPlaybackPaused(
+    targetPaused: boolean,
+    allowQueueActivation: boolean
+  ) {
     setPlaybackTouched(true);
-    if (isCustomQueueActive && !isCurrentTrackFromCustomQueue) {
+    if (allowQueueActivation && !targetPaused && isCustomQueueActive && !isCurrentTrackFromCustomQueue) {
       const targetQueueId =
         customQueue.currentQueueId ?? customQueue.items[0]?.queueId ?? null;
       if (targetQueueId) {
@@ -4411,14 +4475,18 @@ export default function SpotifyPlayer({
         return;
       }
     }
+
     const currentPausedSnapshot =
       playPauseOptimisticPaused ?? (playerStateRef.current?.paused ?? true);
-    const nextPaused = !currentPausedSnapshot;
-    const endpoint = nextPaused ? "pause" : "play";
+    if (currentPausedSnapshot === targetPaused) {
+      return;
+    }
+
+    const endpoint = targetPaused ? "pause" : "play";
     const token = accessTokenRef.current;
     let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (token && currentDevice && Date.now() < rateLimitRef.current.until) return;
-    setPlayPauseOptimisticState(nextPaused);
+    setPlayPauseOptimisticState(targetPaused);
     if (!token || !currentDevice) {
       if (token && endpoint === "play") {
         const preparedDevice = await waitForPlayableDevice();
@@ -4456,13 +4524,11 @@ export default function SpotifyPlayer({
         return;
       }
       const ready = await ensureActiveDevice(targetDevice, token, endpoint === "play");
-      if (!ready) {
-        if (endpoint === "play") {
-          const preparedDevice = await waitForPlayableDevice(5_000);
-          if (preparedDevice) {
-            currentDevice = preparedDevice;
-            targetDevice = preparedDevice;
-          }
+      if (!ready && endpoint === "play") {
+        const preparedDevice = await waitForPlayableDevice(5_000);
+        if (preparedDevice) {
+          currentDevice = preparedDevice;
+          targetDevice = preparedDevice;
         }
       }
       if (!targetDevice) {
@@ -4490,6 +4556,20 @@ export default function SpotifyPlayer({
       }
       schedulePlaybackVerify(220, "api_verify", operationEpoch);
     });
+  }
+
+  async function handleTogglePlay() {
+    const currentPausedSnapshot =
+      playPauseOptimisticPaused ?? (playerStateRef.current?.paused ?? true);
+    await handleSetPlaybackPaused(!currentPausedSnapshot, true);
+  }
+
+  async function handlePausePlayback() {
+    await handleSetPlaybackPaused(true, false);
+  }
+
+  async function handleResumePlayback() {
+    await handleSetPlaybackPaused(false, true);
   }
 
   async function handleNext() {
@@ -5144,7 +5224,9 @@ export default function SpotifyPlayer({
             aria-busy={playPauseOptimisticPaused !== null}
             title={playbackPausedUi ? "Play" : "Pause"}
             disabled={disallowPlayPause}
-            onClick={handleTogglePlay}
+            onClick={() => {
+              void (controller?.toggle ? controller.toggle() : handleTogglePlay());
+            }}
           >
             {playbackPausedUi ? (
               <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">

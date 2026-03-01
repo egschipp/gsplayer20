@@ -131,7 +131,7 @@ a:hover {
 }
 
 .player-shell-wrap {
-  margin-bottom: 14px;
+  margin-bottom: 8px;
   position: sticky;
   top: 88px;
   z-index: 50;
@@ -1011,7 +1011,7 @@ a:focus-visible {
 }
 
 .page.page-mymusic {
-  padding-top: 10px;
+  padding-top: 4px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1021,7 +1021,7 @@ a:focus-visible {
 }
 
 .page.page-queue {
-  padding-top: 10px;
+  padding-top: 4px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1034,8 +1034,8 @@ a:focus-visible {
   width: min(100%, var(--list-inner-max-width));
   margin-left: auto;
   margin-right: auto;
-  margin-top: 4px;
-  margin-bottom: 10px;
+  margin-top: 2px;
+  margin-bottom: 4px;
 }
 
 .player-library-dock-slot .player-library-dock {
@@ -1328,8 +1328,8 @@ a:focus-visible {
 
 @media (max-width: 900px) {
   .player-library-dock-slot {
-    margin-top: 2px;
-    margin-bottom: 8px;
+    margin-top: 1px;
+    margin-bottom: 3px;
   }
 
   .player-library-controls-row {
@@ -1572,6 +1572,9 @@ details[open] > .details-summary::after {
   overscroll-behavior: contain;
   scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  scrollbar-gutter: stable both-edges;
 }
 
 .detail-btn {
@@ -1615,9 +1618,7 @@ details[open] > .details-summary::after {
     rgba(29, 185, 84, 0.46)
   );
   color: #ffffff;
-  box-shadow:
-    0 0 0 1px rgba(30, 215, 96, 0.55) inset,
-    0 0 10px rgba(29, 185, 84, 0.45);
+  box-shadow: 0 0 0 1px rgba(30, 215, 96, 0.55) inset;
 }
 
 .queue-row-btn:disabled {

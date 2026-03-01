@@ -85,14 +85,26 @@ function normalizeSpotifyTrackId(value: string | null | undefined) {
   return embedded?.[1] ?? null;
 }
 
-function collectTrackMatchCandidates(track: TrackRow | TrackItem | null | undefined) {
+function collectTrackMatchCandidates(
+  track: TrackRow | TrackItem | null | undefined,
+  options?: { includeLinkedFrom?: boolean }
+) {
   if (!track) return [] as string[];
+  const includeLinkedFrom = options?.includeLinkedFrom === true;
   const candidates = new Set<string>();
   const candidateValues: Array<string | null | undefined> = [];
   if ("artists" in track) {
-    candidateValues.push(track.id, track.trackId, track.linkedFromTrackId);
+    // Strict matching first: track ID from row, then fallback row id.
+    candidateValues.push(track.trackId, track.id);
+    if (includeLinkedFrom) {
+      candidateValues.push(track.linkedFromTrackId);
+    }
   } else {
-    candidateValues.push(track.trackId, track.id, track.linkedFromTrackId);
+    // Strict matching first: TrackItem.id is usually canonical Spotify track id.
+    candidateValues.push(track.id, track.trackId);
+    if (includeLinkedFrom) {
+      candidateValues.push(track.linkedFromTrackId);
+    }
   }
   for (const value of candidateValues) {
     const normalized = normalizeSpotifyTrackId(value);
@@ -108,6 +120,12 @@ function isCurrentTrackMatch(
   const activeId = normalizeSpotifyTrackId(currentTrackId);
   if (!activeId || !track) return false;
   return collectTrackMatchCandidates(track).includes(activeId);
+}
+
+function resolveLinkedTrackAliasId(track: TrackRow | TrackItem | null | undefined) {
+  if (!track) return null;
+  const linkedRaw = track.linkedFromTrackId;
+  return normalizeSpotifyTrackId(linkedRaw ?? null);
 }
 
 function buildQueueTrackInput(track: TrackRow | TrackItem) {
@@ -784,18 +802,18 @@ function normalizeTrackIdentity(value: string | null | undefined) {
 
 function resolveTrackRowCanonicalId(row: TrackRow) {
   return (
-    normalizeTrackIdentity(row.linkedFromTrackId) ??
     normalizeTrackIdentity(row.trackId) ??
     normalizeTrackIdentity(row.id) ??
+    normalizeTrackIdentity(row.linkedFromTrackId) ??
     null
   );
 }
 
 function resolveTrackItemCanonicalId(item: TrackItem) {
   return (
-    normalizeTrackIdentity(item.linkedFromTrackId) ??
-    normalizeTrackIdentity(item.trackId) ??
     normalizeTrackIdentity(item.id) ??
+    normalizeTrackIdentity(item.trackId) ??
+    normalizeTrackIdentity(item.linkedFromTrackId) ??
     null
   );
 }
@@ -2188,37 +2206,85 @@ export default function PlaylistBrowser() {
   const activeTrackStatus = playbackState.status;
   const activeTrackIsStale = Boolean(playbackState.stale);
 
-  const trackRowIndexById = useMemo(() => {
+  const trackRowIndexState = useMemo(() => {
     const indexById = new Map<string, number>();
+    const aliasToPrimaryIds = new Map<string, Set<string>>();
     for (let index = 0; index < tracks.length; index += 1) {
       const track = tracks[index];
-      for (const candidate of collectTrackMatchCandidates(track)) {
+      const strictCandidates = collectTrackMatchCandidates(track);
+      for (const candidate of strictCandidates) {
         if (!indexById.has(candidate)) indexById.set(candidate, index);
       }
+      const primaryId = strictCandidates[0] ?? null;
+      const aliasId = resolveLinkedTrackAliasId(track);
+      if (aliasId && primaryId && aliasId !== primaryId) {
+        const existing = aliasToPrimaryIds.get(aliasId) ?? new Set<string>();
+        existing.add(primaryId);
+        aliasToPrimaryIds.set(aliasId, existing);
+      }
     }
-    return indexById;
+    return { indexById, aliasToPrimaryIds };
   }, [tracks]);
 
-  const trackItemIndexById = useMemo(() => {
+  const trackItemIndexState = useMemo(() => {
     const indexById = new Map<string, number>();
+    const aliasToPrimaryIds = new Map<string, Set<string>>();
     for (let index = 0; index < localFilteredTrackItems.length; index += 1) {
       const track = localFilteredTrackItems[index];
-      for (const candidate of collectTrackMatchCandidates(track)) {
+      const strictCandidates = collectTrackMatchCandidates(track);
+      for (const candidate of strictCandidates) {
         if (!indexById.has(candidate)) indexById.set(candidate, index);
       }
+      const primaryId = strictCandidates[0] ?? null;
+      const aliasId = resolveLinkedTrackAliasId(track);
+      if (aliasId && primaryId && aliasId !== primaryId) {
+        const existing = aliasToPrimaryIds.get(aliasId) ?? new Set<string>();
+        existing.add(primaryId);
+        aliasToPrimaryIds.set(aliasId, existing);
+      }
     }
-    return indexById;
+    return { indexById, aliasToPrimaryIds };
   }, [localFilteredTrackItems]);
 
+  const activeTrackIdForRows = useMemo(() => {
+    if (!activeTrackId) return null;
+    const directIndex = trackRowIndexState.indexById.get(activeTrackId);
+    if (typeof directIndex === "number" && directIndex >= 0) {
+      return activeTrackId;
+    }
+    const aliasMatches = trackRowIndexState.aliasToPrimaryIds.get(activeTrackId);
+    if (!aliasMatches || aliasMatches.size !== 1) {
+      return null;
+    }
+    return Array.from(aliasMatches)[0] ?? null;
+  }, [activeTrackId, trackRowIndexState.aliasToPrimaryIds, trackRowIndexState.indexById]);
+
+  const activeTrackIdForItems = useMemo(() => {
+    if (!activeTrackId) return null;
+    const directIndex = trackItemIndexState.indexById.get(activeTrackId);
+    if (typeof directIndex === "number" && directIndex >= 0) {
+      return activeTrackId;
+    }
+    const aliasMatches = trackItemIndexState.aliasToPrimaryIds.get(activeTrackId);
+    if (!aliasMatches || aliasMatches.size !== 1) {
+      return null;
+    }
+    return Array.from(aliasMatches)[0] ?? null;
+  }, [
+    activeTrackId,
+    trackItemIndexState.aliasToPrimaryIds,
+    trackItemIndexState.indexById,
+  ]);
+
   const activeTrackIndexInRows = useMemo(() => {
-    if (!activeTrackId) return -1;
-    return trackRowIndexById.get(activeTrackId) ?? -1;
-  }, [trackRowIndexById, activeTrackId]);
+    if (!activeTrackIdForRows) return -1;
+    return trackRowIndexState.indexById.get(activeTrackIdForRows) ?? -1;
+  }, [trackRowIndexState.indexById, activeTrackIdForRows]);
 
   const activeTrackIndexInItems = useMemo(() => {
-    if (!activeTrackId) return -1;
-    return trackItemIndexById.get(activeTrackId) ?? -1;
-  }, [trackItemIndexById, activeTrackId]);
+    if (!activeTrackIdForItems) return -1;
+    return trackItemIndexState.indexById.get(activeTrackIdForItems) ?? -1;
+  }, [trackItemIndexState.indexById, activeTrackIdForItems]);
 
   const activeTrackMissingInRows =
     (mode === "playlists" || mode === "artists") &&
@@ -4459,7 +4525,7 @@ export default function PlaylistBrowser() {
                 isTrackSelected,
                 toggleTrackSelection,
                 resolveTracksForPlaylistApply,
-                activeTrackId,
+                activeTrackId: activeTrackIdForRows,
                 activeTrackStatus,
                 activeTrackIsStale,
                 openDetailFromRow,
@@ -4545,7 +4611,7 @@ export default function PlaylistBrowser() {
                 isTrackSelected,
                 toggleTrackSelection,
                 resolveTracksForPlaylistApply,
-                activeTrackId,
+                activeTrackId: activeTrackIdForItems,
                 activeTrackStatus,
                 activeTrackIsStale,
                 openDetailFromItem,

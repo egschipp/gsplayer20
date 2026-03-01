@@ -17,10 +17,6 @@ function formatDuration(ms: number | null) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-function clampNumber(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
 function readSelectedPlaylistId() {
   if (typeof window === "undefined") return null;
   try {
@@ -157,6 +153,18 @@ export default function QueuePageClient() {
     if (!activeQueueId) return -1;
     return queue.items.findIndex((item) => item.queueId === activeQueueId);
   }, [activeQueueId, queue.items]);
+  const queueDisplayItems = useMemo(() => {
+    if (!queue.items.length || !activeQueueId) return queue.items;
+    const activeIndex = queue.items.findIndex((item) => item.queueId === activeQueueId);
+    if (activeIndex <= 0) return queue.items;
+    const activeItem = queue.items[activeIndex];
+    if (!activeItem) return queue.items;
+    return [
+      activeItem,
+      ...queue.items.slice(0, activeIndex),
+      ...queue.items.slice(activeIndex + 1),
+    ];
+  }, [activeQueueId, queue.items]);
 
   const nextQueueId =
     currentIndex >= 0 && currentIndex + 1 < queue.items.length
@@ -184,42 +192,17 @@ export default function QueuePageClient() {
 
   useEffect(() => {
     if (!activeQueueId) return;
-    // Keep queue position stable on load/refresh; only auto-focus when user explicitly starts
-    // playback from a queue row.
-    if (playback.startingQueueId !== activeQueueId) return;
-
     const container = queueRowsRef.current;
     if (!container) return;
-    const row = container.querySelector<HTMLElement>(`[data-queue-id="${activeQueueId}"]`);
-    if (!row) return;
+    if (container.scrollTop <= 1) return;
 
-    const top = row.offsetTop;
-    const bottom = top + row.offsetHeight;
-    const rowMid = top + row.offsetHeight / 2;
-    const viewTop = container.scrollTop;
-    const viewportHeight = container.clientHeight;
-    const viewBottom = viewTop + viewportHeight;
-
-    // Keep the active row in a comfortable center band, instead of pinning near the top.
-    const focusBandTop = viewTop + viewportHeight * 0.3;
-    const focusBandBottom = viewTop + viewportHeight * 0.7;
-    const rowFullyVisible = top >= viewTop + 6 && bottom <= viewBottom - 6;
-    const rowInsideFocusBand = rowMid >= focusBandTop && rowMid <= focusBandBottom;
-    if (rowFullyVisible && rowInsideFocusBand) {
-      return;
-    }
-
-    const targetVisibleRatio = 0.5;
-    const desiredTop = rowMid - viewportHeight * targetVisibleRatio;
-    const maxScrollTop = Math.max(0, container.scrollHeight - viewportHeight);
-    const targetTop = clampNumber(desiredTop, 0, maxScrollTop);
-
-    animateScrollTop(container, targetTop, {
-      minDurationMs: 300,
-      maxDurationMs: 760,
-      pxPerMs: 1.7,
+    // Active row is rendered first; keep it directly below the header.
+    animateScrollTop(container, 0, {
+      minDurationMs: 180,
+      maxDurationMs: 360,
+      pxPerMs: 2.8,
     });
-  }, [activeQueueId, playback.startingQueueId]);
+  }, [activeQueueId]);
 
   function handleDragStart(queueId: string, event: DragEvent<HTMLLIElement>) {
     setDraggingQueueId(queueId);
@@ -306,7 +289,7 @@ export default function QueuePageClient() {
             aria-label="Georgies Queue tracks"
             ref={queueRowsRef}
           >
-            {queue.items.map((item) => {
+            {queueDisplayItems.map((item) => {
               const isStarting = playback.startingQueueId === item.queueId;
               const isCurrent =
                 item.queueId === activeQueueId &&

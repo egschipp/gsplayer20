@@ -67,11 +67,11 @@ export async function GET(req: Request) {
   if (rl) return rl;
 
   const { searchParams } = new URL(req.url);
-  const limitValue = Number(searchParams.get("limit") ?? "100");
+  const limitValue = Number(searchParams.get("limit") ?? "50");
   const limit =
     Number.isFinite(limitValue) && limitValue > 0
-      ? Math.min(Math.floor(limitValue), 100)
-      : 100;
+      ? Math.min(Math.floor(limitValue), 50)
+      : 50;
   const cursor = searchParams.get("cursor");
   const live = searchParams.get("live") === "1";
 

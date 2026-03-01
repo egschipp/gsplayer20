@@ -16,7 +16,9 @@ import {
 import {
   DEFAULT_PLAYBACK_FOCUS,
   type PlaybackFocus,
+  type PlaybackFocusStatus,
   type PlaybackFocusSource,
+  resolvePlaybackFocusStatus,
 } from "./player/playbackFocus";
 import { usePlaybackCommandQueue } from "./player/usePlaybackCommandQueue";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
@@ -565,17 +567,32 @@ export default function SpotifyPlayer({
       const normalized: PlaybackFocus = {
         trackId: next.trackId ?? null,
         isPlaying: typeof next.isPlaying === "boolean" ? next.isPlaying : null,
+        status: resolvePlaybackFocusStatus(
+          next.status,
+          typeof next.isPlaying === "boolean" ? next.isPlaying : null,
+          Boolean(next.trackId)
+        ),
         stale: Boolean(next.stale),
         source: next.source,
         confidence: Math.max(0, Math.min(1, Number(next.confidence ?? 0))),
+        positionMs: Number.isFinite(next.positionMs) ? Math.max(0, Math.floor(next.positionMs)) : 0,
+        durationMs: Number.isFinite(next.durationMs) ? Math.max(0, Math.floor(next.durationMs)) : 0,
+        errorMessage:
+          typeof next.errorMessage === "string" && next.errorMessage.trim()
+            ? next.errorMessage.trim()
+            : null,
         updatedAt: Number.isFinite(next.updatedAt) ? next.updatedAt : Date.now(),
       };
       const previous = playbackFocusRef.current;
       const changed =
         previous.trackId !== normalized.trackId ||
         previous.isPlaying !== normalized.isPlaying ||
+        previous.status !== normalized.status ||
         previous.stale !== normalized.stale ||
-        previous.source !== normalized.source;
+        previous.source !== normalized.source ||
+        previous.positionMs !== normalized.positionMs ||
+        previous.durationMs !== normalized.durationMs ||
+        previous.errorMessage !== normalized.errorMessage;
       if (!changed) return;
       playbackFocusRef.current = normalized;
       setPlaybackFocusState(normalized);
@@ -591,9 +608,13 @@ export default function SpotifyPlayer({
       trackId: string | null,
       options?: {
         isPlaying?: boolean | null;
+        status?: PlaybackFocusStatus;
         stale?: boolean;
         source?: PlaybackSource | PlaybackFocusSource;
         confidence?: number;
+        positionMs?: number;
+        durationMs?: number;
+        errorMessage?: string | null;
         updatedAt?: number;
       }
     ) => {
@@ -607,6 +628,13 @@ export default function SpotifyPlayer({
           typeof options?.isPlaying === "boolean"
             ? options.isPlaying
             : playbackFocusRef.current.isPlaying,
+        status: resolvePlaybackFocusStatus(
+          options?.status,
+          typeof options?.isPlaying === "boolean"
+            ? options.isPlaying
+            : playbackFocusRef.current.isPlaying,
+          Boolean(nextTrackId)
+        ),
         stale: Boolean(options?.stale),
         source: options?.source ?? "system",
         confidence:
@@ -615,6 +643,18 @@ export default function SpotifyPlayer({
             : nextTrackId
             ? 1
             : 0,
+        positionMs:
+          typeof options?.positionMs === "number"
+            ? options.positionMs
+            : playbackFocusRef.current.positionMs,
+        durationMs:
+          typeof options?.durationMs === "number"
+            ? options.durationMs
+            : playbackFocusRef.current.durationMs,
+        errorMessage:
+          options?.errorMessage === undefined
+            ? playbackFocusRef.current.errorMessage
+            : options.errorMessage,
         updatedAt: options?.updatedAt ?? Date.now(),
       });
     },
@@ -802,9 +842,14 @@ export default function SpotifyPlayer({
       setPlayerState(null);
       setPlaybackTrackState(null, {
         isPlaying,
+        status:
+          typeof isPlaying === "boolean" ? (isPlaying ? "playing" : "paused") : "ended",
         stale: false,
         source,
         confidence: 0,
+        positionMs: 0,
+        durationMs: 0,
+        errorMessage: null,
         updatedAt: Date.now(),
       });
       setDurationMs(0);
@@ -1931,9 +1976,18 @@ export default function SpotifyPlayer({
               typeof data?.is_playing === "boolean"
                 ? data.is_playing
                 : previousFocus.isPlaying,
+            status:
+              typeof data?.is_playing === "boolean"
+                ? data.is_playing
+                  ? "playing"
+                  : "paused"
+                : previousFocus.status,
             stale: true,
             source,
             confidence: 0.45,
+            positionMs: lastKnownPositionRef.current,
+            durationMs: durationMsRef.current,
+            errorMessage: null,
             updatedAt: now,
           });
           emitPlaybackMetric("focus_stale_hold", 1, { source });
@@ -2016,9 +2070,13 @@ export default function SpotifyPlayer({
       setDurationMs(item.duration_ms ?? 0);
       setPlaybackTrackState(trackId, {
         isPlaying,
+        status: isPlaying ? "playing" : "paused",
         stale: false,
         source,
         confidence: 1,
+        positionMs: reconciledPosition,
+        durationMs: item.duration_ms ?? 0,
+        errorMessage: null,
         updatedAt: Date.now(),
       });
       syncQueuePositionFromTrack(trackId);
@@ -2642,9 +2700,13 @@ export default function SpotifyPlayer({
       setDurationMs(nextDuration);
       setPlaybackTrackState(trackId, {
         isPlaying: !state.paused,
+        status: state.paused ? "paused" : "playing",
         stale: false,
         source: "sdk",
         confidence: 1,
+        positionMs: reconciledPosition,
+        durationMs: nextDuration,
+        errorMessage: null,
         updatedAt: Date.now(),
       });
       syncQueuePositionFromTrack(trackId);
@@ -3203,9 +3265,13 @@ export default function SpotifyPlayer({
       playerRef.current = null;
       setPlaybackTrackState(null, {
         isPlaying: false,
+        status: "idle",
         stale: false,
         source: "system",
         confidence: 0,
+        positionMs: 0,
+        durationMs: 0,
+        errorMessage: null,
         updatedAt: Date.now(),
       });
       setCurrentTrackLiked(null);
@@ -3396,9 +3462,13 @@ export default function SpotifyPlayer({
               const bootstrapTrackId = resolvePlaybackTrackId(item);
               setPlaybackTrackState(bootstrapTrackId, {
                 isPlaying: Boolean(data?.is_playing),
+                status: data?.is_playing ? "playing" : "paused",
                 stale: false,
                 source: "api_bootstrap",
                 confidence: 0.9,
+                positionMs: reconciledBootstrapPosition,
+                durationMs: item.duration_ms ?? 0,
+                errorMessage: null,
                 updatedAt: Date.now(),
               });
             }
@@ -3511,6 +3581,17 @@ export default function SpotifyPlayer({
       setSdkLastError(message);
       setSdkLifecycle("error");
       setError(message);
+      setPlaybackTrackState(currentTrackIdRef.current || lastTrackIdRef.current, {
+        isPlaying: playbackFocusRef.current.isPlaying,
+        status: "error",
+        stale: Boolean(playbackFocusRef.current.trackId),
+        source: "system",
+        confidence: 0.65,
+        positionMs: lastKnownPositionRef.current,
+        durationMs: durationMsRef.current,
+        errorMessage: message,
+        updatedAt: Date.now(),
+      });
     };
     const onAuthError = async ({ message }: { message: string }) => {
       setSdkLastError(message);
@@ -3519,6 +3600,17 @@ export default function SpotifyPlayer({
         setSdkReadyState(false);
         setSdkLifecycle("error");
         setError("Spotify-authenticatie verlopen. Koppel Spotify opnieuw.");
+        setPlaybackTrackState(currentTrackIdRef.current || lastTrackIdRef.current, {
+          isPlaying: playbackFocusRef.current.isPlaying,
+          status: "error",
+          stale: Boolean(playbackFocusRef.current.trackId),
+          source: "system",
+          confidence: 0.65,
+          positionMs: lastKnownPositionRef.current,
+          durationMs: durationMsRef.current,
+          errorMessage: "Spotify-authenticatie verlopen. Koppel Spotify opnieuw.",
+          updatedAt: Date.now(),
+        });
         return;
       }
       try {
@@ -3527,6 +3619,17 @@ export default function SpotifyPlayer({
           setSdkReadyState(false);
           setSdkLifecycle("error");
           setError("Lokale webplayer kon niet opnieuw verbinden.");
+          setPlaybackTrackState(currentTrackIdRef.current || lastTrackIdRef.current, {
+            isPlaying: playbackFocusRef.current.isPlaying,
+            status: "error",
+            stale: Boolean(playbackFocusRef.current.trackId),
+            source: "system",
+            confidence: 0.65,
+            positionMs: lastKnownPositionRef.current,
+            durationMs: durationMsRef.current,
+            errorMessage: "Lokale webplayer kon niet opnieuw verbinden.",
+            updatedAt: Date.now(),
+          });
           return;
         }
         setSdkReadyState(true);
@@ -3537,6 +3640,17 @@ export default function SpotifyPlayer({
         setSdkReadyState(false);
         setSdkLifecycle("error");
         setError("Lokale webplayer kon niet opnieuw verbinden.");
+        setPlaybackTrackState(currentTrackIdRef.current || lastTrackIdRef.current, {
+          isPlaying: playbackFocusRef.current.isPlaying,
+          status: "error",
+          stale: Boolean(playbackFocusRef.current.trackId),
+          source: "system",
+          confidence: 0.65,
+          positionMs: lastKnownPositionRef.current,
+          durationMs: durationMsRef.current,
+          errorMessage: "Lokale webplayer kon niet opnieuw verbinden.",
+          updatedAt: Date.now(),
+        });
       }
     };
     const onAccountError = ({ message }: { message: string }) => {
@@ -3544,14 +3658,47 @@ export default function SpotifyPlayer({
       setSdkLastError(message || "Spotify Premium is vereist voor Web Playback.");
       setSdkLifecycle("error");
       setError(message || "Spotify Premium is vereist voor Web Playback.");
+      setPlaybackTrackState(currentTrackIdRef.current || lastTrackIdRef.current, {
+        isPlaying: playbackFocusRef.current.isPlaying,
+        status: "error",
+        stale: Boolean(playbackFocusRef.current.trackId),
+        source: "system",
+        confidence: 0.65,
+        positionMs: lastKnownPositionRef.current,
+        durationMs: durationMsRef.current,
+        errorMessage: message || "Spotify Premium is vereist voor Web Playback.",
+        updatedAt: Date.now(),
+      });
     };
     const onPlaybackError = ({ message }: { message: string }) => {
       setSdkLastError(message);
       setError(message);
       setSdkLifecycle("error");
+      setPlaybackTrackState(currentTrackIdRef.current || lastTrackIdRef.current, {
+        isPlaying: playbackFocusRef.current.isPlaying,
+        status: "error",
+        stale: Boolean(playbackFocusRef.current.trackId),
+        source: "system",
+        confidence: 0.65,
+        positionMs: lastKnownPositionRef.current,
+        durationMs: durationMsRef.current,
+        errorMessage: message,
+        updatedAt: Date.now(),
+      });
     };
     const onAutoplayFailed = () => {
       setError("Autoplay is geblokkeerd door de browser. Klik op Play.");
+      setPlaybackTrackState(currentTrackIdRef.current || lastTrackIdRef.current, {
+        isPlaying: false,
+        status: "paused",
+        stale: Boolean(playbackFocusRef.current.trackId),
+        source: "system",
+        confidence: 0.6,
+        positionMs: lastKnownPositionRef.current,
+        durationMs: durationMsRef.current,
+        errorMessage: "Autoplay is geblokkeerd door de browser. Klik op Play.",
+        updatedAt: Date.now(),
+      });
     };
 
     player.addListener("ready", onSdkReady);

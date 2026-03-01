@@ -27,6 +27,10 @@ import type {
   PlayerPlaybackStatus,
   PlayerRuntimeState,
 } from "@/lib/playback/playerControllerTypes";
+import {
+  derivePlaybackSnapshot,
+  type PlaybackSnapshot,
+} from "@/lib/playback/playbackState";
 
 type PlayerController = {
   playbackStatus: PlayerPlaybackStatus;
@@ -58,6 +62,7 @@ type PlayerContextValue = {
   api: PlayerApi | null;
   currentTrackId: string | null;
   playbackFocus: PlaybackFocus;
+  playbackState: PlaybackSnapshot;
   controller: PlayerController;
 };
 
@@ -90,6 +95,16 @@ const PlayerContext = createContext<PlayerContextValue>({
   api: null,
   currentTrackId: null,
   playbackFocus: DEFAULT_PLAYBACK_FOCUS,
+  playbackState: {
+    currentTrackId: null,
+    status: "idle",
+    stale: false,
+    source: "system",
+    updatedAt: 0,
+    positionMs: 0,
+    durationMs: 0,
+    errorMessage: null,
+  },
   controller: NOOP_CONTROLLER,
 });
 
@@ -116,6 +131,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [lastCommandId, setLastCommandId] = useState<string | null>(null);
   const [commandDepth, setCommandDepth] = useState(0);
   const [handlersReady, setHandlersReady] = useState(false);
+  const playbackFocusLatchRef = useRef<PlaybackFocus>(DEFAULT_PLAYBACK_FOCUS);
   const handlersRef = useRef<PlayerCommandHandlers | null>(null);
   const commandQueueRef = useRef(new PlaybackCommandQueue());
   const playerShellRef = useRef<HTMLDivElement | null>(null);
@@ -362,9 +378,28 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     ]
   );
 
+  const playbackState = useMemo(() => {
+    const { snapshot, nextStableFocus } = derivePlaybackSnapshot({
+      focus: playbackFocus,
+      lastStableFocus: playbackFocusLatchRef.current,
+      controllerStatus: controllerPlaybackStatus,
+      pendingCommand,
+      controllerError,
+      runtimeError: controllerRuntime.lastError,
+    });
+    playbackFocusLatchRef.current = nextStableFocus;
+    return snapshot;
+  }, [
+    controllerError,
+    controllerPlaybackStatus,
+    controllerRuntime.lastError,
+    pendingCommand,
+    playbackFocus,
+  ]);
+
   const value = useMemo(
-    () => ({ api, currentTrackId, playbackFocus, controller }),
-    [api, currentTrackId, playbackFocus, controller]
+    () => ({ api, currentTrackId, playbackFocus, playbackState, controller }),
+    [api, currentTrackId, playbackFocus, playbackState, controller]
   );
 
   useEffect(() => {

@@ -24,6 +24,7 @@ import { usePlaybackCommandQueue } from "./player/usePlaybackCommandQueue";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
 import { useStableMenu } from "@/lib/hooks/useStableMenu";
+import InlineStatusBanner from "./ui/InlineStatusBanner";
 import type {
   PlayerCommandHandlers,
   PlayerRuntimeState,
@@ -95,6 +96,17 @@ type DeviceSwitchContext = {
   progressMs: number | null;
   durationMs: number | null;
   sampledAt: number;
+};
+
+type QueueListItem = {
+  id: string;
+  uri: string | null;
+  name: string;
+  artists: string;
+  coverUrl: string | null;
+  durationMs: number | null;
+  explicit: boolean;
+  isCurrent: boolean;
 };
 
 type DeferredPlayIntent =
@@ -267,6 +279,30 @@ function resolvePlaybackTrackIds(item: any) {
   return out;
 }
 
+function mapQueueTrack(track: any, index = 0): QueueListItem {
+  const normalizedId = resolvePlaybackTrackId(track);
+  const uri = typeof track?.uri === "string" ? track.uri : null;
+  const id =
+    normalizedId ??
+    normalizePlaybackTrackId(uri) ??
+    `${uri ?? "queue-track"}:${index}`;
+  return {
+    id,
+    uri,
+    name: track?.name ?? "Onbekend nummer",
+    artists: Array.isArray(track?.artists)
+      ? track.artists.map((a: any) => a?.name).filter(Boolean).join(", ")
+      : "",
+    coverUrl: track?.album?.images?.[0]?.url ?? null,
+    durationMs:
+      typeof track?.duration_ms === "number"
+        ? Math.max(0, Math.floor(track.duration_ms))
+        : null,
+    explicit: Boolean(track?.explicit),
+    isCurrent: false,
+  };
+}
+
 function extractProxyPayload(body: RequestInit["body"]) {
   if (!body) return undefined;
   if (typeof body === "string") {
@@ -363,6 +399,7 @@ export default function SpotifyPlayer({
   const [trackPlaylistLoading, setTrackPlaylistLoading] = useState(false);
   const [trackPlaylistSaving, setTrackPlaylistSaving] = useState(false);
   const [trackPlaylistActionKey, setTrackPlaylistActionKey] = useState<string | null>(null);
+  const [trackPlaylistFilterQuery, setTrackPlaylistFilterQuery] = useState("");
   const [shuffleOn, setShuffleOn] = useState(false);
   const [shufflePending, setShufflePending] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
@@ -373,17 +410,7 @@ export default function SpotifyPlayer({
   const [muted, setMuted] = useState(false);
   const [repeatMode, setRepeatMode] = useState<"off" | "context" | "track">("off");
   const [queueOpen, setQueueOpen] = useState(false);
-  const [queueItems, setQueueItems] = useState<
-    {
-      id: string;
-      uri: string | null;
-      name: string;
-      artists: string;
-      coverUrl: string | null;
-      durationMs: number | null;
-      explicit: boolean;
-    }[]
-  >([]);
+  const [queueItems, setQueueItems] = useState<QueueListItem[]>([]);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
   const [devices, setDevices] = useState<
@@ -1016,6 +1043,53 @@ export default function SpotifyPlayer({
     if (!currentTrackIdState) return false;
     return customQueue.items.some((item) => item.trackId === currentTrackIdState);
   }, [currentTrackIdState, customQueue.items]);
+  const queueDisplayItems = useMemo(() => {
+    if (!queueItems.length) return [];
+    const activeId = normalizePlaybackTrackId(currentTrackIdState);
+    const withActive = queueItems.map((item, index) => {
+      const itemId = normalizePlaybackTrackId(item.id);
+      const isCurrent =
+        item.isCurrent || (Boolean(activeId) && Boolean(itemId) && itemId === activeId);
+      return {
+        ...item,
+        isCurrent,
+        _index: index,
+      };
+    });
+    withActive.sort((a, b) => {
+      if (a.isCurrent && !b.isCurrent) return -1;
+      if (!a.isCurrent && b.isCurrent) return 1;
+      return a._index - b._index;
+    });
+    return withActive;
+  }, [currentTrackIdState, queueItems]);
+  const trackPlaylistPendingCount = useMemo(() => {
+    let count = 0;
+    for (const option of trackPlaylistOptions) {
+      const selected = trackPlaylistSelectedIds.has(option.id);
+      const initial = trackPlaylistInitialIds.has(option.id);
+      if (selected !== initial) count += 1;
+    }
+    return count;
+  }, [trackPlaylistInitialIds, trackPlaylistOptions, trackPlaylistSelectedIds]);
+  const trackPlaylistVisibleOptions = useMemo(() => {
+    const query = trackPlaylistFilterQuery.trim().toLowerCase();
+    const filtered = query
+      ? trackPlaylistOptions.filter((option) =>
+          option.name.toLowerCase().includes(query)
+        )
+      : trackPlaylistOptions;
+    return [...filtered].sort((a, b) => {
+      const aChecked = trackPlaylistSelectedIds.has(a.id) ? 1 : 0;
+      const bChecked = trackPlaylistSelectedIds.has(b.id) ? 1 : 0;
+      if (aChecked !== bChecked) return bChecked - aChecked;
+      return a.name.localeCompare(b.name, "nl", {
+        sensitivity: "base",
+        ignorePunctuation: true,
+        numeric: true,
+      });
+    });
+  }, [trackPlaylistFilterQuery, trackPlaylistOptions, trackPlaylistSelectedIds]);
   const selectableDevicesCount = useMemo(
     () => devices.filter((device) => device.selectable).length,
     [devices]
@@ -1920,22 +1994,34 @@ export default function SpotifyPlayer({
         return;
       }
       const data = await readJsonSafely(res);
+      const currentTrack = data?.currently_playing;
       const nextTracks = Array.isArray(data?.queue) ? data.queue : [];
-      const mapped = nextTracks.map((track: any) => ({
-        id: track?.id ?? track?.uri ?? crypto.randomUUID(),
-        uri: typeof track?.uri === "string" ? track.uri : null,
-        name: track?.name ?? "Onbekend nummer",
-        artists: Array.isArray(track?.artists)
-          ? track.artists.map((a: any) => a?.name).filter(Boolean).join(", ")
-          : "",
-        coverUrl: track?.album?.images?.[0]?.url ?? null,
-        durationMs:
-          typeof track?.duration_ms === "number"
-            ? Math.max(0, Math.floor(track.duration_ms))
-            : null,
-        explicit: Boolean(track?.explicit),
-      }));
-      setQueueItems(mapped);
+      const mappedQueue = nextTracks.map((track: any, index: number) =>
+        mapQueueTrack(track, index)
+      );
+      const currentItem = currentTrack ? mapQueueTrack(currentTrack, -1) : null;
+      const merged: QueueListItem[] = [];
+      const seen = new Set<string>();
+      if (currentItem) {
+        const normalizedCurrentId = normalizePlaybackTrackId(currentItem.id);
+        merged.push({
+          ...currentItem,
+          id: normalizedCurrentId ?? currentItem.id,
+          isCurrent: true,
+        });
+        seen.add(normalizedCurrentId ?? currentItem.id);
+      }
+      for (const item of mappedQueue) {
+        const normalizedId = normalizePlaybackTrackId(item.id) ?? item.id;
+        if (seen.has(normalizedId)) continue;
+        seen.add(normalizedId);
+        merged.push({
+          ...item,
+          id: normalizedId,
+          isCurrent: false,
+        });
+      }
+      setQueueItems(merged);
     } catch {
       setQueueError("Queue ophalen lukt nu niet.");
     } finally {
@@ -5256,6 +5342,13 @@ export default function SpotifyPlayer({
       (playbackPausedUi
         ? Boolean(playbackDisallows.resuming)
         : Boolean(playbackDisallows.pausing)));
+  const needsPlayerBootstrap =
+    playbackTouched &&
+    playbackBootState !== "playing" &&
+    (playbackBootState === "booting" ||
+      playbackBootState === "sdk_ready" ||
+      playbackBootState === "device_ready" ||
+      playbackBootState === "playable");
 
   return (
     <div className="player-card">
@@ -5315,6 +5408,7 @@ export default function SpotifyPlayer({
                   setTrackPlaylistMenuOpen((prev) => {
                     const next = !prev;
                     if (next && currentTrackIdState && accessToken) {
+                      setTrackPlaylistFilterQuery("");
                       void ensureTrackPlaylistOptionsLoaded().catch(() => {
                         setError("Playlist-doelen laden lukt nu niet.");
                       });
@@ -5335,12 +5429,67 @@ export default function SpotifyPlayer({
                   role="menu"
                   style={{ right: 0, left: "auto", width: "min(560px, calc(100vw - 32px))" }}
                 >
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: 8,
+                      padding: "6px 8px 8px",
+                      borderBottom: "1px solid rgba(255,255,255,0.08)",
+                    }}
+                  >
+                    <input
+                      type="text"
+                      className="combo-input"
+                      placeholder="Zoek playlists…"
+                      value={trackPlaylistFilterQuery}
+                      onChange={(event) => setTrackPlaylistFilterQuery(event.currentTarget.value)}
+                    />
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => {
+                          setTrackPlaylistSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            for (const option of trackPlaylistVisibleOptions) {
+                              next.add(option.id);
+                            }
+                            return next;
+                          });
+                        }}
+                      >
+                        Selecteer zichtbare
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => {
+                          setTrackPlaylistSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            for (const option of trackPlaylistVisibleOptions) {
+                              next.delete(option.id);
+                            }
+                            return next;
+                          });
+                        }}
+                      >
+                        Deselecteer zichtbare
+                      </button>
+                    </div>
+                    <div className="text-subtle" style={{ fontSize: "0.74rem" }}>
+                      {trackPlaylistPendingCount > 0
+                        ? `${trackPlaylistPendingCount} wijziging(en) worden toegepast bij sluiten.`
+                        : "Geen openstaande wijzigingen."}
+                    </div>
+                  </div>
                   {trackPlaylistLoading ? (
                     <div className="combo-empty">Playlists laden...</div>
                   ) : trackPlaylistOptions.length === 0 ? (
                     <div className="combo-empty">Geen playlist-doelen.</div>
+                  ) : trackPlaylistVisibleOptions.length === 0 ? (
+                    <div className="combo-empty">Geen playlists gevonden voor deze zoekterm.</div>
                   ) : (
-                    trackPlaylistOptions.map((option) => {
+                    trackPlaylistVisibleOptions.map((option) => {
                       const opKey = `${currentTrackIdState}:${option.id}`;
                       const busy =
                         trackPlaylistSaving || trackPlaylistActionKey === opKey;
@@ -5438,6 +5587,19 @@ export default function SpotifyPlayer({
         ) : null}
         {connectConflict ? (
           <div className="text-subtle">{connectConflict}</div>
+        ) : null}
+        {needsPlayerBootstrap ? (
+          <InlineStatusBanner
+            tone="info"
+            title="Playback gereedmaken"
+            message={`Status: ${formatPlaybackBootStateLabel(playbackBootState)}.`}
+            action={{
+              label: "Opnieuw initialiseren",
+              onClick: () => {
+                void kickstartLocalPlayer();
+              },
+            }}
+          />
         ) : null}
         </div>
         <div className="player-controls">
@@ -5892,17 +6054,20 @@ export default function SpotifyPlayer({
       </div>
       {queueOpen ? (
         <div className="player-queue">
-          <div className="player-queue-title">Up Next ({queueItems.length})</div>
+          <div className="player-queue-title">Up Next ({queueDisplayItems.length})</div>
           {queueLoading ? (
             <div className="text-subtle">Queue laden...</div>
           ) : queueError ? (
             <div className="text-subtle">{queueError}</div>
-          ) : queueItems.length === 0 ? (
+          ) : queueDisplayItems.length === 0 ? (
             <div className="text-subtle">Geen volgende nummers.</div>
           ) : (
             <div className="player-queue-list">
-              {queueItems.slice(0, 10).map((track) => (
-                <div key={track.id} className="player-queue-item">
+              {queueDisplayItems.slice(0, 10).map((track) => (
+                <div
+                  key={`${track.id}:${track.uri ?? "nouri"}`}
+                  className={`player-queue-item${track.isCurrent ? " active" : ""}`}
+                >
                   {track.coverUrl ? (
                     <Image
                       src={track.coverUrl}
@@ -5915,7 +6080,12 @@ export default function SpotifyPlayer({
                     <div className="player-queue-cover" />
                   )}
                   <div>
-                    <div className="player-queue-name">{track.name}</div>
+                    <div className="player-queue-name">
+                      {track.name}
+                      {track.isCurrent ? (
+                        <span className="player-queue-nowplaying">Nu spelend</span>
+                      ) : null}
+                    </div>
                     <div className="text-subtle">{track.artists}</div>
                     <div className="text-subtle">
                       {track.explicit ? "Explicit" : "Clean"} •{" "}

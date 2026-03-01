@@ -81,8 +81,7 @@ function normalizeSpotifyTrackId(value: string | null | undefined) {
       return null;
     }
   }
-  const embedded = raw.match(/([0-9A-Za-z]{22})/);
-  return embedded?.[1] ?? null;
+  return null;
 }
 
 function collectTrackMatchCandidates(
@@ -2288,8 +2287,10 @@ export default function PlaylistBrowser() {
 
   const activeTrackMissingInRows =
     (mode === "playlists" || mode === "artists") &&
-    Boolean(activeTrackId) &&
+    Boolean(activeTrackId || activeTrackIdForRows) &&
     activeTrackIndexInRows < 0;
+
+  const hydrationTargetTrackId = activeTrackIdForRows ?? activeTrackId;
 
   useEffect(() => {
     if (activeTrackIndexInRows < 0) return;
@@ -3305,7 +3306,7 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     if (mode !== "playlists" && mode !== "artists") return;
-    if (!activeTrackId) {
+    if (!hydrationTargetTrackId) {
       if (activeTrackHydrating) setActiveTrackHydrating(false);
       if (activeTrackHydrationError) setActiveTrackHydrationError(null);
       if (activeTrackHydrationRetryAfterMs !== null) setActiveTrackHydrationRetryAfterMs(null);
@@ -3321,7 +3322,7 @@ export default function PlaylistBrowser() {
     if (!nextCursorRef.current) return;
     if (
       activeTrackHydrationInFlightRef.current &&
-      activeTrackHydrationTargetRef.current === activeTrackId
+      activeTrackHydrationTargetRef.current === hydrationTargetTrackId
     ) {
       return;
     }
@@ -3329,7 +3330,7 @@ export default function PlaylistBrowser() {
     let cancelled = false;
     const hydrationStartedAt = Date.now();
     activeTrackHydrationInFlightRef.current = true;
-    activeTrackHydrationTargetRef.current = activeTrackId;
+    activeTrackHydrationTargetRef.current = hydrationTargetTrackId;
     setActiveTrackHydrating(true);
     setActiveTrackHydrationError(null);
     setActiveTrackHydrationRetryAfterMs(null);
@@ -3353,7 +3354,7 @@ export default function PlaylistBrowser() {
             `/api/spotify/playlists/${selectedPlaylist.id}/items`,
             {
               limit: "1",
-              trackId: activeTrackId,
+              trackId: hydrationTargetTrackId,
             }
           );
           const hintRes = await fetch(hintUrl, { cache: "no-store" });
@@ -3376,7 +3377,7 @@ export default function PlaylistBrowser() {
       while (!cancelled && attempts < maxAttempts) {
         const currentRows = tracksRef.current;
         const alreadyVisible = currentRows.some((track) =>
-          isCurrentTrackMatch(track, activeTrackId)
+          isCurrentTrackMatch(track, hydrationTargetTrackId)
         );
         if (alreadyVisible) break;
 
@@ -3410,7 +3411,7 @@ export default function PlaylistBrowser() {
 
       if (cancelled) return;
       const resolved = tracksRef.current.some((track) =>
-        isCurrentTrackMatch(track, activeTrackId)
+        isCurrentTrackMatch(track, hydrationTargetTrackId)
       );
       if (resolved) {
         activeTrackHydrationMetricsRef.current.resolved += 1;
@@ -3439,14 +3440,14 @@ export default function PlaylistBrowser() {
 
     return () => {
       cancelled = true;
-      if (activeTrackHydrationTargetRef.current === activeTrackId) {
+      if (activeTrackHydrationTargetRef.current === hydrationTargetTrackId) {
         activeTrackHydrationInFlightRef.current = false;
         activeTrackHydrationTargetRef.current = null;
       }
       setActiveTrackHydrating(false);
     };
   }, [
-    activeTrackId,
+    hydrationTargetTrackId,
     activeTrackHydrating,
     activeTrackIndexInRows,
     loadMore,

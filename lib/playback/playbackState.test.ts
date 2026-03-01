@@ -113,7 +113,7 @@ test("derivePlaybackSnapshot marks paused state as loading while play command is
   assert.equal(snapshot.status, "loading");
 });
 
-test("derivePlaybackSnapshot forces error state when controller reports an error", () => {
+test("derivePlaybackSnapshot keeps active playback status despite controller error", () => {
   const focus = createFocus({
     trackId: TRACK_A,
     isPlaying: true,
@@ -129,6 +129,26 @@ test("derivePlaybackSnapshot forces error state when controller reports an error
     runtimeError: null,
     now: 8_000,
   });
-  assert.equal(snapshot.status, "error");
+  assert.equal(snapshot.status, "playing");
   assert.equal(snapshot.errorMessage, "NETWORK_TIMEOUT");
+});
+
+test("derivePlaybackSnapshot reports error when no active track exists", () => {
+  const focus = createFocus({
+    trackId: null,
+    isPlaying: null,
+    status: "idle",
+  });
+  const { snapshot } = derivePlaybackSnapshot({
+    focus,
+    lastStableFocus: DEFAULT_PLAYBACK_FOCUS,
+    controllerStatus: "ready",
+    pendingCommand: null,
+    controllerError: "PLAYER_UNAVAILABLE",
+    runtimeError: null,
+    now: 9_000,
+  });
+  assert.equal(snapshot.status, "error");
+  assert.equal(snapshot.currentTrackId, null);
+  assert.equal(snapshot.errorMessage, "PLAYER_UNAVAILABLE");
 });

@@ -30,6 +30,7 @@ export type DerivePlaybackSnapshotInput = {
   runtimeError: string | null;
   now?: number;
   latchWindowMs?: number;
+  activePlaybackLatchMs?: number;
 };
 
 function clampMs(value: number | null | undefined) {
@@ -45,6 +46,7 @@ export function derivePlaybackSnapshot({
   runtimeError,
   now = Date.now(),
   latchWindowMs = 2500,
+  activePlaybackLatchMs = 15 * 60 * 1000,
 }: DerivePlaybackSnapshotInput): {
   snapshot: PlaybackSnapshot;
   nextStableFocus: PlaybackFocus;
@@ -74,18 +76,29 @@ export function derivePlaybackSnapshot({
       updatedAt,
     };
   } else {
+    const playbackLikelyActive =
+      focus.isPlaying === true ||
+      focus.status === "playing" ||
+      focus.status === "paused" ||
+      focus.status === "loading" ||
+      controllerStatus === "playing" ||
+      controllerStatus === "paused" ||
+      pendingCommand === "play" ||
+      pendingCommand === "toggle" ||
+      pendingCommand === "transfer";
     const withinLatchWindow =
       Boolean(lastStableFocus.trackId) &&
       now - Math.max(0, lastStableFocus.updatedAt) <= latchWindowMs;
+    const withinActivePlaybackLatchWindow =
+      Boolean(lastStableFocus.trackId) &&
+      now - Math.max(0, lastStableFocus.updatedAt) <= activePlaybackLatchMs;
     const transientState =
-      pendingCommand === "play" ||
-      pendingCommand === "toggle" ||
-      pendingCommand === "transfer" ||
-      controllerStatus === "playing" ||
-      controllerStatus === "paused" ||
-      controllerStatus === "initializing" ||
-      status === "loading";
-    if (withinLatchWindow && transientState && lastStableFocus.trackId) {
+      playbackLikelyActive || controllerStatus === "initializing" || status === "loading";
+    const shouldLatch =
+      lastStableFocus.trackId &&
+      transientState &&
+      (withinLatchWindow || (playbackLikelyActive && withinActivePlaybackLatchWindow));
+    if (shouldLatch) {
       currentId = lastStableFocus.trackId;
       stale = true;
       source = lastStableFocus.source;
@@ -95,12 +108,17 @@ export function derivePlaybackSnapshot({
       if (status !== "error") {
         status = lastStableFocus.status;
       }
-    } else if (!withinLatchWindow) {
+    } else if (!withinLatchWindow && !withinActivePlaybackLatchWindow) {
       nextStableFocus = DEFAULT_PLAYBACK_FOCUS;
     }
   }
 
-  if (controllerError || runtimeError) {
+  const hasControllerError = Boolean(controllerError || runtimeError);
+  const hasActiveTrack = Boolean(currentId);
+  if (
+    hasControllerError &&
+    (!hasActiveTrack || status === "idle" || status === "ended")
+  ) {
     status = "error";
     errorMessage = controllerError || runtimeError;
   } else if (

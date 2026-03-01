@@ -231,8 +231,7 @@ function normalizePlaybackTrackId(value: unknown) {
       return null;
     }
   }
-  const embedded = raw.match(/([0-9A-Za-z]{22})/);
-  return embedded?.[1] ?? null;
+  return null;
 }
 
 function resolvePlaybackTrackId(item: any) {

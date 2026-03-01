@@ -8,6 +8,7 @@ import {
   SpotifyApiError,
   spotifyApiRequest,
 } from "@/lib/spotify/spotifyApiClient";
+import { bumpUserCacheVersion } from "@/lib/spotify/requestCache";
 import {
   inferSpotifyRequestPriority,
   type SpotifyRequestPriority,
@@ -139,7 +140,7 @@ export async function spotifyFetch<T>(args: {
     }
 
     try {
-      return await spotifyApiRequest<T>({
+      const result = await spotifyApiRequest<T>({
         url,
         method: normalizedMethod,
         body,
@@ -152,6 +153,10 @@ export async function spotifyFetch<T>(args: {
         dedupeWindowMs: dedupeWindowMs ?? cachePolicy.dedupeWindowMs,
         bypassCache,
       });
+      if (normalizedMethod !== "GET") {
+        await bumpUserCacheVersion(appUserId);
+      }
+      return result;
     } catch (error) {
       if (error instanceof SpotifyApiError && error.status === 401) {
         const forced = await getValidAccessTokenForUser({
@@ -165,7 +170,7 @@ export async function spotifyFetch<T>(args: {
             correlationId,
           });
         }
-        return await spotifyApiRequest<T>({
+        const retried = await spotifyApiRequest<T>({
           url,
           method: normalizedMethod,
           body,
@@ -178,6 +183,10 @@ export async function spotifyFetch<T>(args: {
           dedupeWindowMs: dedupeWindowMs ?? cachePolicy.dedupeWindowMs,
           bypassCache,
         });
+        if (normalizedMethod !== "GET") {
+          await bumpUserCacheVersion(appUserId);
+        }
+        return retried;
       }
       throw error;
     }

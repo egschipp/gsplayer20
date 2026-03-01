@@ -1,11 +1,19 @@
 import { createHash } from "node:crypto";
+import { and, desc, eq } from "drizzle-orm";
+import { getDb } from "@/lib/db/client";
+import { tracks, userRecentlyPlayed } from "@/lib/db/schema";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
+import { incCounter } from "@/lib/observability/metrics";
 import {
   jsonNoStore,
   rateLimitResponse,
   requireAppUser,
 } from "@/lib/api/guards";
+import {
+  buildDataSourceMeta,
+  getSpotifyResourcePolicy,
+} from "@/lib/spotify/cachePolicy";
 import {
   upsertArtist,
   upsertRecentlyPlayed,
@@ -47,6 +55,62 @@ function parseReleaseYear(releaseDate: string | null | undefined) {
   return Number(releaseDate.slice(0, 4));
 }
 
+async function readRecentlyPlayedFromDb(args: {
+  userId: string;
+  limit: number;
+  trackIdFilter: string | null;
+}) {
+  const db = getDb();
+  const where = args.trackIdFilter
+    ? and(
+        eq(userRecentlyPlayed.userId, args.userId),
+        eq(userRecentlyPlayed.trackId, args.trackIdFilter)
+      )
+    : eq(userRecentlyPlayed.userId, args.userId);
+
+  const rows = await db
+    .select({
+      entryId: userRecentlyPlayed.entryId,
+      playedAt: userRecentlyPlayed.playedAt,
+      trackId: userRecentlyPlayed.trackId,
+      contextUri: userRecentlyPlayed.contextUri,
+      name: userRecentlyPlayed.trackName,
+      artistNames: userRecentlyPlayed.artistNames,
+      durationMs: userRecentlyPlayed.durationMs,
+      albumImageUrl: userRecentlyPlayed.albumImageUrl,
+      trackNameFallback: tracks.name,
+      albumImageFallback: tracks.albumImageUrl,
+      trackDurationFallback: tracks.durationMs,
+    })
+    .from(userRecentlyPlayed)
+    .leftJoin(tracks, eq(tracks.trackId, userRecentlyPlayed.trackId))
+    .where(where)
+    .orderBy(desc(userRecentlyPlayed.playedAt))
+    .limit(args.limit);
+
+  return rows.map((row) => ({
+    entryId: row.entryId,
+    playedAt: row.playedAt,
+    trackId: row.trackId,
+    uri: row.trackId ? `spotify:track:${row.trackId}` : null,
+    name: row.name ?? row.trackNameFallback ?? null,
+    artistNames: row.artistNames ?? null,
+    durationMs: row.durationMs ?? row.trackDurationFallback ?? null,
+    explicit: null,
+    isLocal: null,
+    linkedFromTrackId: null,
+    restrictionsReason: null,
+    albumId: null,
+    albumName: null,
+    albumReleaseDate: null,
+    releaseYear: null,
+    albumImageUrl: row.albumImageUrl ?? row.albumImageFallback ?? null,
+    popularity: null,
+    contextUri: row.contextUri ?? null,
+    artists: [],
+  }));
+}
+
 export async function GET(req: Request) {
   const { session, response } = await requireAppUser();
   if (response) return response;
@@ -68,14 +132,15 @@ export async function GET(req: Request) {
   const trackIdFilterRaw = searchParams.get("trackId");
   const trackIdFilter =
     trackIdFilterRaw && TRACK_ID_REGEX.test(trackIdFilterRaw) ? trackIdFilterRaw : null;
+  const policy = getSpotifyResourcePolicy("recently_played");
 
   try {
     const data = await spotifyFetch<SpotifyRecentlyPlayedResponse>({
       url: `https://api.spotify.com/v1/me/player/recently-played?limit=${limit}`,
       userLevel: true,
       priority: "default",
-      cacheTtlMs: 10_000,
-      dedupeWindowMs: 2_000,
+      cacheTtlMs: policy.cacheTtlMs,
+      dedupeWindowMs: policy.dedupeWindowMs,
     });
 
     const sourceItems = Array.isArray(data?.items) ? data.items : [];
@@ -213,18 +278,80 @@ export async function GET(req: Request) {
     return jsonNoStore({
       items: mapped,
       asOf: Date.now(),
+      meta: buildDataSourceMeta({
+        resource: "recently_played",
+        source: "live",
+        asOf: Date.now(),
+        staleSec: 0,
+        degraded: false,
+      }),
     });
   } catch (error) {
+    const fallbackRows = await readRecentlyPlayedFromDb({
+      userId: session.appUserId as string,
+      limit,
+      trackIdFilter,
+    });
+
     if (error instanceof SpotifyFetchError) {
       if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
       if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
-      if (error.status === 404) return jsonNoStore({ items: [], asOf: Date.now() });
-      if (error.status === 429) return jsonNoStore({ error: "RATE_LIMIT" }, 429);
+      if (error.status === 404) {
+        incCounter("spotify_route_degraded_total", {
+          route: "me_recently_played",
+          reason: "live_not_found",
+        });
+        return jsonNoStore({
+          items: fallbackRows,
+          asOf: Date.now(),
+          meta: buildDataSourceMeta({
+            resource: "recently_played",
+            source: "db",
+            asOf: Date.now(),
+            staleSec: null,
+            degraded: true,
+            degradeReason: "live_not_found",
+          }),
+        });
+      }
+      if (error.status === 429 || error.status >= 500) {
+        incCounter("spotify_route_degraded_total", {
+          route: "me_recently_played",
+          reason: error.status === 429 ? "live_rate_limited" : "live_spotify_upstream",
+        });
+        return jsonNoStore({
+          items: fallbackRows,
+          asOf: Date.now(),
+          meta: buildDataSourceMeta({
+            resource: "recently_played",
+            source: "db",
+            asOf: Date.now(),
+            staleSec: null,
+            degraded: true,
+            degradeReason: error.status === 429 ? "live_rate_limited" : "live_spotify_upstream",
+          }),
+        });
+      }
       return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
     }
     if (String(error).includes("UserNotAuthenticated")) {
       return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
     }
-    return jsonNoStore({ error: "RECENTLY_PLAYED_FAILED" }, 500);
+    incCounter("spotify_route_degraded_total", {
+      route: "me_recently_played",
+      reason: "live_failed",
+    });
+    return jsonNoStore({
+      items: fallbackRows,
+      asOf: Date.now(),
+      meta: buildDataSourceMeta({
+        resource: "recently_played",
+        source: "db",
+        asOf: Date.now(),
+        staleSec: null,
+        degraded: true,
+        degradeReason: "live_failed",
+      }),
+    });
   }
 }

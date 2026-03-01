@@ -9,7 +9,12 @@ import {
   scheduleSpotifyRequest,
   SpotifyRateLimitError,
 } from "@/lib/spotify/rateLimitManager";
-import { coalesceInflight, getCachedValue, setCachedValue } from "@/lib/spotify/requestCache";
+import {
+  coalesceInflight,
+  getCachedValue,
+  getUserCacheVersion,
+  setCachedValue,
+} from "@/lib/spotify/requestCache";
 import { inferSpotifyRequestPriority, type SpotifyRequestPriority } from "@/lib/spotify/requestPriority";
 
 const RETRY_AFTER_MIN_MS = 1_000;
@@ -192,8 +197,11 @@ function requestCacheKey(params: {
   url: string;
   body?: unknown;
   userKey: string;
+  cacheVersion: number;
 }): string {
-  return `${params.userKey}|${params.method}|${params.url}|${stableStringify(params.body)}`;
+  return `v${params.cacheVersion}|${params.userKey}|${params.method}|${params.url}|${stableStringify(
+    params.body
+  )}`;
 }
 
 function defaultCacheTtlMs(method: string, url: string): number {
@@ -252,11 +260,16 @@ export async function spotifyApiRequest<T>(params: {
     typeof params.dedupeWindowMs === "number"
       ? Math.max(1, Math.floor(params.dedupeWindowMs))
       : defaultDedupeWindowMs(method, params.url);
+  const cacheVersion =
+    method === "GET" && !params.bypassCache
+      ? await getUserCacheVersion(userKey)
+      : 0;
   const cacheKey = requestCacheKey({
     method,
     url: params.url,
     body: params.body,
     userKey,
+    cacheVersion,
   });
 
   if (!params.bypassCache && cacheTtlMs > 0) {
@@ -272,8 +285,11 @@ export async function spotifyApiRequest<T>(params: {
     });
   }
 
-  return coalesceInflight<T | undefined>(cacheKey, dedupeWindowMs, async () => {
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+  return coalesceInflight<T | undefined>(
+    cacheKey,
+    dedupeWindowMs,
+    async () => {
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const started = Date.now();
 
       try {
@@ -454,11 +470,15 @@ export async function spotifyApiRequest<T>(params: {
       }
     }
 
-    throw new SpotifyApiError({
-      status: 0,
-      code: "RETRY_EXHAUSTED",
-      correlationId,
-      retryable: false,
-    });
-  });
+      throw new SpotifyApiError({
+        status: 0,
+        code: "RETRY_EXHAUSTED",
+        correlationId,
+        retryable: false,
+      });
+    },
+    {
+      crossInstance: method === "GET",
+    }
+  );
 }

@@ -158,6 +158,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   run_after INTEGER NOT NULL,
   status TEXT NOT NULL,
   attempts INTEGER NOT NULL DEFAULT 0,
+  lease_owner TEXT,
+  lease_expires_at INTEGER,
+  started_at INTEGER,
   created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -165,6 +168,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS jobs_status_run_after_idx
   ON jobs(status, run_after);
+CREATE INDEX IF NOT EXISTS jobs_status_lease_exp_idx
+  ON jobs(status, lease_expires_at);
 
 CREATE TABLE IF NOT EXISTS worker_heartbeat (
   id TEXT PRIMARY KEY,

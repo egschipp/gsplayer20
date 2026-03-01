@@ -11,6 +11,12 @@ import {
 } from "@/lib/api/guards";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
+import { incCounter } from "@/lib/observability/metrics";
+import {
+  buildDataSourceMeta,
+  computeStaleSec,
+  getSpotifyResourcePolicy,
+} from "@/lib/spotify/cachePolicy";
 
 export const runtime = "nodejs";
 
@@ -32,6 +38,8 @@ export async function GET(req: Request) {
       : 50;
   const cursor = searchParams.get("cursor");
   const live = searchParams.get("live") === "1";
+  const policy = getSpotifyResourcePolicy("playlists");
+  let liveFallbackReason: string | null = null;
 
   if (live) {
     const parsedOffset = Number(cursor ?? "0");
@@ -55,8 +63,8 @@ export async function GET(req: Request) {
         url: `https://api.spotify.com/v1/me/playlists?limit=${limit}&offset=${offset}`,
         userLevel: true,
         priority: "default",
-        cacheTtlMs: 6_000,
-        dedupeWindowMs: 1_200,
+        cacheTtlMs: policy.cacheTtlMs,
+        dedupeWindowMs: policy.dedupeWindowMs,
       });
       const now = Date.now();
       const liveItems = Array.isArray(liveData?.items)
@@ -110,26 +118,37 @@ export async function GET(req: Request) {
           lastSuccessfulAt: now,
           lagSec: 0,
         },
+        meta: buildDataSourceMeta({
+          resource: "playlists",
+          source: "live",
+          asOf: now,
+          staleSec: 0,
+          degraded: false,
+          liveRequested: true,
+        }),
       });
     } catch (error) {
       if (error instanceof SpotifyFetchError) {
         if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
         if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
-        if (error.status === 429) return jsonNoStore({ error: "SPOTIFY_RATE_LIMIT" }, 429);
-      }
-      if (String(error).includes("UserNotAuthenticated")) {
+        if (error.status === 429) {
+          liveFallbackReason = "live_rate_limited";
+        } else {
+          liveFallbackReason = "live_spotify_upstream";
+        }
+      } else if (String(error).includes("UserNotAuthenticated")) {
         return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
       }
-      return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
     }
   }
 
   const db = getDb();
   const baseWhere = eq(userPlaylists.userId, session.appUserId as string);
   let whereClause = baseWhere;
+  const dbCursor = live && liveFallbackReason ? null : cursor;
 
-  if (cursor) {
-    const decoded = tryDecodeCursor(cursor);
+  if (dbCursor) {
+    const decoded = tryDecodeCursor(dbCursor);
     if (!decoded) {
       return jsonError("INVALID_CURSOR", 400);
     }
@@ -169,9 +188,9 @@ export async function GET(req: Request) {
     .orderBy(desc(userPlaylists.lastSeenAt), desc(userPlaylists.playlistId))
     .limit(limit);
 
-  if (!rows.length && !cursor) {
+  if (!rows.length && !dbCursor) {
     try {
-      const live = await spotifyFetch<{
+      const liveBootstrap = await spotifyFetch<{
         items?: Array<{
           id?: string;
           name?: string;
@@ -187,12 +206,12 @@ export async function GET(req: Request) {
         url: `https://api.spotify.com/v1/me/playlists?limit=${limit}&offset=0`,
         userLevel: true,
         priority: "default",
-        cacheTtlMs: 6_000,
-        dedupeWindowMs: 1_200,
+        cacheTtlMs: policy.cacheTtlMs,
+        dedupeWindowMs: policy.dedupeWindowMs,
       });
       const now = Date.now();
-      const liveItems = Array.isArray(live?.items)
-        ? live.items
+      const liveItems = Array.isArray(liveBootstrap?.items)
+        ? liveBootstrap.items
             .map((item) => {
               const playlistId = String(item?.id ?? "").trim();
               if (!playlistId) return null;
@@ -244,12 +263,24 @@ export async function GET(req: Request) {
           lastSuccessfulAt: now,
           lagSec: 0,
         },
+        meta: buildDataSourceMeta({
+          resource: "playlists",
+          source: "live",
+          asOf: now,
+          staleSec: 0,
+          degraded: false,
+          liveRequested: live,
+        }),
       });
     } catch (error) {
       if (error instanceof SpotifyFetchError) {
         if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
         if (error.status === 403) return jsonNoStore({ error: "FORBIDDEN" }, 403);
-        if (error.status === 429) return jsonNoStore({ error: "SPOTIFY_RATE_LIMIT" }, 429);
+        if (error.status === 429) {
+          liveFallbackReason = "bootstrap_live_rate_limited";
+        } else {
+          liveFallbackReason = "bootstrap_live_spotify_upstream";
+        }
       }
       if (String(error).includes("UserNotAuthenticated")) {
         return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
@@ -277,15 +308,32 @@ export async function GET(req: Request) {
   const lagSec = lastSuccessfulAt
     ? Math.floor((Date.now() - lastSuccessfulAt) / 1000)
     : null;
+  const now = Date.now();
+  const staleSec = computeStaleSec(lastSuccessfulAt, now);
+  if (live && liveFallbackReason) {
+    incCounter("spotify_route_degraded_total", {
+      route: "me_playlists",
+      reason: liveFallbackReason,
+    });
+  }
 
   return jsonPrivateCache({
     items: rows,
     nextCursor,
-    asOf: Date.now(),
+    asOf: now,
     sync: {
       status: sync?.status ?? "idle",
       lastSuccessfulAt,
       lagSec,
     },
-  });
+    meta: buildDataSourceMeta({
+      resource: "playlists",
+      source: "db",
+      asOf: now,
+      staleSec,
+      degraded: Boolean(live && liveFallbackReason),
+      degradeReason: liveFallbackReason,
+      liveRequested: live,
+    }),
+  }, 200, policy.privateMaxAgeSec);
 }

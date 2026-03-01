@@ -4586,12 +4586,32 @@ export default function SpotifyPlayer({
       const hidden =
         typeof document !== "undefined" && document.visibilityState === "hidden";
       const hasPendingSeek = Boolean(pendingSeekRef.current);
+      const connectionInfo =
+        typeof navigator !== "undefined" &&
+        "connection" in navigator &&
+        (navigator as Navigator & {
+          connection?: { effectiveType?: string; saveData?: boolean };
+        }).connection
+          ? (navigator as Navigator & {
+              connection: { effectiveType?: string; saveData?: boolean };
+            }).connection
+          : null;
+      const saveData = Boolean(connectionInfo?.saveData);
+      const effectiveType = String(connectionInfo?.effectiveType ?? "").toLowerCase();
+      const lowBandwidthMode =
+        saveData ||
+        effectiveType === "2g" ||
+        effectiveType === "slow-2g" ||
+        effectiveType === "3g";
       let baseDelay = isPlaying ? 3000 : 9000;
       if (hidden && !hasPendingSeek) {
         baseDelay = 20000;
       }
       if (hasPendingSeek) {
         baseDelay = 1500;
+      }
+      if (lowBandwidthMode && !hasPendingSeek) {
+        baseDelay = Math.max(baseDelay, isPlaying ? 5500 : 12500);
       }
       const base = overrideDelay ?? baseDelay;
       const waitExtra = Math.max(rateLimitRef.current.until - Date.now(), 0);

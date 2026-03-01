@@ -8,6 +8,10 @@ const TOKEN_ENCRYPTION_KEY = process.env.TOKEN_ENCRYPTION_KEY;
 const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000");
 const MAX_CONCURRENCY = Number(process.env.SPOTIFY_MAX_CONCURRENCY || "3");
 const MAX_RETRY_DELAY_MS = 60_000;
+const JOB_LEASE_MS = Number(process.env.WORKER_JOB_LEASE_MS || "90000");
+const JOB_LEASE_HEARTBEAT_MS = Number(
+  process.env.WORKER_JOB_LEASE_HEARTBEAT_MS || "15000"
+);
 const SCHEDULE_INTERVAL_MS = Number(
   process.env.SYNC_SCHEDULE_MS || "600000"
 );
@@ -24,6 +28,7 @@ db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 db.pragma("busy_timeout = 5000");
 db.pragma("synchronous = NORMAL");
+const workerId = `${process.pid}-${crypto.randomUUID()}`;
 
 let inFlight = 0;
 const queue = [];
@@ -98,6 +103,18 @@ if (!hasColumn("playlists", "image_url")) {
   db.exec("ALTER TABLE playlists ADD COLUMN image_url TEXT");
 }
 
+if (!hasColumn("jobs", "lease_owner")) {
+  db.exec("ALTER TABLE jobs ADD COLUMN lease_owner TEXT");
+}
+
+if (!hasColumn("jobs", "lease_expires_at")) {
+  db.exec("ALTER TABLE jobs ADD COLUMN lease_expires_at INTEGER");
+}
+
+if (!hasColumn("jobs", "started_at")) {
+  db.exec("ALTER TABLE jobs ADD COLUMN started_at INTEGER");
+}
+
 db.exec(
   `CREATE TABLE IF NOT EXISTS user_recently_played (
     user_id TEXT NOT NULL,
@@ -124,6 +141,9 @@ db.exec(
 );
 db.exec(
   "CREATE INDEX IF NOT EXISTS user_recently_played_track_idx ON user_recently_played(track_id)"
+);
+db.exec(
+  "CREATE INDEX IF NOT EXISTS jobs_status_lease_exp_idx ON jobs(status, lease_expires_at)"
 );
 
 const SPOTIFY_ID_REGEX = /^[A-Za-z0-9]{22}$/;
@@ -362,25 +382,70 @@ async function downloadImage(url) {
 }
 
 const statements = {
-  takeJob: db.prepare(
+  claimQueuedJob: db.prepare(
     `UPDATE jobs
-     SET status='running', attempts=attempts+1, updated_at=?
+     SET status='running',
+         attempts=attempts+1,
+         updated_at=?,
+         lease_owner=?,
+         lease_expires_at=?,
+         started_at=COALESCE(started_at, ?)
      WHERE id = (
        SELECT id FROM jobs
        WHERE status='queued' AND run_after <= ?
-       ORDER BY created_at ASC
+       ORDER BY
+         run_after ASC,
+         created_at ASC
        LIMIT 1
      )
      RETURNING *`
   ),
+  reclaimStaleJob: db.prepare(
+    `UPDATE jobs
+     SET status='running',
+         attempts=attempts+1,
+         updated_at=?,
+         lease_owner=?,
+         lease_expires_at=?,
+         started_at=COALESCE(started_at, ?)
+     WHERE id = (
+       SELECT id FROM jobs
+       WHERE status='running' AND COALESCE(lease_expires_at, 0) <= ?
+       ORDER BY lease_expires_at ASC, updated_at ASC
+       LIMIT 1
+     )
+     RETURNING *`
+  ),
+  extendJobLease: db.prepare(
+    `UPDATE jobs
+     SET lease_expires_at=?, updated_at=?
+     WHERE id=? AND status='running' AND lease_owner=?`
+  ),
   markJobDone: db.prepare(
-    `UPDATE jobs SET status='done', updated_at=? WHERE id=?`
+    `UPDATE jobs
+     SET status='done',
+         updated_at=?,
+         lease_owner=NULL,
+         lease_expires_at=NULL
+     WHERE id=?`
   ),
   markJobError: db.prepare(
-    `UPDATE jobs SET status='error', updated_at=?, payload=? WHERE id=?`
+    `UPDATE jobs
+     SET status='error',
+         updated_at=?,
+         payload=?,
+         lease_owner=NULL,
+         lease_expires_at=NULL
+     WHERE id=?`
   ),
   requeueJob: db.prepare(
-    `UPDATE jobs SET status='queued', run_after=?, updated_at=? WHERE id=?`
+    `UPDATE jobs
+     SET status='queued',
+         run_after=?,
+         updated_at=?,
+         lease_owner=NULL,
+         lease_expires_at=NULL
+     WHERE id=?`
   ),
   getOAuthTokens: db.prepare(
     `SELECT refresh_token_enc, access_token, access_expires_at FROM oauth_tokens WHERE user_id=?`
@@ -1465,6 +1530,24 @@ function getResourceForJob(job) {
   return "unknown";
 }
 
+async function withJobLease(jobId, run) {
+  let stopped = false;
+  const refresh = () => {
+    if (stopped) return;
+    const now = Date.now();
+    statements.extendJobLease.run(now + JOB_LEASE_MS, now, jobId, workerId);
+  };
+
+  refresh();
+  const timer = setInterval(refresh, Math.max(5_000, JOB_LEASE_HEARTBEAT_MS));
+  try {
+    return await run();
+  } finally {
+    stopped = true;
+    clearInterval(timer);
+  }
+}
+
 async function runLoop() {
   let lastHeartbeatAt = 0;
   while (true) {
@@ -1474,11 +1557,43 @@ async function runLoop() {
       lastHeartbeatAt = now;
     }
     schedulePeriodicSync();
-    const job = statements.takeJob.get(now, now);
+    const leaseExpiresAt = now + JOB_LEASE_MS;
+    let reclaimed = false;
+    let job = statements.claimQueuedJob.get(
+      now,
+      workerId,
+      leaseExpiresAt,
+      now,
+      now
+    );
+    if (!job) {
+      job = statements.reclaimStaleJob.get(
+        now,
+        workerId,
+        leaseExpiresAt,
+        now,
+        now
+      );
+      reclaimed = Boolean(job);
+    }
 
     if (!job) {
       await sleep(2000);
       continue;
+    }
+
+    if (reclaimed) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "worker_job_reclaimed",
+          workerId,
+          jobId: job.id,
+          type: job.type,
+          userId: job.user_id,
+          ts: new Date().toISOString(),
+        })
+      );
     }
 
     try {
@@ -1497,7 +1612,7 @@ async function runLoop() {
           updated_at: Date.now(),
         });
       }
-      const result = await handleJob(job);
+      const result = await withJobLease(job.id, async () => handleJob(job));
       if (result && result.done === false) {
         const nextPayload = sanitizeRequeuePayload(
           job.type,

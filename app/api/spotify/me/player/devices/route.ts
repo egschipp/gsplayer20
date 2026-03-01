@@ -1,5 +1,6 @@
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
+import { buildDataSourceMeta, getSpotifyResourcePolicy } from "@/lib/spotify/cachePolicy";
 import {
   getCorrelationId,
   jsonNoStore,
@@ -28,6 +29,7 @@ export async function GET(req: Request) {
   const { session, response } = await requireAppUser();
   if (response) return response;
   const correlationId = getCorrelationId(req);
+  const policy = getSpotifyResourcePolicy("devices");
 
   const rl = await rateLimitResponse({
     key: `me-player-devices:${session.appUserId}`,
@@ -43,9 +45,10 @@ export async function GET(req: Request) {
       userLevel: true,
       correlationId,
       priority: "foreground",
-      cacheTtlMs: 1_500,
-      dedupeWindowMs: 300,
+      cacheTtlMs: policy.cacheTtlMs,
+      dedupeWindowMs: policy.dedupeWindowMs,
     });
+    const now = Date.now();
     const devices = Array.isArray(data?.devices) ? data.devices : [];
 
     return jsonNoStore({
@@ -62,8 +65,15 @@ export async function GET(req: Request) {
             : null,
         supports_volume: device?.supports_volume !== false,
       })),
-      fetchedAt: Date.now(),
+      fetchedAt: now,
       correlationId,
+      meta: buildDataSourceMeta({
+        resource: "devices",
+        source: "live",
+        asOf: now,
+        staleSec: 0,
+        degraded: false,
+      }),
     });
   } catch (error) {
     if (error instanceof SpotifyFetchError) {

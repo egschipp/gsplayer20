@@ -28,6 +28,13 @@ export const runtime = "nodejs";
 
 const TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
 
+function createMutationId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `mut_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
 function normalizeTrackId(value: unknown) {
   if (typeof value !== "string") return null;
   const raw = value.trim();
@@ -507,7 +514,14 @@ export async function POST(
     } catch {
       // ignore local db write errors; Spotify mutation already succeeded
     }
-    return jsonNoStore({ playlistId, trackId, added: true });
+    return jsonNoStore({
+      playlistId,
+      trackId,
+      added: true,
+      mutationId: createMutationId(),
+      localSync: "best_effort",
+      mutatedAt: Date.now(),
+    });
   } catch (error) {
     if (error instanceof SpotifyFetchError) {
       if (error.status === 401) return jsonError("UNAUTHENTICATED", 401);
@@ -570,7 +584,14 @@ export async function DELETE(
     } catch {
       // ignore local db write errors; Spotify mutation already succeeded
     }
-    return jsonNoStore({ playlistId, trackId, removed: true });
+    return jsonNoStore({
+      playlistId,
+      trackId,
+      removed: true,
+      mutationId: createMutationId(),
+      localSync: "best_effort",
+      mutatedAt: Date.now(),
+    });
   } catch (error) {
     if (error instanceof SpotifyFetchError) {
       if (error.status === 401) return jsonError("UNAUTHENTICATED", 401);

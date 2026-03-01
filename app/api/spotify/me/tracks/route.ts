@@ -14,6 +14,12 @@ import { encodeCursor, tryDecodeCursor } from "@/lib/spotify/cursor";
 import { rateLimitResponse, requireAppUser, jsonNoStore, jsonPrivateCache } from "@/lib/api/guards";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
+import { incCounter } from "@/lib/observability/metrics";
+import {
+  buildDataSourceMeta,
+  computeStaleSec,
+  getSpotifyResourcePolicy,
+} from "@/lib/spotify/cachePolicy";
 
 export const runtime = "nodejs";
 
@@ -74,6 +80,8 @@ export async function GET(req: Request) {
       : 50;
   const cursor = searchParams.get("cursor");
   const live = searchParams.get("live") === "1";
+  const policy = getSpotifyResourcePolicy("tracks");
+  let liveFallbackReason: string | null = null;
 
   if (live) {
     const parsedOffset = Number(cursor ?? "0");
@@ -106,6 +114,8 @@ export async function GET(req: Request) {
       }>({
         url: `https://api.spotify.com/v1/me/tracks?limit=${limit}&offset=${offset}`,
         userLevel: true,
+        cacheTtlMs: policy.cacheTtlMs,
+        dedupeWindowMs: policy.dedupeWindowMs,
       });
 
       const items = Array.isArray(data?.items) ? data.items : [];
@@ -198,6 +208,14 @@ export async function GET(req: Request) {
           lastSuccessfulAt: Date.now(),
           lagSec: 0,
         },
+        meta: buildDataSourceMeta({
+          resource: "tracks",
+          source: "live",
+          asOf: Date.now(),
+          staleSec: 0,
+          degraded: false,
+          liveRequested: true,
+        }),
       });
     } catch (error) {
       if (error instanceof SpotifyFetchError) {
@@ -208,22 +226,24 @@ export async function GET(req: Request) {
           return jsonNoStore({ error: "FORBIDDEN" }, 403);
         }
         if (error.status === 429) {
-          return jsonNoStore({ error: "RATE_LIMIT" }, 429);
+          liveFallbackReason = "live_rate_limited";
+        } else {
+          liveFallbackReason = "live_spotify_upstream";
         }
       }
       if (String(error).includes("UserNotAuthenticated")) {
         return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
       }
-      return jsonNoStore({ error: "SPOTIFY_UPSTREAM" }, 502);
     }
   }
 
   const db = getDb();
   const baseWhere = eq(userSavedTracks.userId, session.appUserId as string);
   let whereClause = baseWhere;
+  const dbCursor = live && liveFallbackReason ? null : cursor;
 
-  if (cursor) {
-    const decoded = tryDecodeCursor(cursor);
+  if (dbCursor) {
+    const decoded = tryDecodeCursor(dbCursor);
     if (!decoded) {
       return jsonNoStore({ error: "INVALID_CURSOR" }, 400);
     }
@@ -271,6 +291,13 @@ export async function GET(req: Request) {
     .orderBy(desc(userSavedTracks.addedAt), desc(userSavedTracks.trackId))
     .limit(limit);
 
+  if (live && liveFallbackReason) {
+    incCounter("spotify_route_degraded_total", {
+      route: "me_tracks",
+      reason: liveFallbackReason,
+    });
+  }
+
   const totalRow = await db
     .select({ count: sql<number>`count(*)` })
     .from(userSavedTracks)
@@ -295,6 +322,8 @@ export async function GET(req: Request) {
   const lagSec = lastSuccessfulAt
     ? Math.floor((Date.now() - lastSuccessfulAt) / 1000)
     : null;
+  const now = Date.now();
+  const staleSec = computeStaleSec(lastSuccessfulAt, now);
 
   const trackIds = rows.map((row) => row.trackId).filter(Boolean);
   const playlistsByTrack = await fetchPlaylistsByTrack(
@@ -323,11 +352,20 @@ export async function GET(req: Request) {
       typeof totalRow?.count === "number" && Number.isFinite(totalRow.count)
         ? Math.max(0, Math.floor(totalRow.count))
         : null,
-    asOf: Date.now(),
+    asOf: now,
     sync: {
       status: sync?.status ?? "idle",
       lastSuccessfulAt,
       lagSec,
     },
-  });
+    meta: buildDataSourceMeta({
+      resource: "tracks",
+      source: "db",
+      asOf: now,
+      staleSec,
+      degraded: Boolean(live && liveFallbackReason),
+      degradeReason: liveFallbackReason,
+      liveRequested: live,
+    }),
+  }, 200, policy.privateMaxAgeSec);
 }

@@ -82,6 +82,18 @@ if (!hasColumn("playlists", "image_url")) {
   sqlite.exec("ALTER TABLE playlists ADD COLUMN image_url TEXT");
 }
 
+if (!hasColumn("jobs", "lease_owner")) {
+  sqlite.exec("ALTER TABLE jobs ADD COLUMN lease_owner TEXT");
+}
+
+if (!hasColumn("jobs", "lease_expires_at")) {
+  sqlite.exec("ALTER TABLE jobs ADD COLUMN lease_expires_at INTEGER");
+}
+
+if (!hasColumn("jobs", "started_at")) {
+  sqlite.exec("ALTER TABLE jobs ADD COLUMN started_at INTEGER");
+}
+
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS user_recently_played (
     user_id TEXT NOT NULL,
@@ -108,6 +120,9 @@ sqlite.exec(
 );
 sqlite.exec(
   "CREATE INDEX IF NOT EXISTS user_recently_played_track_idx ON user_recently_played(track_id)"
+);
+sqlite.exec(
+  "CREATE INDEX IF NOT EXISTS jobs_status_lease_exp_idx ON jobs(status, lease_expires_at)"
 );
 
 sqlite.exec(`

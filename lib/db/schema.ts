@@ -226,6 +226,9 @@ export const jobs = sqliteTable(
     runAfter: integer("run_after").notNull(),
     status: text("status").notNull(),
     attempts: integer("attempts").notNull().default(0),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: integer("lease_expires_at"),
+    startedAt: integer("started_at"),
     createdAt: integer("created_at").notNull().default(nowMs),
     updatedAt: integer("updated_at").notNull().default(nowMs),
   },
@@ -233,6 +236,10 @@ export const jobs = sqliteTable(
     statusRunAfterIdx: index("jobs_status_run_after_idx").on(
       table.status,
       table.runAfter
+    ),
+    statusLeaseExpIdx: index("jobs_status_lease_exp_idx").on(
+      table.status,
+      table.leaseExpiresAt
     ),
   })
 );

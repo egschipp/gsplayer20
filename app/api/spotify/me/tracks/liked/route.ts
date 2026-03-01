@@ -1,6 +1,10 @@
 import { jsonError, jsonNoStore, rateLimitResponse, requireAppUser, requireSameOrigin } from "@/lib/api/guards";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { spotifyFetch } from "@/lib/spotify/client";
+import { getDb } from "@/lib/db/client";
+import { userSavedTracks } from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
+import { updateUserSavedTrackSeen, upsertTrack } from "@/lib/db/queries";
 
 export const runtime = "nodejs";
 
@@ -45,6 +49,13 @@ function mapSpotifyError(error: unknown) {
     return { status: 401, code: "UNAUTHENTICATED" };
   }
   return { status: 502, code: "SPOTIFY_UPSTREAM" };
+}
+
+function createMutationId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `mut_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
 export async function GET(req: Request) {
@@ -96,8 +107,56 @@ export async function POST(req: Request) {
       method: "PUT",
       userLevel: true,
     });
+    try {
+      const track = await spotifyFetch<{
+        id?: string;
+        name?: string;
+        duration_ms?: number;
+        explicit?: boolean;
+        is_local?: boolean;
+        linked_from?: { id?: string | null };
+        restrictions?: { reason?: string | null };
+        popularity?: number;
+        album?: { id?: string | null };
+      }>({
+        url: `https://api.spotify.com/v1/tracks/${encodeURIComponent(trackId)}`,
+        userLevel: true,
+        priority: "default",
+        cacheTtlMs: 20_000,
+        dedupeWindowMs: 2_000,
+      });
+      if (track?.id) {
+        await upsertTrack({
+          trackId: track.id,
+          name: track.name ?? "Onbekend nummer",
+          durationMs:
+            typeof track.duration_ms === "number" ? Math.max(0, track.duration_ms) : 0,
+          explicit: Boolean(track.explicit),
+          isLocal:
+            typeof track.is_local === "boolean" ? track.is_local : null,
+          linkedFromTrackId:
+            typeof track.linked_from?.id === "string" ? track.linked_from.id : null,
+          restrictionsReason:
+            typeof track.restrictions?.reason === "string"
+              ? track.restrictions.reason
+              : null,
+          albumId: typeof track.album?.id === "string" ? track.album.id : null,
+          popularity:
+            typeof track.popularity === "number" ? Math.floor(track.popularity) : null,
+        });
+      }
+      await updateUserSavedTrackSeen(session.appUserId as string, trackId);
+    } catch {
+      // Spotify mutation already succeeded; local DB update is best effort.
+    }
     const liked = await getLikedState(trackId);
-    return jsonNoStore({ trackId, liked });
+    return jsonNoStore({
+      trackId,
+      liked,
+      mutationId: createMutationId(),
+      localSync: "best_effort",
+      mutatedAt: Date.now(),
+    });
   } catch (error) {
     const mapped = mapSpotifyError(error);
     return jsonError(mapped.code, mapped.status);
@@ -129,8 +188,27 @@ export async function DELETE(req: Request) {
       method: "DELETE",
       userLevel: true,
     });
+    try {
+      const db = getDb();
+      await db
+        .delete(userSavedTracks)
+        .where(
+          and(
+            eq(userSavedTracks.userId, session.appUserId as string),
+            eq(userSavedTracks.trackId, trackId)
+          )
+        );
+    } catch {
+      // Spotify mutation already succeeded; local DB update is best effort.
+    }
     const liked = await getLikedState(trackId);
-    return jsonNoStore({ trackId, liked });
+    return jsonNoStore({
+      trackId,
+      liked,
+      mutationId: createMutationId(),
+      localSync: "best_effort",
+      mutatedAt: Date.now(),
+    });
   } catch (error) {
     const mapped = mapSpotifyError(error);
     return jsonError(mapped.code, mapped.status);

@@ -46,7 +46,6 @@ import {
   TRACK_ROW_HEIGHT,
 } from "@/lib/ui/trackLayout";
 import { animateScrollToIndex } from "@/lib/ui/smoothScroll";
-import InlineStatusBanner from "./ui/InlineStatusBanner";
 
 function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   if (!track) return null;
@@ -1099,8 +1098,6 @@ export default function PlaylistBrowser() {
   const [artistDetailLoading, setArtistDetailLoading] = useState(false);
   const [trackArtistsLoading, setTrackArtistsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [queueToast, setQueueToast] = useState<QueueToastState | null>(null);
-  const [showSelectionHint, setShowSelectionHint] = useState(true);
   const [authRequired, setAuthRequired] = useState(false);
   const [likedTracksTotal, setLikedTracksTotal] = useState<number | null>(null);
   const [allMyMusicTotal, setAllMyMusicTotal] = useState<number | null>(null);
@@ -1126,17 +1123,13 @@ export default function PlaylistBrowser() {
     failed: 0,
   });
   const MAX_PLAYLIST_CHIPS = 2;
-  const [layoutDensity, setLayoutDensity] = useState<"auto" | "compact" | "comfortable">(
-    "auto"
-  );
   const [listHeight, setListHeight] = useState(() =>
     computeTrackListHeight(viewport.visualHeight || viewport.height)
   );
-  const compactTrackLayout = useMemo(() => {
-    if (layoutDensity === "compact") return true;
-    if (layoutDensity === "comfortable") return false;
-    return isCompactTrackLayout(viewport.width);
-  }, [layoutDensity, viewport.width]);
+  const compactTrackLayout = useMemo(
+    () => isCompactTrackLayout(viewport.width),
+    [viewport.width]
+  );
   const trackHeaderClassName = useMemo(
     () => resolveTrackHeaderClass(compactTrackLayout),
     [compactTrackLayout]
@@ -1325,37 +1318,6 @@ export default function PlaylistBrowser() {
       selectorDockPinned ? "1" : "0"
     );
   }, [selectorDockPinned]);
-
-  useEffect(() => {
-    if (!queueToast) return;
-    const timer = window.setTimeout(() => {
-      setQueueToast((current) => (current?.id === queueToast.id ? null : current));
-    }, 3200);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [queueToast]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = safeReadStorage(window.localStorage, "gs_selection_hint_dismissed");
-    if (stored === "1") {
-      setShowSelectionHint(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = safeReadStorage(window.localStorage, "gs_layout_density");
-    if (stored === "compact" || stored === "comfortable" || stored === "auto") {
-      setLayoutDensity(stored);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    safeWriteStorage(window.localStorage, "gs_layout_density", layoutDensity);
-  }, [layoutDensity]);
 
   useEffect(() => {
     if (!selectorDockOpen) {
@@ -3957,18 +3919,6 @@ export default function PlaylistBrowser() {
           queue.removeTrack(queueId);
         }
         setError(null);
-        const queueTrack = buildQueueTrackInput(track);
-        setQueueToast({
-          id: `queue-removed:${normalizedTrackId}:${Date.now()}`,
-          message: "Track verwijderd uit queue.",
-          actionLabel: queueTrack ? "Ongedaan maken" : undefined,
-          onAction: queueTrack
-            ? () => {
-                queue.addTracks([queueTrack]);
-                setQueueToast(null);
-              }
-            : undefined,
-        });
         return;
       }
 
@@ -3976,23 +3926,6 @@ export default function PlaylistBrowser() {
       if (!queueTrack) return;
       queue.addTracks([queueTrack]);
       setError(null);
-      setQueueToast({
-        id: `queue-added:${normalizedTrackId}:${Date.now()}`,
-        message: "Track toegevoegd aan queue.",
-        actionLabel: "Ongedaan maken",
-        onAction: () => {
-          const ids = (queue.items ?? [])
-            .filter(
-              (item) =>
-                normalizeSpotifyTrackId(item.trackId ?? null) === normalizedTrackId
-            )
-            .map((item) => item.queueId);
-          for (const queueId of ids) {
-            queue.removeTrack(queueId);
-          }
-          setQueueToast(null);
-        },
-      });
     },
     [queue]
   );
@@ -4253,29 +4186,6 @@ export default function PlaylistBrowser() {
               </button>
             ))}
           </div>
-          <div className="segmented segmented-integrated" role="group" aria-label="Layout dichtheid">
-            <button
-              type="button"
-              className={`segmented-btn${layoutDensity === "auto" ? " active" : ""}`}
-              onClick={() => setLayoutDensity("auto")}
-            >
-              Auto
-            </button>
-            <button
-              type="button"
-              className={`segmented-btn${layoutDensity === "compact" ? " active" : ""}`}
-              onClick={() => setLayoutDensity("compact")}
-            >
-              Compact
-            </button>
-            <button
-              type="button"
-              className={`segmented-btn${layoutDensity === "comfortable" ? " active" : ""}`}
-              onClick={() => setLayoutDensity("comfortable")}
-            >
-              Comfort
-            </button>
-          </div>
           <div
             className="combo player-library-combo"
             ref={comboMenu.rootRef}
@@ -4521,37 +4431,6 @@ export default function PlaylistBrowser() {
         </div>
       ) : null}
       {selectorDockHost ? createPortal(selectorDock, selectorDockHost) : selectorDock}
-      {showSelectionHint ? (
-        <InlineStatusBanner
-          tone="info"
-          title="Tip"
-          message="Gebruik de checkboxen voor multiselect (blauw). De groen gemarkeerde track is nu spelend."
-          action={{
-            label: "Verbergen",
-            onClick: () => {
-              setShowSelectionHint(false);
-              if (typeof window !== "undefined") {
-                safeWriteStorage(window.localStorage, "gs_selection_hint_dismissed", "1");
-              }
-            },
-          }}
-          className="library-inline-status"
-        />
-      ) : null}
-      <div className="track-state-legend" aria-label="Track status legenda">
-        <span className="track-state-legend-chip">
-          <span className="track-state-dot track-state-dot-playing" />
-          Nu spelend
-        </span>
-        <span className="track-state-legend-chip">
-          <span className="track-state-dot track-state-dot-selected" />
-          Selectie
-        </span>
-        <span className="track-state-legend-chip">
-          <span className="track-state-dot track-state-dot-queued" />
-          In queue
-        </span>
-      </div>
       {mode === "playlists" || mode === "artists" ? (
         <div className="track-list" style={{ marginTop: 4 }} ref={listContainerRef}>
           {!isContextSwitchLoading &&
@@ -4736,53 +4615,28 @@ export default function PlaylistBrowser() {
       <div style={{ marginTop: 12 }}>
         {mode === "tracks" || mode === "albums" ? (
           !(mode === "tracks" ? selectedTrackId : selectedAlbumId) && loadingTracksList ? (
-            <InlineStatusBanner tone="info" title="Laden" message="Tracks laden..." />
+            <span className="text-body">Tracks laden...</span>
           ) : null
         ) : loadingTracks || (loadingMoreTracks && tracks.length === 0) ? (
-          <InlineStatusBanner tone="info" title="Laden" message="Tracks laden..." />
+          <span className="text-body">Tracks laden...</span>
         ) : null}
         {activeTrackMissingInRows && activeTrackHydrating ? (
-          <InlineStatusBanner
-            tone="warning"
-            title="Synchroniseren"
-            message="Actieve track wordt geladen voor consistente highlight…"
-          />
+          <div className="text-body">Actieve track wordt geladen voor consistente highlight…</div>
         ) : null}
         {activeTrackMissingInRows && activeTrackHydrationRetryAfterMs ? (
-          <InlineStatusBanner
-            tone="warning"
-            title="Rate limit"
-            message={`Spotify rate limit actief, opnieuw proberen over ${Math.max(
-              1,
-              Math.ceil(activeTrackHydrationRetryAfterMs / 1000)
-            )}s.`}
-          />
+          <div className="text-subtle">
+            Spotify rate limit actief, opnieuw proberen over{" "}
+            {Math.max(1, Math.ceil(activeTrackHydrationRetryAfterMs / 1000))}s.
+          </div>
         ) : null}
         {activeTrackMissingInRows && !activeTrackHydrating && activeTrackHydrationError ? (
-          <InlineStatusBanner
-            tone="error"
-            title="Highlight sync"
-            message={activeTrackHydrationError}
-          />
-        ) : null}
-        {queueToast ? (
-          <InlineStatusBanner
-            tone="success"
-            title="Queue"
-            message={queueToast.message}
-            action={
-              queueToast.actionLabel && queueToast.onAction
-                ? {
-                    label: queueToast.actionLabel,
-                    onClick: queueToast.onAction,
-                  }
-                : undefined
-            }
-          />
+          <div className="text-subtle">{activeTrackHydrationError}</div>
         ) : null}
       </div>
       {error ? (
-        <InlineStatusBanner tone="error" title="Fout" message={error} />
+        <div style={{ color: "#fca5a5" }} role="alert">
+          <p>{error}</p>
+        </div>
       ) : null}
 
       {selectedTrackDetail && !selectedArtistDetail ? (
@@ -5251,13 +5105,6 @@ type AddToPlaylistMenuProps = {
   onOpen?: () => void;
 };
 
-type QueueToastState = {
-  id: string;
-  message: string;
-  actionLabel?: string;
-  onAction?: () => void;
-};
-
 function AddToPlaylistMenu({
   track,
   options,
@@ -5272,7 +5119,6 @@ function AddToPlaylistMenu({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [initialSelectedIds, setInitialSelectedIds] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
-  const [filterQuery, setFilterQuery] = useState("");
   const buildSelectedFromTracks = useCallback(
     (values: Array<TrackRow | TrackItem>) => {
       const candidates = dedupeTracksForBulkApply(values);
@@ -5330,31 +5176,6 @@ function AddToPlaylistMenu({
     1,
     dedupeTracksForBulkApply(applyTracks.length ? applyTracks : [track]).length
   );
-  const pendingChangesCount = useMemo(() => {
-    let count = 0;
-    for (const option of options) {
-      const selected = selectedIds.has(option.id);
-      const initial = initialSelectedIds.has(option.id);
-      if (selected !== initial) count += 1;
-    }
-    return count;
-  }, [initialSelectedIds, options, selectedIds]);
-  const visibleOptions = useMemo(() => {
-    const query = filterQuery.trim().toLowerCase();
-    const filtered = query
-      ? options.filter((option) => option.name.toLowerCase().includes(query))
-      : options;
-    return [...filtered].sort((a, b) => {
-      const aChecked = selectedIds.has(a.id) ? 1 : 0;
-      const bChecked = selectedIds.has(b.id) ? 1 : 0;
-      if (aChecked !== bChecked) return bChecked - aChecked;
-      return a.name.localeCompare(b.name, "nl", {
-        sensitivity: "base",
-        ignorePunctuation: true,
-        numeric: true,
-      });
-    });
-  }, [filterQuery, options, selectedIds]);
 
   return (
     <div
@@ -5383,7 +5204,6 @@ function AddToPlaylistMenu({
               const selected = buildSelectedFromTracks(targets);
               setSelectedIds(selected);
               setInitialSelectedIds(selected);
-              setFilterQuery("");
               onOpen?.();
               return true;
             }
@@ -5406,61 +5226,10 @@ function AddToPlaylistMenu({
               {effectiveTrackCount} tracks geselecteerd
             </div>
           ) : null}
-          <div
-            style={{
-              display: "grid",
-              gap: 8,
-              padding: "6px 8px 8px",
-              borderBottom: "1px solid rgba(255,255,255,0.08)",
-            }}
-          >
-            <input
-              type="text"
-              className="combo-input"
-              placeholder="Zoek playlists…"
-              value={filterQuery}
-              onChange={(event) => setFilterQuery(event.currentTarget.value)}
-            />
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => {
-                  setSelectedIds((prev) => {
-                    const next = new Set(prev);
-                    for (const option of visibleOptions) next.add(option.id);
-                    return next;
-                  });
-                }}
-              >
-                Selecteer zichtbare
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => {
-                  setSelectedIds((prev) => {
-                    const next = new Set(prev);
-                    for (const option of visibleOptions) next.delete(option.id);
-                    return next;
-                  });
-                }}
-              >
-                Deselecteer zichtbare
-              </button>
-            </div>
-            <div className="text-subtle" style={{ fontSize: "0.74rem" }}>
-              {pendingChangesCount > 0
-                ? `${pendingChangesCount} wijziging(en) worden toegepast bij sluiten.`
-                : "Geen openstaande wijzigingen."}
-            </div>
-          </div>
           {options.length === 0 ? (
             <div className="combo-empty">Geen playlist-doelen.</div>
-          ) : visibleOptions.length === 0 ? (
-            <div className="combo-empty">Geen playlists gevonden voor deze zoekterm.</div>
           ) : (
-            visibleOptions.map((option) => {
+            options.map((option) => {
               const opKey = `${trackId}:${option.id}`;
               const busy = submitting || activeTargetKey === opKey;
               const checked = selectedIds.has(option.id);

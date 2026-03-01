@@ -377,7 +377,8 @@ export default function SpotifyPlayer({
     durationMs: number;
   } | null>(null);
   const [currentTrackIdState, setCurrentTrackIdState] = useState<string | null>(null);
-  const [, setPlaybackFocusState] = useState<PlaybackFocus>(DEFAULT_PLAYBACK_FOCUS);
+  const [playbackFocusState, setPlaybackFocusState] =
+    useState<PlaybackFocus>(DEFAULT_PLAYBACK_FOCUS);
   const [currentTrackLiked, setCurrentTrackLiked] = useState<boolean | null>(null);
   const [likedStateLoading, setLikedStateLoading] = useState(false);
   const [likedStateSaving, setLikedStateSaving] = useState(false);
@@ -450,7 +451,7 @@ export default function SpotifyPlayer({
   const lastConfirmedActiveDeviceRef = useRef<{ id: string; at: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playbackTouched, setPlaybackTouched] = useState(false);
-  const [optimisticTrack, setOptimisticTrack] = useState<{
+  const [, setOptimisticTrack] = useState<{
     name: string;
     artists: string;
     album: string;
@@ -556,6 +557,7 @@ export default function SpotifyPlayer({
   const lastTrackIdRef = useRef<string | null>(null);
   const pendingTrackIdRef = useRef<string | null>(null);
   const currentTrackIdRef = useRef<string | null>(null);
+  const lastQueueActiveTrackIdRef = useRef<string | null>(null);
   const hasConfirmedLivePlaybackRef = useRef(false);
   const playbackFocusRef = useRef<PlaybackFocus>(DEFAULT_PLAYBACK_FOCUS);
   const operationEpochRef = useRef(0);
@@ -1041,39 +1043,59 @@ export default function SpotifyPlayer({
   }, [currentTrackIdState, customQueue.items]);
   const queueDisplayItems = useMemo(() => {
     if (!queueItems.length) return [];
-    const activeId = normalizePlaybackTrackId(currentTrackIdState);
-    const withIndex = queueItems.map((item, index) => ({
+    const activeCandidates = new Set<string>();
+    const pushActiveCandidate = (value: unknown) => {
+      const id = normalizePlaybackTrackId(value);
+      if (!id) return;
+      activeCandidates.add(id);
+    };
+    pushActiveCandidate(playbackFocusState.trackId);
+    for (const value of playbackFocusState.matchTrackIds) {
+      pushActiveCandidate(value);
+    }
+    pushActiveCandidate(currentTrackIdState);
+    const fallbackActiveId = lastQueueActiveTrackIdRef.current;
+    const normalized = queueItems.map((item, index) => ({
       ...item,
       _index: index,
+      _normalizedId: normalizePlaybackTrackId(item.id),
     }));
-    if (!activeId) {
-      return withIndex.map((item) => ({
-        ...item,
-        isCurrent: item.isCurrent,
-      }));
+
+    let activeIndex = -1;
+    if (activeCandidates.size > 0) {
+      activeIndex = normalized.findIndex(
+        (item) => Boolean(item._normalizedId) && activeCandidates.has(item._normalizedId as string)
+      );
     }
-    let activeConsumed = false;
-    const normalized = withIndex.map((item) => {
-      const itemId = normalizePlaybackTrackId(item.id);
-      const isCurrent =
-        !activeConsumed && Boolean(itemId) && itemId === activeId;
-      if (isCurrent) {
-        activeConsumed = true;
+    if (activeIndex < 0 && fallbackActiveId) {
+      activeIndex = normalized.findIndex(
+        (item) => Boolean(item._normalizedId) && item._normalizedId === fallbackActiveId
+      );
+    }
+    if (activeIndex < 0) {
+      activeIndex = normalized.findIndex((item) => item.isCurrent);
+    }
+
+    if (activeIndex >= 0) {
+      const activeNormalizedId = normalized[activeIndex]?._normalizedId;
+      if (activeNormalizedId) {
+        lastQueueActiveTrackIdRef.current = activeNormalizedId;
       }
-      return {
-        ...item,
-        isCurrent,
-      };
-    });
-    const activeIndex = normalized.findIndex((item) => item.isCurrent);
-    if (activeIndex <= 0) {
-      return normalized;
     }
-    const activeItem = normalized[activeIndex];
-    const before = normalized.slice(0, activeIndex);
-    const after = normalized.slice(activeIndex + 1);
+
+    const marked = normalized.map((item, index) => ({
+      ...item,
+      isCurrent: activeIndex >= 0 && index === activeIndex,
+    }));
+
+    if (activeIndex <= 0) {
+      return marked;
+    }
+    const activeItem = marked[activeIndex];
+    const before = marked.slice(0, activeIndex);
+    const after = marked.slice(activeIndex + 1);
     return [activeItem, ...before, ...after];
-  }, [currentTrackIdState, queueItems]);
+  }, [currentTrackIdState, playbackFocusState.matchTrackIds, playbackFocusState.trackId, queueItems]);
   const selectableDevicesCount = useMemo(
     () => devices.filter((device) => device.selectable).length,
     [devices]
@@ -5312,12 +5334,24 @@ export default function SpotifyPlayer({
       (playbackPausedUi
         ? Boolean(playbackDisallows.resuming)
         : Boolean(playbackDisallows.pausing)));
+  const showLiveTrackInPlayer =
+    Boolean(currentTrackIdState) &&
+    Boolean(playerState?.name) &&
+    !playbackFocusState.stale &&
+    playbackFocusState.status !== "idle" &&
+    playbackFocusState.status !== "ended" &&
+    playbackFocusState.status !== "error";
+  const playerTitleText = showLiveTrackInPlayer
+    ? playerState?.name ?? "Unknown track"
+    : "Select track";
+  const playerArtistText = showLiveTrackInPlayer ? playerState?.artists ?? "" : "";
+  const playerAlbumText = showLiveTrackInPlayer ? playerState?.album ?? "" : "";
 
   return (
     <div className="player-card">
       <div className="player-main">
         <div className="player-cover">
-          {playerState?.coverUrl ? (
+          {showLiveTrackInPlayer && playerState?.coverUrl ? (
             <Image
               src={playerState.coverUrl}
               alt={playerState.album || "Album"}
@@ -5331,12 +5365,8 @@ export default function SpotifyPlayer({
         </div>
       <div className="player-meta player-meta-wide">
         <div className="player-title-row">
-          <div className="player-title">
-            {optimisticTrack?.name ||
-              playerState?.name ||
-              (activeDeviceName ? `Afspelen op ${activeDeviceName}` : "Ready to play")}
-          </div>
-          {accessToken && currentTrackIdState ? (
+          <div className="player-title">{playerTitleText}</div>
+          {accessToken && showLiveTrackInPlayer && currentTrackIdState ? (
             <div
               ref={trackPlaylistMenu.rootRef}
               style={{ position: "relative", display: "inline-flex", gap: 8 }}
@@ -5441,23 +5471,15 @@ export default function SpotifyPlayer({
             </div>
           ) : null}
         </div>
-        <div className="text-body">
-          {optimisticTrack?.artists ||
-            playerState?.artists ||
-            (activeDeviceName
-              ? "Selecteer een track in Spotify"
-              : "Select a track to start playback")}
-        </div>
-        {optimisticTrack?.album || playerState?.album ? (
+        {playerArtistText ? <div className="text-body">{playerArtistText}</div> : null}
+        {playerAlbumText ? (
           <div className="text-subtle">
-            {optimisticTrack?.album || playerState?.album}
+            {playerAlbumText}
           </div>
         ) : null}
         {playerErrorMessage &&
         playbackTouched &&
-        !(playerState && !playerState.paused) &&
-        !optimisticTrack?.name &&
-        !playerState?.name &&
+        !showLiveTrackInPlayer &&
         !activeDeviceName &&
         !deviceId &&
         !deviceMissing ? (

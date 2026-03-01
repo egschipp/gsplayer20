@@ -66,11 +66,11 @@ export async function GET(
   }
 
   const { searchParams } = new URL(req.url);
-  const limitValue = Number(searchParams.get("limit") ?? "50");
+  const limitValue = Number(searchParams.get("limit") ?? "100");
   const limit =
     Number.isFinite(limitValue) && limitValue > 0
-      ? Math.min(Math.floor(limitValue), 50)
-      : 50;
+      ? Math.min(Math.floor(limitValue), 100)
+      : 100;
   const cursor = searchParams.get("cursor");
   const live = searchParams.get("live") === "1";
   const trackIdParam = searchParams.get("trackId");

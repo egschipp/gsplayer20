@@ -6,6 +6,7 @@ import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
 import { type QueueItem } from "@/lib/queue/types";
+import { animateScrollTop } from "@/lib/ui/smoothScroll";
 import styles from "./QueuePageClient.module.css";
 
 function formatDuration(ms: number | null) {
@@ -183,9 +184,12 @@ export default function QueuePageClient() {
     if (!container) return;
     const row = container.querySelector<HTMLElement>(`[data-queue-id="${activeQueueId}"]`);
     if (!row) return;
-    row.scrollIntoView({
-      block: "nearest",
-      behavior: "smooth",
+    const rowTop = row.offsetTop;
+    const centeredTop = rowTop - Math.max(0, (container.clientHeight - row.offsetHeight) / 2);
+    animateScrollTop(container, centeredTop, {
+      minDurationMs: 340,
+      maxDurationMs: 980,
+      pxPerMs: 2.1,
     });
   }, [activeQueueId]);
 

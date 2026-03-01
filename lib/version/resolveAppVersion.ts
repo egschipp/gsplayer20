@@ -22,6 +22,29 @@ function isPlaceholderVersion(input: string | null | undefined) {
   return value === "0.0.0" || value === "0.0" || value === "0";
 }
 
+function parseSemver(input: string | null | undefined) {
+  if (!input) return null;
+  const normalized = normalizeVersionTag(input);
+  if (!normalized) return null;
+  const match = normalized.match(/^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
+  if (!match) return null;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+  };
+}
+
+function compareSemver(a: string, b: string) {
+  const left = parseSemver(a);
+  const right = parseSemver(b);
+  if (!left || !right) return null;
+  if (left.major !== right.major) return left.major > right.major ? 1 : -1;
+  if (left.minor !== right.minor) return left.minor > right.minor ? 1 : -1;
+  if (left.patch !== right.patch) return left.patch > right.patch ? 1 : -1;
+  return 0;
+}
+
 async function readPackageVersion(): Promise<{ name: string; version: string }> {
   try {
     const pkgPath = path.join(process.cwd(), "package.json");
@@ -49,15 +72,34 @@ export async function resolveAppVersion(options?: {
   const envVersion = normalizeVersionTag(
     options?.envVersion ?? process.env.APP_RELEASE_VERSION
   );
-  if (envVersion && !isPlaceholderVersion(envVersion)) {
+  const hasEnvVersion = Boolean(envVersion && !isPlaceholderVersion(envVersion));
+  const hasPackageVersion = !isPlaceholderVersion(packageVersion.version);
+
+  if (hasEnvVersion && hasPackageVersion) {
+    const comparison = compareSemver(envVersion!, packageVersion.version);
+    if (comparison === null || comparison >= 0) {
+      return {
+        name: packageVersion.name,
+        version: envVersion!,
+        source: "env",
+      };
+    }
     return {
       name: packageVersion.name,
-      version: envVersion,
+      version: packageVersion.version,
+      source: "package",
+    };
+  }
+
+  if (hasEnvVersion) {
+    return {
+      name: packageVersion.name,
+      version: envVersion!,
       source: "env",
     };
   }
 
-  if (!isPlaceholderVersion(packageVersion.version)) {
+  if (hasPackageVersion) {
     return {
       name: packageVersion.name,
       version: packageVersion.version,

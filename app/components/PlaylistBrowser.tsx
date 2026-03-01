@@ -44,6 +44,7 @@ import {
   TRACK_GRID_COLUMNS_FULL,
   TRACK_ROW_HEIGHT,
 } from "@/lib/ui/trackLayout";
+import { animateScrollToIndex } from "@/lib/ui/smoothScroll";
 
 function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   if (!track) return null;
@@ -187,21 +188,6 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
     artworkUrl,
     playlists,
   };
-}
-
-function smoothScrollVirtualListToIndex(
-  outer: HTMLDivElement | null,
-  index: number,
-  rowHeight: number
-) {
-  if (!outer || index < 0) return;
-  const maxTop = Math.max(0, outer.scrollHeight - outer.clientHeight);
-  const targetTop = Math.min(maxTop, Math.max(0, index * rowHeight));
-  if (Math.abs(outer.scrollTop - targetTop) < 1) return;
-  outer.scrollTo({
-    top: targetTop,
-    behavior: "smooth",
-  });
 }
 
 function normalizeTrackName(value: string | null | undefined) {
@@ -527,6 +513,14 @@ type TrackPageLoadResult = {
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const TRACK_PAGE_SIZE = 100;
+const TRACK_PAGE_SIZE_PARAM = String(TRACK_PAGE_SIZE);
+const TRACK_LIST_WARMUP_TARGET = 500;
+const TRACK_LIST_PREFETCH_MAX_PAGES = Math.max(
+  1,
+  Math.ceil((TRACK_LIST_WARMUP_TARGET - TRACK_PAGE_SIZE) / TRACK_PAGE_SIZE)
+);
+const TRACK_LIST_PREFETCH_DELAY_MS = 90;
 
 function getFocusableElements(root: HTMLElement | null) {
   if (!root) return [] as HTMLElement[];
@@ -2224,7 +2218,11 @@ export default function PlaylistBrowser() {
     if (activeTrackIndexInRows < 0) return;
     if (mode !== "playlists" && mode !== "artists") return;
     window.requestAnimationFrame(() => {
-      smoothScrollVirtualListToIndex(trackRowsOuterRef.current, activeTrackIndexInRows, TRACK_ROW_HEIGHT);
+      animateScrollToIndex(trackRowsOuterRef.current, activeTrackIndexInRows, TRACK_ROW_HEIGHT, {
+        minDurationMs: 360,
+        maxDurationMs: 1150,
+        pxPerMs: 2.0,
+      });
     });
   }, [activeTrackIndexInRows, mode]);
 
@@ -2232,10 +2230,15 @@ export default function PlaylistBrowser() {
     if (activeTrackIndexInItems < 0) return;
     if (mode !== "tracks" && mode !== "albums") return;
     window.requestAnimationFrame(() => {
-      smoothScrollVirtualListToIndex(
+      animateScrollToIndex(
         trackItemsOuterRef.current,
         activeTrackIndexInItems,
-        TRACK_ROW_HEIGHT
+        TRACK_ROW_HEIGHT,
+        {
+          minDurationMs: 360,
+          maxDurationMs: 1150,
+          pxPerMs: 2.0,
+        }
       );
     });
   }, [activeTrackIndexInItems, mode]);
@@ -2252,7 +2255,7 @@ export default function PlaylistBrowser() {
     try {
       const res = await fetch(
         buildApiUrl("/api/spotify/me/playlists", {
-          limit: "50",
+          limit: "100",
           cursor: playlistCursor,
           live: "1",
         }),
@@ -2328,7 +2331,7 @@ export default function PlaylistBrowser() {
     try {
       const res = await fetch(
         buildApiUrl("/api/spotify/artists", {
-          limit: "50",
+          limit: "100",
           cursor: artistCursor,
         }),
         { cache: "no-store" }
@@ -2864,7 +2867,7 @@ export default function PlaylistBrowser() {
               : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
             : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
         const connector = baseUrl.includes("?") ? "&" : "?";
-        const res = await fetch(`${baseUrl}${connector}limit=50`, {
+        const res = await fetch(`${baseUrl}${connector}limit=${TRACK_PAGE_SIZE_PARAM}`, {
           cache: "no-store",
         });
         if (!res.ok) {
@@ -3077,7 +3080,7 @@ export default function PlaylistBrowser() {
         };
       }
       const url = buildApiUrl(source.baseUrl, {
-        limit: "50",
+        limit: TRACK_PAGE_SIZE_PARAM,
         cursor,
       });
       const res = await fetch(url, { cache: "no-store" });
@@ -3201,7 +3204,7 @@ export default function PlaylistBrowser() {
       autoTrackListPrefetchContextRef.current = tracksContextKey;
       autoTrackListPrefetchCountRef.current = 0;
     }
-    if (autoTrackListPrefetchCountRef.current >= 3) return;
+    if (autoTrackListPrefetchCountRef.current >= TRACK_LIST_PREFETCH_MAX_PAGES) return;
     const timeout = window.setTimeout(() => {
       if (loadingMoreTracksRef.current) return;
       void (async () => {
@@ -3210,7 +3213,7 @@ export default function PlaylistBrowser() {
           autoTrackListPrefetchCountRef.current += 1;
         }
       })();
-    }, 180);
+    }, TRACK_LIST_PREFETCH_DELAY_MS);
     return () => window.clearTimeout(timeout);
   }, [loadMore, loadingMoreTracks, loadingTracks, mode, nextCursor, tracksContextKey]);
 
@@ -3276,7 +3279,7 @@ export default function PlaylistBrowser() {
             if (typeof targetPosition === "number" && Number.isFinite(targetPosition)) {
               const loadedCount = tracksRef.current.length;
               const remaining = Math.max(0, Math.floor(targetPosition) - loadedCount + 1);
-              const pagesNeeded = Math.ceil(remaining / 50) + 3;
+              const pagesNeeded = Math.ceil(remaining / TRACK_PAGE_SIZE) + 3;
               maxAttempts = Math.max(20, Math.min(40, pagesNeeded));
             }
           }

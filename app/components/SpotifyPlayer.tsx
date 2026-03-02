@@ -60,6 +60,7 @@ const PLAYBACK_INTENT_MAX_AGE_MS = 15_000;
 const LOCAL_PLAYER_BOOT_RETRY_MS = [0, 1_500] as const;
 const REMOTE_SNAPSHOT_GRACE_MS = 4_500;
 const DEVICE_SWITCH_SYNC_BOOST_MS = 8_000;
+const TRANSIENT_PLAYBACK_GAP_MAX_MS = 120_000;
 
 type PlayerPlaylistOption = {
   id: string;
@@ -2287,10 +2288,24 @@ export default function SpotifyPlayer({
             activeDevice !== sdkDevice &&
             data?.device?.id === activeDevice
         );
+        const remoteDeviceFromSnapshot = Boolean(
+          data?.device?.id && sdkDevice && data.device.id !== sdkDevice
+        );
+        const inRateLimitBackoff = nowMs < rateLimitRef.current.until;
         const hasRecentPlayableTrack =
           Boolean(currentTrackIdRef.current) &&
-          nowMs - lastPlayableTrackSeenAtRef.current < REMOTE_SNAPSHOT_GRACE_MS;
-        if (remoteDeviceActive && hasRecentPlayableTrack) {
+          nowMs - lastPlayableTrackSeenAtRef.current <
+            (inRateLimitBackoff || remoteDeviceActive || remoteDeviceFromSnapshot
+              ? TRANSIENT_PLAYBACK_GAP_MAX_MS
+              : REMOTE_SNAPSHOT_GRACE_MS);
+        const shouldPreserveTrackState =
+          Boolean(currentTrackIdRef.current) &&
+          (Boolean(data?.is_playing) ||
+            remoteDeviceActive ||
+            remoteDeviceFromSnapshot ||
+            inRateLimitBackoff ||
+            hasRecentPlayableTrack);
+        if (shouldPreserveTrackState) {
           setPlaybackTrackState(currentTrackIdRef.current, {
             matchTrackIds: playbackFocusRef.current.matchTrackIds,
             isPlaying: typeof data?.is_playing === "boolean" ? data.is_playing : false,
@@ -3900,7 +3915,12 @@ export default function SpotifyPlayer({
         const remoteDeviceActive = Boolean(
           activeDevice && sdkDevice && activeDevice !== sdkDevice
         );
-        if (remoteDeviceActive && currentTrackIdRef.current) {
+        const nowMs = Date.now();
+        const inRateLimitBackoff = nowMs < rateLimitRef.current.until;
+        const hasRecentPlayableTrack =
+          Boolean(currentTrackIdRef.current) &&
+          nowMs - lastPlayableTrackSeenAtRef.current < TRANSIENT_PLAYBACK_GAP_MAX_MS;
+        if ((remoteDeviceActive || inRateLimitBackoff || hasRecentPlayableTrack) && currentTrackIdRef.current) {
           setPlaybackTrackState(currentTrackIdRef.current, {
             matchTrackIds: playbackFocusRef.current.matchTrackIds,
             isPlaying: playbackFocusRef.current.isPlaying,

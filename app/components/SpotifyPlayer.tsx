@@ -725,7 +725,6 @@ export default function SpotifyPlayer({
   const reconnectAttemptsRef = useRef(0);
   const playerCleanupRef = useRef<(() => void) | null>(null);
   const autoBootAttemptedRef = useRef(false);
-  const backgroundHandoffInFlightRef = useRef(false);
   const remoteTakeoverCandidateRef = useRef<{
     deviceId: string;
     firstSeenAt: number;
@@ -1128,10 +1127,6 @@ export default function SpotifyPlayer({
   const enablePlaybackStream = useMemo(
     () => process.env.NEXT_PUBLIC_SPOTIFY_CONNECT_STREAM === "1",
     []
-  );
-  const isIosWebplayer = useMemo(
-    () => localWebplayerPlatform === "iPad" || localWebplayerPlatform === "iPhone",
-    [localWebplayerPlatform]
   );
   const sdkSupport = useMemo(() => getWebPlaybackSdkSupport(), []);
   const sdkSupported = sdkSupport.supported;
@@ -4626,64 +4621,10 @@ export default function SpotifyPlayer({
       await restoreLocalSdkAudioIfNeeded();
     }
 
-    async function attemptBackgroundHandoff() {
-      if (!isIosWebplayer) return;
-      if (backgroundHandoffInFlightRef.current) return;
-      const sdkDeviceId = sdkDeviceIdRef.current;
-      const activeDevice = activeDeviceIdRef.current || deviceIdRef.current;
-      if (!sdkDeviceId || !activeDevice || activeDevice !== sdkDeviceId) return;
-      if (playerStateRef.current?.paused) return;
-      if (!accessTokenRef.current) return;
-
-      const candidate = devices.find(
-        (device) =>
-          device.selectable &&
-          !device.isRestricted &&
-          device.id !== sdkDeviceId
-      );
-      if (!candidate) return;
-
-      backgroundHandoffInFlightRef.current = true;
-      preferSdkDeviceRef.current = false;
-      pendingDeviceIdRef.current = candidate.id;
-      lastDeviceSelectRef.current = Date.now();
-
-      try {
-        const handoffContext = await captureDeviceSwitchContext();
-        const ok = await transferPlayback(candidate.id, false, activeDevice);
-
-        if (ok) {
-          if (handoffContext.wasPlaying) {
-            await resumeAfterDeviceSwitch(candidate.id, handoffContext);
-          }
-          setActiveDevice(candidate.id, candidate.name ?? null);
-          setActiveDeviceRestricted(Boolean(candidate.isRestricted));
-          setActiveDevicePrivateSession(Boolean(candidate.isPrivateSession));
-          setActiveDeviceSupportsVolume(candidate.supportsVolume !== false);
-          lastConfirmedActiveDeviceRef.current = { id: candidate.id, at: Date.now() };
-          pendingDeviceIdRef.current = null;
-          setDeviceReady(true);
-          setError(null);
-          refreshDevices(true);
-        } else if (pendingDeviceIdRef.current === candidate.id) {
-          pendingDeviceIdRef.current = null;
-        }
-      } catch {
-        if (pendingDeviceIdRef.current === candidate.id) {
-          pendingDeviceIdRef.current = null;
-        }
-      } finally {
-        backgroundHandoffInFlightRef.current = false;
-      }
-    }
     const handleWindowResume = () => {
       void handleFocusOrResume();
     };
     function handleVisibility() {
-      if (document.visibilityState === "hidden") {
-        void attemptBackgroundHandoff();
-        return;
-      }
       if (document.visibilityState === "visible") {
         void handleFocusOrResume();
       }
@@ -4700,12 +4641,9 @@ export default function SpotifyPlayer({
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [
-    devices,
     ensurePlaybackStarted,
-    isIosWebplayer,
     refreshClientAccessToken,
     refreshDevices,
-    setActiveDevice,
     syncPlaybackState,
   ]);
 

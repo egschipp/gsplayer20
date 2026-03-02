@@ -725,7 +725,6 @@ export default function SpotifyPlayer({
   const reconnectAttemptsRef = useRef(0);
   const playerCleanupRef = useRef<(() => void) | null>(null);
   const autoBootAttemptedRef = useRef(false);
-  const backgroundHandoffInFlightRef = useRef(false);
   const remoteTakeoverCandidateRef = useRef<{
     deviceId: string;
     firstSeenAt: number;
@@ -4106,19 +4105,9 @@ export default function SpotifyPlayer({
           };
           const startIndex = Math.max(0, Math.min(resolvedIndex, uris.length - 1));
 
-          const canFastPathReadyCheck = (() => {
-            const confirmed = lastConfirmedActiveDeviceRef.current;
-            return Boolean(
-              confirmed &&
-                confirmed.id === (currentDevice as string) &&
-                Date.now() - confirmed.at < 12_000
-            );
-          })();
           // For explicit track/context selection we must not auto-resume old playback
           // during device transfer, otherwise a short stale-audio blip can be heard.
-          const ready = canFastPathReadyCheck
-            ? true
-            : await ensureActiveDevice(currentDevice as string, token, false);
+          const ready = await ensureActiveDevice(currentDevice as string, token, false);
           if (!ready) {
             const preparedDevice = await waitForPlayableDevice(5_000);
             if (preparedDevice) {
@@ -4141,6 +4130,16 @@ export default function SpotifyPlayer({
               "Spotify‑apparaat is nog niet klaar. Probeer opnieuw."
             );
           }
+          const shuffleReady = await setRemoteShuffleState(
+            shuffleOnRef.current,
+            currentDevice as string,
+            token,
+            false
+          );
+          if (!shuffleReady) {
+            setError("Shuffle status kon niet worden toegepast op dit apparaat.");
+          }
+
           const attemptPlay = async () => {
             return spotifyApiFetch(
               withDeviceId(
@@ -4213,8 +4212,21 @@ export default function SpotifyPlayer({
           }
           if (playRes.ok) {
             const expectedTrackId = resolveTrackIdFromUri(resolvedUri);
-            setError(null);
-            emitPlaybackMetric("play_start_success", 1, { mode: "queue" });
+            const started = await ensurePlaybackStartedWithRetry({
+              deviceId: currentDevice as string,
+              expectedTrackId,
+              replay: attemptPlay,
+            });
+            if (!started) {
+              setError("Track startte niet direct. Probeer opnieuw.");
+              emitPlaybackMetric("play_start_failed", 1, {
+                mode: "queue",
+                reason: "not_started_after_retry",
+              });
+            } else {
+              setError(null);
+              emitPlaybackMetric("play_start_success", 1, { mode: "queue" });
+            }
             queueModeRef.current = "queue";
             queueUrisRef.current = uris;
             queueIndexRef.current = startIndex;
@@ -4233,38 +4245,6 @@ export default function SpotifyPlayer({
               trackChangeLockUntilRef.current = Date.now() + 3000;
             }
             schedulePlaybackVerify(280, "api_verify", operationEpoch);
-
-            // Keep UI responsiveness high; confirm startup in background.
-            void (async () => {
-              const started = await ensurePlaybackStartedWithRetry({
-                deviceId: currentDevice as string,
-                expectedTrackId,
-                replay: attemptPlay,
-              });
-              if (!started) {
-                setError("Track startte niet direct. Probeer opnieuw.");
-                emitPlaybackMetric("play_start_failed", 1, {
-                  mode: "queue",
-                  reason: "not_started_after_retry",
-                });
-                return;
-              }
-              emitPlaybackMetric("play_start_verified", 1, { mode: "queue" });
-            })();
-
-            if (shuffleOnRef.current) {
-              void (async () => {
-                const shuffleReady = await setRemoteShuffleState(
-                  true,
-                  currentDevice as string,
-                  token,
-                  false
-                );
-                if (!shuffleReady) {
-                  setError("Shuffle status kon niet worden toegepast op dit apparaat.");
-                }
-              })();
-            }
           }
         }),
       playContext: async (contextUri, offsetPosition, offsetUri) =>
@@ -4335,19 +4315,9 @@ export default function SpotifyPlayer({
             await playerRef.current?.activateElement?.();
           }
 
-          const canFastPathReadyCheck = (() => {
-            const confirmed = lastConfirmedActiveDeviceRef.current;
-            return Boolean(
-              confirmed &&
-                confirmed.id === (currentDevice as string) &&
-                Date.now() - confirmed.at < 12_000
-            );
-          })();
           // For explicit track/context selection we must not auto-resume old playback
           // during device transfer, otherwise a short stale-audio blip can be heard.
-          const ready = canFastPathReadyCheck
-            ? true
-            : await ensureActiveDevice(currentDevice as string, token, false);
+          const ready = await ensureActiveDevice(currentDevice as string, token, false);
           if (!ready) {
             const preparedDevice = await waitForPlayableDevice(5_000);
             if (preparedDevice) {
@@ -4453,8 +4423,21 @@ export default function SpotifyPlayer({
           }
           if (contextRes.ok) {
             const expectedTrackId = resolveTrackIdFromUri(offsetUri ?? null);
-            setError(null);
-            emitPlaybackMetric("play_start_success", 1, { mode: "context" });
+            const started = await ensurePlaybackStartedWithRetry({
+              deviceId: currentDevice as string,
+              expectedTrackId,
+              replay: attemptContextPlay,
+            });
+            if (!started) {
+              setError("Track startte niet direct. Probeer opnieuw.");
+              emitPlaybackMetric("play_start_failed", 1, {
+                mode: "context",
+                reason: "not_started_after_retry",
+              });
+            } else {
+              setError(null);
+              emitPlaybackMetric("play_start_success", 1, { mode: "context" });
+            }
             queueModeRef.current = "context";
             queueUrisRef.current = null;
             queueOrderRef.current = null;
@@ -4466,36 +4449,16 @@ export default function SpotifyPlayer({
               trackChangeLockUntilRef.current = Date.now() + 3000;
             }
             schedulePlaybackVerify(280, "api_verify", operationEpoch);
-
-            // Keep UI responsiveness high; confirm startup in background.
-            void (async () => {
-              const started = await ensurePlaybackStartedWithRetry({
-                deviceId: currentDevice as string,
-                expectedTrackId,
-                replay: attemptContextPlay,
-              });
-              if (!started) {
-                setError("Track startte niet direct. Probeer opnieuw.");
-                emitPlaybackMetric("play_start_failed", 1, {
-                  mode: "context",
-                  reason: "not_started_after_retry",
-                });
-                return;
-              }
-              emitPlaybackMetric("play_start_verified", 1, { mode: "context" });
-            })();
           }
-          void (async () => {
-            const shuffleReady = await setRemoteShuffleState(
-              shuffleOnRef.current,
-              currentDevice as string,
-              token,
-              false
-            );
-            if (!shuffleReady) {
-              setError("Shuffle status kon niet worden toegepast op dit apparaat.");
-            }
-          })();
+          const shuffleReady = await setRemoteShuffleState(
+            shuffleOnRef.current,
+            currentDevice as string,
+            token,
+            false
+          );
+          if (!shuffleReady) {
+            setError("Shuffle status kon niet worden toegepast op dit apparaat.");
+          }
         }),
       togglePlay: async () =>
         handleTogglePlay(),
@@ -4658,62 +4621,10 @@ export default function SpotifyPlayer({
       await restoreLocalSdkAudioIfNeeded();
     }
 
-    async function attemptBackgroundContinuityHandoff() {
-      if (backgroundHandoffInFlightRef.current) return;
-      const sdkDeviceId = sdkDeviceIdRef.current;
-      const activeDevice = activeDeviceIdRef.current || deviceIdRef.current;
-      if (!sdkDeviceId || !activeDevice || activeDevice !== sdkDeviceId) return;
-      if (playerStateRef.current?.paused) return;
-      if (!accessTokenRef.current) return;
-
-      const candidate = devices.find(
-        (device) =>
-          device.selectable &&
-          !device.isRestricted &&
-          device.id !== sdkDeviceId
-      );
-      if (!candidate) return;
-
-      backgroundHandoffInFlightRef.current = true;
-      preferSdkDeviceRef.current = false;
-      pendingDeviceIdRef.current = candidate.id;
-      lastDeviceSelectRef.current = Date.now();
-
-      try {
-        const handoffContext = await captureDeviceSwitchContext();
-        const switched = await transferPlayback(candidate.id, false, activeDevice);
-        if (!switched) return;
-
-        if (handoffContext.wasPlaying) {
-          await resumeAfterDeviceSwitch(candidate.id, handoffContext);
-        }
-        setActiveDevice(candidate.id, candidate.name ?? null);
-        setActiveDeviceRestricted(Boolean(candidate.isRestricted));
-        setActiveDevicePrivateSession(Boolean(candidate.isPrivateSession));
-        setActiveDeviceSupportsVolume(candidate.supportsVolume !== false);
-        lastConfirmedActiveDeviceRef.current = { id: candidate.id, at: Date.now() };
-        pendingDeviceIdRef.current = null;
-        setDeviceReady(true);
-        setError(null);
-        refreshDevices(true);
-      } catch {
-        // best effort only; foreground recovery still handles playback state
-      } finally {
-        if (pendingDeviceIdRef.current === candidate.id) {
-          pendingDeviceIdRef.current = null;
-        }
-        backgroundHandoffInFlightRef.current = false;
-      }
-    }
-
     const handleWindowResume = () => {
       void handleFocusOrResume();
     };
     function handleVisibility() {
-      if (document.visibilityState === "hidden") {
-        void attemptBackgroundContinuityHandoff();
-        return;
-      }
       if (document.visibilityState === "visible") {
         void handleFocusOrResume();
       }
@@ -4730,11 +4641,9 @@ export default function SpotifyPlayer({
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [
-    devices,
     ensurePlaybackStarted,
     refreshClientAccessToken,
     refreshDevices,
-    setActiveDevice,
     syncPlaybackState,
   ]);
 

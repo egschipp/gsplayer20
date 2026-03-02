@@ -1656,6 +1656,8 @@ details[open] > .details-summary::after {
   overflow-x: hidden !important;
   overflow-y: auto !important;
   scrollbar-gutter: stable both-edges;
+  padding-bottom: 14px;
+  scroll-padding-bottom: 14px;
   scrollbar-color: rgba(29, 185, 84, 0.55) rgba(255, 255, 255, 0.14);
 }
 

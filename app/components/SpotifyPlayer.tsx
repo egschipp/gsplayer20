@@ -2466,6 +2466,84 @@ export default function SpotifyPlayer({
     [emitPlaybackMetric, getMonotonicNow, refreshAuthorityMode]
   );
 
+  const preserveTransientNoTrackState = useCallback(
+    (args: {
+      source: PlaybackSource | PlaybackFocusSource;
+      isPlaying?: boolean | null;
+      snapshotDeviceId?: string | null;
+      fallbackStatus?: PlaybackFocusStatus;
+      nowMs?: number;
+      confidence?: number;
+    }) => {
+      const nowMs = typeof args.nowMs === "number" ? args.nowMs : Date.now();
+      const activeDevice = activeDeviceIdRef.current || deviceIdRef.current;
+      const sdkDevice = sdkDeviceIdRef.current;
+      const pendingDeviceSwitchActive = Boolean(
+        pendingDeviceIdRef.current &&
+          nowMs - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS
+      );
+      const fallbackTrackId = currentTrackIdRef.current || lastTrackIdRef.current || null;
+      if (!fallbackTrackId) return false;
+      const remoteDeviceActive = Boolean(
+        activeDevice &&
+          sdkDevice &&
+          activeDevice !== sdkDevice &&
+          args.snapshotDeviceId &&
+          args.snapshotDeviceId === activeDevice
+      );
+      const remoteDeviceFromSnapshot = Boolean(
+        args.snapshotDeviceId &&
+          sdkDevice &&
+          args.snapshotDeviceId !== sdkDevice
+      );
+      const inRateLimitBackoff = nowMs < rateLimitRef.current.until;
+      const remoteAuthorityActive =
+        authorityModeRef.current === "remote_primary" ||
+        authorityModeRef.current === "handoff_pending";
+      const staleHoldMs =
+        inRateLimitBackoff ||
+        remoteDeviceActive ||
+        remoteDeviceFromSnapshot ||
+        remoteAuthorityActive ||
+        pendingDeviceSwitchActive
+          ? REMOTE_STALE_TRACK_HOLD_MS
+          : LOCAL_STALE_TRACK_HOLD_MS;
+      const hasRecentPlayableTrack =
+        nowMs - lastPlayableTrackSeenAtRef.current < staleHoldMs;
+      const shouldPreserveTrackState =
+        args.isPlaying === true || hasRecentPlayableTrack || pendingDeviceSwitchActive;
+      if (!shouldPreserveTrackState) return false;
+
+      const inferredPlaying =
+        typeof args.isPlaying === "boolean" ? args.isPlaying : false;
+      const inferredStatus: PlaybackFocusStatus =
+        typeof args.isPlaying === "boolean"
+          ? args.isPlaying
+            ? "playing"
+            : "paused"
+          : args.fallbackStatus ??
+            (playbackFocusRef.current.isPlaying ? "playing" : "paused");
+      setPlaybackTrackState(fallbackTrackId, {
+        matchTrackIds:
+          playbackFocusRef.current.matchTrackIds.length > 0
+            ? playbackFocusRef.current.matchTrackIds
+            : [fallbackTrackId],
+        isPlaying: inferredPlaying,
+        status: inferredStatus,
+        stale: true,
+        source: args.source,
+        confidence:
+          typeof args.confidence === "number" ? args.confidence : 0.75,
+        positionMs: lastKnownPositionRef.current,
+        durationMs: durationMsRef.current,
+        errorMessage: null,
+        updatedAt: nowMs,
+      });
+      return true;
+    },
+    [setPlaybackTrackState]
+  );
+
   const ingestApiSnapshot = useCallback(
     (
       data: any,
@@ -2582,68 +2660,16 @@ export default function SpotifyPlayer({
       const isPlaying = Boolean(data?.is_playing);
       if (!data?.item) {
         const nowMs = Date.now();
-        const activeDevice = activeDeviceIdRef.current || deviceIdRef.current;
-        const sdkDevice = sdkDeviceIdRef.current;
-        const pendingDeviceSwitchActive = Boolean(
-          pendingDeviceIdRef.current &&
-            nowMs - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS
-        );
-        const fallbackTrackId =
-          currentTrackIdRef.current || lastTrackIdRef.current || null;
-        const remoteDeviceActive = Boolean(
-          activeDevice &&
-            sdkDevice &&
-            activeDevice !== sdkDevice &&
-            data?.device?.id === activeDevice
-        );
-        const remoteDeviceFromSnapshot = Boolean(
-          data?.device?.id && sdkDevice && data.device.id !== sdkDevice
-        );
-        const inRateLimitBackoff = nowMs < rateLimitRef.current.until;
-        const remoteAuthorityActive =
-          authorityModeRef.current === "remote_primary" ||
-          authorityModeRef.current === "handoff_pending";
-        const staleHoldMs =
-          inRateLimitBackoff ||
-          remoteDeviceActive ||
-          remoteDeviceFromSnapshot ||
-          remoteAuthorityActive ||
-          pendingDeviceSwitchActive
-            ? REMOTE_STALE_TRACK_HOLD_MS
-            : LOCAL_STALE_TRACK_HOLD_MS;
-        const hasRecentPlayableTrack =
-          Boolean(fallbackTrackId) &&
-          nowMs - lastPlayableTrackSeenAtRef.current < staleHoldMs;
-        const shouldPreserveTrackState =
-          Boolean(fallbackTrackId) &&
-          (Boolean(data?.is_playing) ||
-            hasRecentPlayableTrack ||
-            pendingDeviceSwitchActive);
-        if (shouldPreserveTrackState) {
-          setPlaybackTrackState(fallbackTrackId, {
-            matchTrackIds:
-              playbackFocusRef.current.matchTrackIds.length > 0
-                ? playbackFocusRef.current.matchTrackIds
-                : fallbackTrackId
-                ? [fallbackTrackId]
-                : [],
-            isPlaying: typeof data?.is_playing === "boolean" ? data.is_playing : false,
-            status:
-              typeof data?.is_playing === "boolean"
-                ? data.is_playing
-                  ? "playing"
-                  : "paused"
-                : playbackFocusRef.current.isPlaying
-                ? "playing"
-                : "paused",
-            stale: true,
+        if (
+          preserveTransientNoTrackState({
             source,
+            isPlaying:
+              typeof data?.is_playing === "boolean" ? data.is_playing : null,
+            snapshotDeviceId: eventDeviceId,
+            nowMs,
             confidence: 0.75,
-            positionMs: lastKnownPositionRef.current,
-            durationMs: durationMsRef.current,
-            errorMessage: null,
-            updatedAt: nowMs,
-          });
+          })
+        ) {
           postCrossTabEvent({
             type: "sync",
             at: nowMs,
@@ -2675,6 +2701,26 @@ export default function SpotifyPlayer({
       const trackId = resolvePlaybackTrackId(item);
       const matchTrackIds = resolvePlaybackTrackIds(item);
       if (!trackId || matchTrackIds.length === 0) {
+        const nowMs = Date.now();
+        if (
+          preserveTransientNoTrackState({
+            source,
+            isPlaying:
+              typeof data?.is_playing === "boolean" ? data.is_playing : null,
+            snapshotDeviceId: eventDeviceId,
+            fallbackStatus: "loading",
+            nowMs,
+            confidence: 0.7,
+          })
+        ) {
+          postCrossTabEvent({
+            type: "sync",
+            at: nowMs,
+            source,
+            seq: operationEpochRef.current,
+          });
+          return isPlaying;
+        }
         hasConfirmedLivePlaybackRef.current = false;
         clearPlaybackViewState(
           responseReceivedAtMonoMs,
@@ -2798,6 +2844,7 @@ export default function SpotifyPlayer({
       clearPlaybackViewState,
       emitPlaybackMetric,
       postCrossTabEvent,
+      preserveTransientNoTrackState,
       projectRemoteProgressMs,
       refreshAuthorityMode,
       rebuildQueueOrder,
@@ -3353,6 +3400,18 @@ export default function SpotifyPlayer({
         return;
       }
       if (!trackId || matchTrackIds.length === 0) {
+        if (
+          preserveTransientNoTrackState({
+            source: "sdk",
+            isPlaying: sdkSaysPlaying,
+            snapshotDeviceId: stateDeviceId ?? eventDeviceId ?? null,
+            fallbackStatus: sdkSaysPlaying ? "playing" : "paused",
+            nowMs: Date.now(),
+            confidence: 0.65,
+          })
+        ) {
+          return;
+        }
         clearPlaybackViewState(eventMonoMs, "sdk", sdkSaysPlaying);
         return;
       }
@@ -3446,6 +3505,7 @@ export default function SpotifyPlayer({
       clearPlaybackViewState,
       getMonotonicNow,
       playbackTouched,
+      preserveTransientNoTrackState,
       reconcileProgressPosition,
       refreshAuthorityMode,
       setPlaybackTrackState,

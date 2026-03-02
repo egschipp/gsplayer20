@@ -68,12 +68,12 @@ test("derivePlaybackSnapshot returns loading when playback command is pending bu
     runtimeError: null,
     now: 2_200,
   });
-  assert.equal(snapshot.currentTrackId, null);
+  assert.equal(snapshot.currentTrackId, TRACK_A);
   assert.equal(snapshot.status, "loading");
   assert.equal(snapshot.uiStatus, "loading");
-  assert.equal(snapshot.verifiedPlayable, false);
+  assert.equal(snapshot.verifiedPlayable, true);
   assert.equal(snapshot.reason, "controller_initializing");
-  assert.equal(snapshot.stale, false);
+  assert.equal(snapshot.stale, true);
 });
 
 test("derivePlaybackSnapshot keeps empty when no track exists", () => {
@@ -194,4 +194,40 @@ test("derivePlaybackSnapshot reports error when no active track exists", () => {
   assert.equal(snapshot.verifiedPlayable, false);
   assert.equal(snapshot.reason, "controller_error");
   assert.equal(snapshot.errorMessage, "PLAYER_UNAVAILABLE");
+});
+
+test("derivePlaybackSnapshot keeps last stable track for transient source gaps", () => {
+  const focus = createFocus({
+    trackId: null,
+    isPlaying: null,
+    status: "idle",
+    source: "api_sync",
+    updatedAt: 2_000,
+  });
+  const lastStable = createFocus({
+    trackId: TRACK_B,
+    matchTrackIds: [TRACK_B],
+    isPlaying: false,
+    status: "paused",
+    source: "sdk",
+    updatedAt: 1_000,
+    positionMs: 33_000,
+    durationMs: 180_000,
+  });
+  const { snapshot } = derivePlaybackSnapshot({
+    focus,
+    lastStableFocus: lastStable,
+    controllerStatus: "ready",
+    pendingCommand: null,
+    controllerError: null,
+    runtimeError: null,
+    now: 3_500,
+  });
+  assert.equal(snapshot.currentTrackId, TRACK_B);
+  assert.equal(snapshot.status, "paused");
+  assert.equal(snapshot.uiStatus, "ready");
+  assert.equal(snapshot.verifiedPlayable, true);
+  assert.equal(snapshot.stale, true);
+  assert.equal(snapshot.positionMs, 33_000);
+  assert.equal(snapshot.durationMs, 180_000);
 });

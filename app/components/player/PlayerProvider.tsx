@@ -140,7 +140,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const commandQueueRef = useRef(new PlaybackCommandQueue());
   const playerShellRef = useRef<HTMLDivElement | null>(null);
   const viewport = useViewport();
-  const currentTrackId = playbackFocus.trackId;
   const pathname = usePathname();
   const path = pathname ?? "/";
   const showPlayer = path === "/" || path.startsWith("/gsplayer") || path.startsWith("/queue");
@@ -401,6 +400,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     pendingCommand,
     playbackFocus,
   ]);
+  const currentTrackId = playbackState.currentTrackId;
 
   const value = useMemo(
     () => ({ api, currentTrackId, playbackFocus, playbackState, controller }),

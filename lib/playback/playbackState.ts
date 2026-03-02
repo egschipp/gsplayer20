@@ -9,6 +9,8 @@ import type {
   PlayerPlaybackStatus,
 } from "./playerControllerTypes";
 
+const STABLE_TRACK_SNAPSHOT_GRACE_MS = 4_500;
+
 export type PlaybackSnapshot = {
   currentTrackId: string | null;
   matchTrackIds: string[];
@@ -97,6 +99,22 @@ export function derivePlaybackSnapshot({
 
   const hasControllerError = Boolean(controllerError || runtimeError);
   const hasActiveTrack = Boolean(currentId && matchTrackIds.length > 0);
+  const stableMatchTrackIds = normalizeMatchTrackIds(
+    lastStableFocus.trackId,
+    lastStableFocus.matchTrackIds
+  );
+  const hasStableTrack = Boolean(lastStableFocus.trackId && stableMatchTrackIds.length > 0);
+  const stableUpdatedAt = Number.isFinite(lastStableFocus.updatedAt)
+    ? lastStableFocus.updatedAt
+    : 0;
+  const stableAgeMs = Math.max(0, now - stableUpdatedAt);
+  const stableTrackFresh = hasStableTrack && stableAgeMs <= STABLE_TRACK_SNAPSHOT_GRACE_MS;
+  const initializing =
+    pendingCommand === "play" ||
+    pendingCommand === "toggle" ||
+    pendingCommand === "transfer" ||
+    controllerStatus === "loading";
+
   if (hasControllerError && !hasActiveTrack) {
     status = "error";
     uiStatus = "error";
@@ -107,28 +125,55 @@ export function derivePlaybackSnapshot({
     matchTrackIds = [];
     stale = false;
   } else if (!hasActiveTrack) {
-    if (
-      pendingCommand === "play" ||
-      pendingCommand === "toggle" ||
-      pendingCommand === "transfer" ||
-      controllerStatus === "loading"
-    ) {
-      status = "loading";
-      uiStatus = "loading";
-      verifiedPlayable = false;
-      reason = "controller_initializing";
+    const shouldHoldStableTrack =
+      stableTrackFresh &&
+      (initializing || focus.source !== "system" || Boolean(focus.stale));
+    if (shouldHoldStableTrack) {
+      currentId = lastStableFocus.trackId;
+      matchTrackIds = stableMatchTrackIds;
+      stale = true;
+      status = initializing
+        ? "loading"
+        : lastStableFocus.isPlaying === false
+        ? "paused"
+        : "loading";
+      uiStatus = status === "loading" ? "loading" : "ready";
+      verifiedPlayable = true;
+      reason = initializing ? "controller_initializing" : "missing_match";
+      errorMessage = hasControllerError ? errorMessage : null;
+      positionMs = clampMs(lastStableFocus.positionMs);
+      durationMs = clampMs(lastStableFocus.durationMs);
+      nextStableFocus = {
+        ...lastStableFocus,
+        trackId: currentId,
+        matchTrackIds,
+        status,
+        stale: true,
+        source,
+        positionMs,
+        durationMs,
+        errorMessage,
+        updatedAt,
+      };
     } else {
-      status = "idle";
-      uiStatus = "empty";
-      verifiedPlayable = false;
-      reason = currentId ? "missing_match" : "no_track";
+      if (initializing) {
+        status = "loading";
+        uiStatus = "loading";
+        verifiedPlayable = false;
+        reason = "controller_initializing";
+      } else {
+        status = "idle";
+        uiStatus = "empty";
+        verifiedPlayable = false;
+        reason = currentId ? "missing_match" : "no_track";
+      }
+      currentId = null;
+      matchTrackIds = [];
+      stale = false;
+      errorMessage = hasControllerError ? errorMessage : null;
+      positionMs = 0;
+      durationMs = 0;
     }
-    currentId = null;
-    matchTrackIds = [];
-    stale = false;
-    errorMessage = hasControllerError ? errorMessage : null;
-    positionMs = 0;
-    durationMs = 0;
   } else {
     verifiedPlayable = true;
     stale = Boolean(focus.stale);

@@ -4593,10 +4593,37 @@ export default function SpotifyPlayer({
   }, [refreshClientAccessToken, refreshDevices, sessionStatus, syncPlaybackState]);
 
   useEffect(() => {
+    async function restoreLocalSdkAudioIfNeeded() {
+      const sdkDeviceId = sdkDeviceIdRef.current;
+      const activeDevice = activeDeviceIdRef.current || deviceIdRef.current;
+      if (!sdkDeviceId || activeDevice !== sdkDeviceId) return;
+      const shouldBePlaying = Boolean(
+        lastIsPlayingRef.current || (playerStateRef.current && !playerStateRef.current.paused)
+      );
+      if (!shouldBePlaying) return;
+
+      try {
+        await playerRef.current?.activateElement?.();
+      } catch {
+        // continue with resume/verify fallback
+      }
+      try {
+        await playerRef.current?.resume?.();
+      } catch {
+        // continue with verify fallback
+      }
+      try {
+        await ensurePlaybackStarted(sdkDeviceId, currentTrackIdRef.current ?? null);
+      } catch {
+        // ignore here; normal sync path will surface actionable errors
+      }
+    }
+
     async function handleFocusOrResume() {
       await refreshClientAccessToken();
       refreshDevices(true);
       await syncPlaybackState("api_sync").catch(() => undefined);
+      await restoreLocalSdkAudioIfNeeded();
     }
 
     async function attemptBackgroundHandoff() {
@@ -4674,6 +4701,7 @@ export default function SpotifyPlayer({
     };
   }, [
     devices,
+    ensurePlaybackStarted,
     isIosWebplayer,
     refreshClientAccessToken,
     refreshDevices,

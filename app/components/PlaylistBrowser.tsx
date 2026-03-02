@@ -1180,8 +1180,15 @@ export default function PlaylistBrowser() {
     if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
     const fallback = computeTrackListHeight(viewportHeight);
     const containerEl = listContainerRef.current;
+    const rowsTop = trackRowsOuterRef.current?.getBoundingClientRect().top ?? null;
+    const itemsTop = trackItemsOuterRef.current?.getBoundingClientRect().top ?? null;
+    const containerTop = containerEl?.getBoundingClientRect().top ?? null;
+    // Critical: calculate from the actual scroll container top (react-window outer),
+    // not from the full track-list wrapper that also contains header/actions.
     const top =
-      containerEl?.getBoundingClientRect().top ?? Math.round(viewportHeight * 0.36);
+      rowsTop ??
+      itemsTop ??
+      (containerTop !== null ? containerTop + 48 : Math.round(viewportHeight * 0.36));
     const pageHost =
       containerEl?.closest(".page.page-mymusic") ??
       containerEl?.closest(".page.page-queue") ??

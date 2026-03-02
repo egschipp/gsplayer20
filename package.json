@@ -1,6 +1,6 @@
 {
   "name": "gsplayer20",
-  "version": "2.32.14",
+  "version": "2.32.18",
   "private": true,
   "scripts": {
     "dev": "next dev",

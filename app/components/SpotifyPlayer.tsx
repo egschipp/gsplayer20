@@ -32,6 +32,14 @@ import {
   type PlaybackSyncEvent,
   type PlaybackSyncState,
 } from "@/lib/playback/syncCore";
+import {
+  INITIAL_PLAYBACK_VERSION,
+  resolvePlaybackAuthorityMode,
+  shouldApplyPlaybackVersion,
+  shouldIngestSourceForAuthority,
+  type PlaybackAuthorityMode,
+  type PlaybackVersion,
+} from "@/lib/playback/authority";
 import type {
   PlayerCommandHandlers,
   PlayerRuntimeState,
@@ -66,9 +74,9 @@ const PLAYBACK_READY_POLL_MS = 240;
 const PLAYBACK_READY_REFRESH_EVERY_MS = 1_200;
 const PLAYBACK_INTENT_MAX_AGE_MS = 15_000;
 const LOCAL_PLAYER_BOOT_RETRY_MS = [0, 1_500] as const;
-const REMOTE_SNAPSHOT_GRACE_MS = 4_500;
 const DEVICE_SWITCH_SYNC_BOOST_MS = 8_000;
-const TRANSIENT_PLAYBACK_GAP_MAX_MS = 120_000;
+const REMOTE_STALE_TRACK_HOLD_MS = 8_000;
+const LOCAL_STALE_TRACK_HOLD_MS = 4_500;
 
 type PlayerPlaylistOption = {
   id: string;
@@ -734,6 +742,11 @@ export default function SpotifyPlayer({
   const playbackFocusRef = useRef<PlaybackFocus>(DEFAULT_PLAYBACK_FOCUS);
   const operationEpochRef = useRef(0);
   const playbackSyncStateRef = useRef<PlaybackSyncState>(INITIAL_PLAYBACK_SYNC_STATE);
+  const authorityModeRef = useRef<PlaybackAuthorityMode>("degraded");
+  const [authorityModeState, setAuthorityModeState] =
+    useState<PlaybackAuthorityMode>("degraded");
+  const deviceEpochRef = useRef(0);
+  const playbackVersionRef = useRef<PlaybackVersion>(INITIAL_PLAYBACK_VERSION);
   const userIntentSeqRef = useRef(0);
   const trackChangeLockUntilRef = useRef(0);
   const lastProgressSyncRef = useRef(0);
@@ -991,6 +1004,69 @@ export default function SpotifyPlayer({
       );
     },
     []
+  );
+
+  const refreshAuthorityMode = useCallback(
+    (reason: string, snapshotDeviceId?: string | null) => {
+      const activeDevice = activeDeviceIdRef.current || deviceIdRef.current || null;
+      const nextMode = resolvePlaybackAuthorityMode({
+        activeDeviceId: activeDevice,
+        sdkDeviceId: sdkDeviceIdRef.current,
+        pendingDeviceId: pendingDeviceIdRef.current,
+        snapshotDeviceId: snapshotDeviceId ?? null,
+        sdkReady: sdkReadyRef.current,
+      });
+      const previousMode = authorityModeRef.current;
+      if (previousMode === nextMode) {
+        return nextMode;
+      }
+      authorityModeRef.current = nextMode;
+      setAuthorityModeState(nextMode);
+      emitPlaybackDebugEvent("authority_mode_changed", {
+        reason,
+        from: previousMode,
+        to: nextMode,
+        activeDevice,
+        sdkDeviceId: sdkDeviceIdRef.current,
+        pendingDeviceId: pendingDeviceIdRef.current,
+        snapshotDeviceId: snapshotDeviceId ?? null,
+      });
+      emitPlaybackMetric("authority_mode_change", 1, {
+        from: previousMode,
+        to: nextMode,
+        reason,
+      });
+      return nextMode;
+    },
+    [emitPlaybackMetric]
+  );
+
+  const bumpDeviceEpoch = useCallback(
+    (reason: string, deviceId?: string | null) => {
+      deviceEpochRef.current += 1;
+      playbackVersionRef.current = {
+        ...INITIAL_PLAYBACK_VERSION,
+        deviceEpoch: deviceEpochRef.current,
+        serverTime: Date.now(),
+        receivedMonoMs: Math.floor(getMonotonicNow()),
+      };
+      playbackSyncStateRef.current = {
+        ...INITIAL_PLAYBACK_SYNC_STATE,
+        lastAppliedAtMs: Date.now(),
+      };
+      emitPlaybackDebugEvent("device_epoch_bump", {
+        reason,
+        deviceId: deviceId ?? null,
+        deviceEpoch: deviceEpochRef.current,
+      });
+      emitPlaybackMetric("device_epoch_bump", 1, {
+        reason,
+        deviceId: deviceId ?? null,
+        deviceEpoch: deviceEpochRef.current,
+      });
+      return deviceEpochRef.current;
+    },
+    [emitPlaybackMetric, getMonotonicNow]
   );
 
   const beginOperationEpoch = useCallback(() => {
@@ -1355,6 +1431,10 @@ export default function SpotifyPlayer({
   }, [activeDeviceName]);
 
   useEffect(() => {
+    refreshAuthorityMode("runtime_state_change");
+  }, [activeDeviceId, deviceId, refreshAuthorityMode, sdkReadyState]);
+
+  useEffect(() => {
     if (!onControllerRuntimeChange) return;
     onControllerRuntimeChange({
       deviceId: activeDeviceId || deviceId || null,
@@ -1714,6 +1794,7 @@ export default function SpotifyPlayer({
     if (!transferred) {
       if (pendingDeviceIdRef.current === targetId) {
         pendingDeviceIdRef.current = null;
+        refreshAuthorityMode("ensure_active_device_transfer_failed", targetId);
       }
       lastConfirmedActiveDeviceRef.current = null;
       setDeviceReady(false);
@@ -1738,6 +1819,7 @@ export default function SpotifyPlayer({
     }
     if (pendingDeviceIdRef.current === targetId) {
       pendingDeviceIdRef.current = null;
+      refreshAuthorityMode("ensure_active_device_verify_failed", targetId);
     }
     lastConfirmedActiveDeviceRef.current = null;
     setDeviceReady(false);
@@ -2115,12 +2197,17 @@ export default function SpotifyPlayer({
   }
 
   const setActiveDevice = useCallback((id: string | null, name?: string | null) => {
+    const previousId = activeDeviceIdRef.current;
     setActiveDeviceId(id);
     activeDeviceIdRef.current = id;
+    if (previousId !== id) {
+      bumpDeviceEpoch("active_device_changed", id);
+    }
     if (name !== undefined) {
       setActiveDeviceName(name);
     }
-  }, []);
+    refreshAuthorityMode("set_active_device");
+  }, [bumpDeviceEpoch, refreshAuthorityMode]);
 
   const shouldAdoptRemoteDevice = useCallback((remoteDeviceId?: string | null) => {
     if (!remoteDeviceId) return false;
@@ -2130,6 +2217,7 @@ export default function SpotifyPlayer({
         Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
       if (!pendingFresh) {
         pendingDeviceIdRef.current = null;
+        refreshAuthorityMode("pending_device_expired_before_adopt", remoteDeviceId);
       } else {
         return remoteDeviceId === pendingId;
       }
@@ -2141,7 +2229,7 @@ export default function SpotifyPlayer({
       Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
     if (heldSelection) return false;
     return true;
-  }, []);
+  }, [refreshAuthorityMode]);
 
   const clearRemoteTakeoverCandidate = useCallback(() => {
     remoteTakeoverCandidateRef.current = null;
@@ -2175,7 +2263,8 @@ export default function SpotifyPlayer({
       Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
     if (pendingFresh) return;
     pendingDeviceIdRef.current = null;
-  }, []);
+    refreshAuthorityMode("pending_device_cleared_stale");
+  }, [refreshAuthorityMode]);
 
   const fetchQueue = useCallback(async () => {
     if (!accessTokenRef.current) return;
@@ -2234,27 +2323,41 @@ export default function SpotifyPlayer({
   }, [spotifyApiFetch]);
 
   const shouldApplyIngest = useCallback(
-    (event: PlaybackSyncEvent) => {
+    (
+      event: PlaybackSyncEvent,
+      options?: {
+        receivedMonoMs?: number;
+        snapshotDeviceId?: string | null;
+      }
+    ) => {
       const activeDevice = activeDeviceIdRef.current || deviceIdRef.current;
       const sdkDevice = sdkDeviceIdRef.current;
-      const remoteDeviceSelected = Boolean(
-        activeDevice && sdkDevice && activeDevice !== sdkDevice
+      const mode = refreshAuthorityMode(
+        "ingest",
+        options?.snapshotDeviceId ?? event.deviceId
       );
-      if (
-        remoteDeviceSelected &&
-        event.source === "sdk" &&
-        event.deviceId &&
-        sdkDevice &&
-        event.deviceId === sdkDevice
-      ) {
+      const authorityVerdict = shouldIngestSourceForAuthority({
+        authorityMode: mode,
+        source: event.source,
+        eventDeviceId: event.deviceId ?? null,
+        activeDeviceId: activeDevice ?? null,
+        sdkDeviceId: sdkDevice ?? null,
+      });
+      if (!authorityVerdict.allow) {
         emitPlaybackDebugEvent("ingest_ignored", {
-          reason: "sdk_while_remote_selected",
+          reason: authorityVerdict.reason,
+          authorityMode: mode,
           source: event.source,
           seq: event.seq,
           atMs: event.atMs,
           deviceId: event.deviceId,
           activeDevice,
           sdkDevice,
+        });
+        emitPlaybackMetric("ingest_reject_authority", 1, {
+          source: event.source,
+          authorityMode: mode,
+          reason: authorityVerdict.reason,
         });
         return false;
       }
@@ -2263,6 +2366,7 @@ export default function SpotifyPlayer({
       if (!verdict.apply) {
         emitPlaybackDebugEvent("ingest_ignored", {
           reason: verdict.reason,
+          authorityMode: mode,
           source: event.source,
           seq: event.seq,
           atMs: event.atMs,
@@ -2270,23 +2374,58 @@ export default function SpotifyPlayer({
           trackId: event.trackId,
           state: playbackSyncStateRef.current,
         });
+        emitPlaybackMetric("ingest_reject_sync", 1, {
+          source: event.source,
+          authorityMode: mode,
+          reason: verdict.reason,
+        });
         return false;
       }
+
+      const monoMs = Math.floor(options?.receivedMonoMs ?? getMonotonicNow());
+      const versionVerdict = shouldApplyPlaybackVersion(playbackVersionRef.current, {
+        deviceEpoch: deviceEpochRef.current,
+        seq: event.seq,
+        atMs: event.atMs,
+        receivedMonoMs: monoMs,
+      });
+      if (!versionVerdict.apply) {
+        emitPlaybackDebugEvent("ingest_ignored", {
+          reason: versionVerdict.reason,
+          authorityMode: mode,
+          source: event.source,
+          seq: event.seq,
+          atMs: event.atMs,
+          deviceId: event.deviceId,
+          trackId: event.trackId,
+          currentVersion: playbackVersionRef.current,
+        });
+        emitPlaybackMetric("ingest_reject_version", 1, {
+          source: event.source,
+          authorityMode: mode,
+          reason: versionVerdict.reason,
+        });
+        return false;
+      }
+
       playbackSyncStateRef.current = reducePlaybackSyncState(
         playbackSyncStateRef.current,
         event
       );
+      playbackVersionRef.current = versionVerdict.next;
       emitPlaybackDebugEvent("ingest_applied", {
         reason: verdict.reason,
+        authorityMode: mode,
         source: event.source,
         seq: event.seq,
         atMs: event.atMs,
         deviceId: event.deviceId,
         trackId: event.trackId,
+        version: versionVerdict.next,
       });
       return true;
     },
-    []
+    [emitPlaybackMetric, getMonotonicNow, refreshAuthorityMode]
   );
 
   const ingestApiSnapshot = useCallback(
@@ -2323,6 +2462,9 @@ export default function SpotifyPlayer({
           trackId: eventTrackId,
           isPlaying:
             typeof data?.is_playing === "boolean" ? data.is_playing : null,
+        }, {
+          receivedMonoMs: responseReceivedAtMonoMs,
+          snapshotDeviceId: eventDeviceId,
         })
       ) {
         return Boolean(data?.is_playing);
@@ -2346,6 +2488,7 @@ export default function SpotifyPlayer({
           setConnectConflict(null);
           preferSdkDeviceRef.current = remoteDeviceId === sdkDeviceIdRef.current;
           pendingDeviceIdRef.current = null;
+          refreshAuthorityMode("force_adopt_remote_device", remoteDeviceId);
           setActiveDevice(remoteDeviceId, device?.name ?? null);
           setActiveDeviceRestricted(Boolean(device?.is_restricted));
           setActiveDevicePrivateSession(Boolean(device?.is_private_session));
@@ -2364,6 +2507,7 @@ export default function SpotifyPlayer({
         lastConfirmedActiveDeviceRef.current = { id: device.id, at: Date.now() };
         if (device.id === pendingDeviceIdRef.current) {
           pendingDeviceIdRef.current = null;
+          refreshAuthorityMode("adopt_remote_device_resolved_pending", device.id);
         }
       }
 
@@ -2412,18 +2556,19 @@ export default function SpotifyPlayer({
           data?.device?.id && sdkDevice && data.device.id !== sdkDevice
         );
         const inRateLimitBackoff = nowMs < rateLimitRef.current.until;
+        const remoteAuthorityActive =
+          authorityModeRef.current === "remote_primary" ||
+          authorityModeRef.current === "handoff_pending";
+        const staleHoldMs =
+          inRateLimitBackoff || remoteDeviceActive || remoteDeviceFromSnapshot || remoteAuthorityActive
+            ? REMOTE_STALE_TRACK_HOLD_MS
+            : LOCAL_STALE_TRACK_HOLD_MS;
         const hasRecentPlayableTrack =
           Boolean(currentTrackIdRef.current) &&
-          nowMs - lastPlayableTrackSeenAtRef.current <
-            (inRateLimitBackoff || remoteDeviceActive || remoteDeviceFromSnapshot
-              ? TRANSIENT_PLAYBACK_GAP_MAX_MS
-              : REMOTE_SNAPSHOT_GRACE_MS);
+          nowMs - lastPlayableTrackSeenAtRef.current < staleHoldMs;
         const shouldPreserveTrackState =
           Boolean(currentTrackIdRef.current) &&
           (Boolean(data?.is_playing) ||
-            remoteDeviceActive ||
-            remoteDeviceFromSnapshot ||
-            inRateLimitBackoff ||
             hasRecentPlayableTrack);
         if (shouldPreserveTrackState) {
           setPlaybackTrackState(currentTrackIdRef.current, {
@@ -2600,6 +2745,7 @@ export default function SpotifyPlayer({
       emitPlaybackMetric,
       postCrossTabEvent,
       projectRemoteProgressMs,
+      refreshAuthorityMode,
       rebuildQueueOrder,
       reconcileProgressPosition,
       setPlaybackTrackState,
@@ -3089,19 +3235,23 @@ export default function SpotifyPlayer({
       const eventTrackId = resolvePlaybackTrackId(state.track_window?.current_track);
       const eventDeviceId =
         typeof state?.device?.id === "string" ? state.device.id : sdkDeviceIdRef.current;
+      const eventAtMs = Date.now();
+      const eventMonoMs = getMonotonicNow();
       if (
         !shouldApplyIngest({
           source: "sdk",
           seq: eventSeq,
-          atMs: Date.now(),
+          atMs: eventAtMs,
           deviceId: eventDeviceId ?? null,
           trackId: eventTrackId,
           isPlaying: typeof state?.paused === "boolean" ? !state.paused : null,
+        }, {
+          receivedMonoMs: eventMonoMs,
+          snapshotDeviceId: eventDeviceId ?? null,
         })
       ) {
         return;
       }
-      const eventMonoMs = getMonotonicNow();
       lastSdkStateRef.current = state;
       lastIsPlayingRef.current = Boolean(!state.paused);
       lastSdkEventAtRef.current = Date.now();
@@ -3136,6 +3286,7 @@ export default function SpotifyPlayer({
         setActiveDevicePrivateSession(Boolean(state?.device?.is_private_session));
         setActiveDeviceSupportsVolume(state?.device?.supports_volume !== false);
         pendingDeviceIdRef.current = null;
+        refreshAuthorityMode("sdk_state_resolved_pending", stateDeviceId ?? null);
         setDeviceReady(true);
       }
       const current = state.track_window?.current_track;
@@ -3242,6 +3393,7 @@ export default function SpotifyPlayer({
       getMonotonicNow,
       playbackTouched,
       reconcileProgressPosition,
+      refreshAuthorityMode,
       setPlaybackTrackState,
       setActiveDevice,
       shouldApplyIngest,
@@ -3891,6 +4043,7 @@ export default function SpotifyPlayer({
       setSdkReadyState(true);
       setSdkLastError(null);
       setSdkLifecycle("ready");
+      refreshAuthorityMode("sdk_ready", device_id);
       reconnectAttemptsRef.current = 0;
       lastSdkEventAtRef.current = Date.now();
       if (shouldPreferSdk && hasUserPlaybackIntent) {
@@ -4036,6 +4189,7 @@ export default function SpotifyPlayer({
       sdkReadyRef.current = false;
       setSdkReadyState(false);
       setSdkLifecycle("connecting");
+      refreshAuthorityMode("sdk_not_ready", knownSdkId ?? null);
       lastConfirmedActiveDeviceRef.current = null;
       setDeviceReady(false);
       refreshDevices(true);
@@ -4055,9 +4209,16 @@ export default function SpotifyPlayer({
         );
         const nowMs = Date.now();
         const inRateLimitBackoff = nowMs < rateLimitRef.current.until;
+        const remoteAuthorityActive =
+          authorityModeRef.current === "remote_primary" ||
+          authorityModeRef.current === "handoff_pending";
+        const staleHoldMs =
+          remoteDeviceActive || inRateLimitBackoff || remoteAuthorityActive
+            ? REMOTE_STALE_TRACK_HOLD_MS
+            : LOCAL_STALE_TRACK_HOLD_MS;
         const hasRecentPlayableTrack =
           Boolean(currentTrackIdRef.current) &&
-          nowMs - lastPlayableTrackSeenAtRef.current < TRANSIENT_PLAYBACK_GAP_MAX_MS;
+          nowMs - lastPlayableTrackSeenAtRef.current < staleHoldMs;
         if ((remoteDeviceActive || inRateLimitBackoff || hasRecentPlayableTrack) && currentTrackIdRef.current) {
           setPlaybackTrackState(currentTrackIdRef.current, {
             matchTrackIds: playbackFocusRef.current.matchTrackIds,
@@ -4468,6 +4629,9 @@ export default function SpotifyPlayer({
               trackId: expectedTrackId,
               isPlaying: true,
               force: true,
+            }, {
+              receivedMonoMs: getMonotonicNow(),
+              snapshotDeviceId: currentDevice as string,
             });
             const started = await ensurePlaybackStartedWithRetry({
               deviceId: currentDevice as string,
@@ -4689,6 +4853,9 @@ export default function SpotifyPlayer({
               trackId: expectedTrackId,
               isPlaying: true,
               force: true,
+            }, {
+              receivedMonoMs: getMonotonicNow(),
+              snapshotDeviceId: currentDevice as string,
             });
             const started = await ensurePlaybackStartedWithRetry({
               deviceId: currentDevice as string,
@@ -5135,13 +5302,14 @@ export default function SpotifyPlayer({
         // ignore activation failure; selection can still proceed
       }
     }
+    pendingDeviceIdRef.current = targetId;
+    lastDeviceSelectRef.current = Date.now();
+    refreshAuthorityMode("device_switch_requested", targetId);
     const deviceName = targetDevice?.name ?? devices.find((d) => d.id === targetId)?.name;
     setActiveDevice(targetId, deviceName ?? null);
     setActiveDeviceRestricted(Boolean(targetDevice.isRestricted));
     setActiveDevicePrivateSession(Boolean(targetDevice.isPrivateSession));
     setActiveDeviceSupportsVolume(targetDevice.supportsVolume !== false);
-    pendingDeviceIdRef.current = targetId;
-    lastDeviceSelectRef.current = Date.now();
     lastConfirmedActiveDeviceRef.current = null;
     setDeviceReady(false);
     setDeviceId(targetId);
@@ -5157,8 +5325,13 @@ export default function SpotifyPlayer({
       );
       if (ready) {
         lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
+        if (pendingDeviceIdRef.current === targetId) {
+          pendingDeviceIdRef.current = null;
+        }
+        refreshAuthorityMode("device_switch_ready", targetId);
       } else if (pendingDeviceIdRef.current === targetId) {
         pendingDeviceIdRef.current = null;
+        refreshAuthorityMode("device_switch_failed", targetId);
       }
       if (ready) {
         const shuffleReady = await setRemoteShuffleState(
@@ -6111,6 +6284,7 @@ export default function SpotifyPlayer({
       <div
         className="player-connect"
         data-open={connectDockOpen ? "true" : "false"}
+        data-authority-mode={authorityModeState}
         onMouseEnter={() => {
           if (connectDockCloseDelayTimerRef.current) {
             clearTimeout(connectDockCloseDelayTimerRef.current);

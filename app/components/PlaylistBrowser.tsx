@@ -2291,27 +2291,46 @@ export default function PlaylistBrowser() {
     activeTrackIndexInRows < 0;
 
   const hydrationTargetTrackId = activeTrackIdsOrdered[0] ?? null;
-  const lastRowsAutoScrollRef = useRef<{ trackId: string | null; at: number }>({
-    trackId: null,
+  const hydrationTargetTrackKey =
+    activeTrackIdsOrdered.length > 0 ? activeTrackIdsOrdered.join("|") : null;
+  const lastRowsAutoScrollRef = useRef<{ trackKey: string | null; at: number }>({
+    trackKey: null,
     at: 0,
   });
-  const lastItemsAutoScrollRef = useRef<{ trackId: string | null; at: number }>({
-    trackId: null,
+  const lastItemsAutoScrollRef = useRef<{ trackKey: string | null; at: number }>({
+    trackKey: null,
     at: 0,
+  });
+  const stableRowsActiveIndexRef = useRef<{ index: number; hits: number }>({
+    index: -1,
+    hits: 0,
+  });
+  const stableItemsActiveIndexRef = useRef<{ index: number; hits: number }>({
+    index: -1,
+    hits: 0,
   });
 
   useEffect(() => {
     if (activeTrackIndexInRows < 0) return;
     if (mode !== "playlists" && mode !== "artists") return;
+    const stable = stableRowsActiveIndexRef.current;
+    if (stable.index !== activeTrackIndexInRows) {
+      stableRowsActiveIndexRef.current = { index: activeTrackIndexInRows, hits: 1 };
+      return;
+    }
+    if (stable.hits < 2) {
+      stableRowsActiveIndexRef.current = { index: activeTrackIndexInRows, hits: stable.hits + 1 };
+      return;
+    }
     const now = Date.now();
     if (
-      hydrationTargetTrackId &&
-      lastRowsAutoScrollRef.current.trackId === hydrationTargetTrackId &&
+      hydrationTargetTrackKey &&
+      lastRowsAutoScrollRef.current.trackKey === hydrationTargetTrackKey &&
       now - lastRowsAutoScrollRef.current.at < 900
     ) {
       return;
     }
-    lastRowsAutoScrollRef.current = { trackId: hydrationTargetTrackId, at: now };
+    lastRowsAutoScrollRef.current = { trackKey: hydrationTargetTrackKey, at: now };
     window.requestAnimationFrame(() => {
       animateScrollToIndex(trackRowsOuterRef.current, activeTrackIndexInRows, TRACK_ROW_HEIGHT, {
         minDurationMs: 360,
@@ -2319,20 +2338,29 @@ export default function PlaylistBrowser() {
         pxPerMs: 2.0,
       });
     });
-  }, [activeTrackIndexInRows, hydrationTargetTrackId, mode]);
+  }, [activeTrackIndexInRows, hydrationTargetTrackKey, mode]);
 
   useEffect(() => {
     if (activeTrackIndexInItems < 0) return;
     if (mode !== "tracks" && mode !== "albums") return;
+    const stable = stableItemsActiveIndexRef.current;
+    if (stable.index !== activeTrackIndexInItems) {
+      stableItemsActiveIndexRef.current = { index: activeTrackIndexInItems, hits: 1 };
+      return;
+    }
+    if (stable.hits < 2) {
+      stableItemsActiveIndexRef.current = { index: activeTrackIndexInItems, hits: stable.hits + 1 };
+      return;
+    }
     const now = Date.now();
     if (
-      hydrationTargetTrackId &&
-      lastItemsAutoScrollRef.current.trackId === hydrationTargetTrackId &&
+      hydrationTargetTrackKey &&
+      lastItemsAutoScrollRef.current.trackKey === hydrationTargetTrackKey &&
       now - lastItemsAutoScrollRef.current.at < 900
     ) {
       return;
     }
-    lastItemsAutoScrollRef.current = { trackId: hydrationTargetTrackId, at: now };
+    lastItemsAutoScrollRef.current = { trackKey: hydrationTargetTrackKey, at: now };
     window.requestAnimationFrame(() => {
       animateScrollToIndex(
         trackItemsOuterRef.current,
@@ -2345,7 +2373,7 @@ export default function PlaylistBrowser() {
         }
       );
     });
-  }, [activeTrackIndexInItems, hydrationTargetTrackId, mode]);
+  }, [activeTrackIndexInItems, hydrationTargetTrackKey, mode]);
 
   const isContextSwitchLoading = Boolean(
     loadingTracks &&
@@ -3332,7 +3360,7 @@ export default function PlaylistBrowser() {
 
   useEffect(() => {
     if (mode !== "playlists" && mode !== "artists") return;
-    if (!hydrationTargetTrackId) {
+    if (!hydrationTargetTrackKey) {
       if (activeTrackHydrating) setActiveTrackHydrating(false);
       if (activeTrackHydrationError) setActiveTrackHydrationError(null);
       if (activeTrackHydrationRetryAfterMs !== null) setActiveTrackHydrationRetryAfterMs(null);
@@ -3348,7 +3376,7 @@ export default function PlaylistBrowser() {
     if (!nextCursorRef.current) return;
     if (
       activeTrackHydrationInFlightRef.current &&
-      activeTrackHydrationTargetRef.current === hydrationTargetTrackId
+      activeTrackHydrationTargetRef.current === hydrationTargetTrackKey
     ) {
       return;
     }
@@ -3356,7 +3384,7 @@ export default function PlaylistBrowser() {
     let cancelled = false;
     const hydrationStartedAt = Date.now();
     activeTrackHydrationInFlightRef.current = true;
-    activeTrackHydrationTargetRef.current = hydrationTargetTrackId;
+    activeTrackHydrationTargetRef.current = hydrationTargetTrackKey;
     setActiveTrackHydrating(true);
     setActiveTrackHydrationError(null);
     setActiveTrackHydrationRetryAfterMs(null);
@@ -3373,7 +3401,8 @@ export default function PlaylistBrowser() {
       if (
         mode === "playlists" &&
         selectedPlaylist?.type === "playlist" &&
-        selectedPlaylist.id
+        selectedPlaylist.id &&
+        hydrationTargetTrackId
       ) {
         try {
           const hintUrl = buildApiUrl(
@@ -3403,7 +3432,7 @@ export default function PlaylistBrowser() {
       while (!cancelled && attempts < maxAttempts) {
         const currentRows = tracksRef.current;
         const alreadyVisible = currentRows.some((track) =>
-          isCurrentTrackMatch(track, hydrationTargetTrackId)
+          isCurrentTrackMatch(track, activeTrackIdSet)
         );
         if (alreadyVisible) break;
 
@@ -3437,7 +3466,7 @@ export default function PlaylistBrowser() {
 
       if (cancelled) return;
       const resolved = tracksRef.current.some((track) =>
-        isCurrentTrackMatch(track, hydrationTargetTrackId)
+        isCurrentTrackMatch(track, activeTrackIdSet)
       );
       if (resolved) {
         activeTrackHydrationMetricsRef.current.resolved += 1;
@@ -3466,14 +3495,16 @@ export default function PlaylistBrowser() {
 
     return () => {
       cancelled = true;
-      if (activeTrackHydrationTargetRef.current === hydrationTargetTrackId) {
+      if (activeTrackHydrationTargetRef.current === hydrationTargetTrackKey) {
         activeTrackHydrationInFlightRef.current = false;
         activeTrackHydrationTargetRef.current = null;
       }
       setActiveTrackHydrating(false);
     };
   }, [
+    activeTrackIdSet,
     hydrationTargetTrackId,
+    hydrationTargetTrackKey,
     activeTrackHydrationError,
     activeTrackHydrating,
     activeTrackIndexInRows,

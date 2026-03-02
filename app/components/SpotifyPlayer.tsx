@@ -717,6 +717,8 @@ export default function SpotifyPlayer({
   >(async () => undefined);
   const crossTabChannelRef = useRef<BroadcastChannel | null>(null);
   const lastRemoteSyncAtRef = useRef(0);
+  const lastStreamSnapshotAtRef = useRef(0);
+  const lastPlaybackSnapshotAtRef = useRef(0);
   const lastRemoteIntentSeqRef = useRef(0);
   const lastRafPaintMonoRef = useRef(0);
   const durationMsRef = useRef(0);
@@ -2200,6 +2202,7 @@ export default function SpotifyPlayer({
         pauseLocalSdkOnRemote?: boolean;
       }
     ) => {
+      lastPlaybackSnapshotAtRef.current = Date.now();
       const device = data?.device;
       const remoteDeviceId = device?.id ?? null;
       const canAdoptRemoteDevice = shouldAdoptRemoteDevice(remoteDeviceId);
@@ -2510,22 +2513,41 @@ export default function SpotifyPlayer({
           responseReceivedAtMonoMs,
           pauseLocalSdkOnRemote: true,
         });
+        lastStreamSnapshotAtRef.current = Date.now();
         attempts = 0;
       };
 
-      const onError = () => {
+      const onStreamErrorEvent = (event: Event) => {
+        const message = event as MessageEvent<string>;
+        let payload: any = null;
+        try {
+          payload = JSON.parse(message.data);
+        } catch {
+          payload = null;
+        }
+        const code = typeof payload?.code === "string" ? payload.code : "";
+        if (code === "RATE_LIMIT" || code === "SPOTIFY_UPSTREAM" || code === "STREAM_FAILED") {
+          // Force watchdog poll to take over quickly.
+          lastStreamSnapshotAtRef.current = 0;
+        }
+      };
+
+      const onStreamTransportError = () => {
         if (source) {
           source.close();
           source = null;
         }
         if (cancelled) return;
+        lastStreamSnapshotAtRef.current = 0;
+        void syncPlaybackStateRef.current("api_poll").catch(() => undefined);
         attempts += 1;
         const delay = Math.min(15000, 1000 + attempts * 800);
         retryTimer = setTimeout(connect, delay);
       };
 
       source.addEventListener("snapshot", onSnapshot as EventListener);
-      source.addEventListener("error", onError as EventListener);
+      source.addEventListener("error", onStreamErrorEvent as EventListener);
+      source.onerror = onStreamTransportError;
     };
 
     connect();
@@ -2881,6 +2903,7 @@ export default function SpotifyPlayer({
   const applySdkState = useCallback(
     (state: any) => {
       if (!state) return;
+      lastPlaybackSnapshotAtRef.current = Date.now();
       const eventMonoMs = getMonotonicNow();
       lastSdkStateRef.current = state;
       lastIsPlayingRef.current = Boolean(!state.paused);
@@ -4684,7 +4707,6 @@ export default function SpotifyPlayer({
 
   useEffect(() => {
     if (!accessToken) return;
-    if (enablePlaybackStream) return;
     let cancelled = false;
 
     async function poll() {
@@ -4694,13 +4716,28 @@ export default function SpotifyPlayer({
         const now = Date.now();
         const activeDevice = activeDeviceIdRef.current;
         const sdkDevice = sdkDeviceIdRef.current;
+        const remoteDeviceActive = Boolean(
+          activeDevice && sdkDevice && activeDevice !== sdkDevice
+        );
+        const streamFresh =
+          enablePlaybackStream && Date.now() - lastStreamSnapshotAtRef.current < 5500;
+        const playbackFresh = Date.now() - lastPlaybackSnapshotAtRef.current < 3500;
         const sdkStatePrimary =
           sdkReadyRef.current &&
           Boolean(sdkDevice) &&
           (!activeDevice || activeDevice === sdkDevice);
-        if (sdkStatePrimary && now - lastSdkEventAtRef.current < 20000) {
+        if (
+          sdkStatePrimary &&
+          now - lastSdkEventAtRef.current < 20000 &&
+          !remoteDeviceActive
+        ) {
           const isPlaying = !playerStateRef.current?.paused;
           scheduleNext(isPlaying, isPlaying ? 12000 : 15000);
+          return;
+        }
+        if (enablePlaybackStream && streamFresh && !remoteDeviceActive && playbackFresh) {
+          const isPlaying = !playerStateRef.current?.paused;
+          scheduleNext(isPlaying, isPlaying ? 7000 : 12000);
           return;
         }
         const hidden =
@@ -4751,9 +4788,17 @@ export default function SpotifyPlayer({
 
     function scheduleNext(isPlaying?: boolean, overrideDelay?: number) {
       if (cancelled) return;
+      const now = Date.now();
       const hidden =
         typeof document !== "undefined" && document.visibilityState === "hidden";
       const hasPendingSeek = Boolean(pendingSeekRef.current);
+      const activeDevice = activeDeviceIdRef.current;
+      const sdkDevice = sdkDeviceIdRef.current;
+      const remoteDeviceActive = Boolean(
+        activeDevice && sdkDevice && activeDevice !== sdkDevice
+      );
+      const streamFresh =
+        enablePlaybackStream && now - lastStreamSnapshotAtRef.current < 5500;
       const connectionInfo =
         typeof navigator !== "undefined" &&
         "connection" in navigator &&
@@ -4772,6 +4817,11 @@ export default function SpotifyPlayer({
         effectiveType === "slow-2g" ||
         effectiveType === "3g";
       let baseDelay = isPlaying ? 3000 : 9000;
+      if (remoteDeviceActive) {
+        baseDelay = streamFresh ? (isPlaying ? 2400 : 4200) : isPlaying ? 1200 : 2200;
+      } else if (enablePlaybackStream && streamFresh) {
+        baseDelay = isPlaying ? 6500 : 11000;
+      }
       if (hidden && !hasPendingSeek) {
         baseDelay = 20000;
       }
@@ -5426,7 +5476,6 @@ export default function SpotifyPlayer({
         : Boolean(playbackDisallows.pausing)));
   const showLiveTrackInPlayer =
     Boolean(currentTrackIdState) &&
-    Boolean(playerState?.name) &&
     !playbackFocusState.stale &&
     playbackFocusState.status !== "idle" &&
     playbackFocusState.status !== "ended" &&

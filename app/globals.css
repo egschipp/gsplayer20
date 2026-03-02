@@ -1626,6 +1626,20 @@ details[open] > .details-summary::after {
   overflow-x: hidden !important;
   overflow-y: auto !important;
   scrollbar-gutter: stable both-edges;
+  scrollbar-color: rgba(29, 185, 84, 0.55) rgba(255, 255, 255, 0.14);
+}
+
+.track-virtual-list::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.track-virtual-list::-webkit-scrollbar-thumb {
+  background: rgba(29, 185, 84, 0.55);
+  border-radius: 999px;
+}
+
+.track-virtual-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(30, 215, 96, 0.75);
 }
 
 .detail-btn {

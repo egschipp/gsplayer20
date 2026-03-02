@@ -4110,7 +4110,9 @@ export default function SpotifyPlayer({
           };
           const startIndex = Math.max(0, Math.min(resolvedIndex, uris.length - 1));
 
-          const ready = await ensureActiveDevice(currentDevice as string, token, true);
+          // For explicit track/context selection we must not auto-resume old playback
+          // during device transfer, otherwise a short stale-audio blip can be heard.
+          const ready = await ensureActiveDevice(currentDevice as string, token, false);
           if (!ready) {
             const preparedDevice = await waitForPlayableDevice(5_000);
             if (preparedDevice) {
@@ -4318,7 +4320,9 @@ export default function SpotifyPlayer({
             await playerRef.current?.activateElement?.();
           }
 
-          const ready = await ensureActiveDevice(currentDevice as string, token, true);
+          // For explicit track/context selection we must not auto-resume old playback
+          // during device transfer, otherwise a short stale-audio blip can be heard.
+          const ready = await ensureActiveDevice(currentDevice as string, token, false);
           if (!ready) {
             const preparedDevice = await waitForPlayableDevice(5_000);
             if (preparedDevice) {

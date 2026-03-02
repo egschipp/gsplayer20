@@ -1179,16 +1179,25 @@ export default function PlaylistBrowser() {
     const viewportHeight = viewport.visualHeight || viewport.height;
     if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
     const fallback = computeTrackListHeight(viewportHeight);
+    const containerEl = listContainerRef.current;
     const top =
-      listContainerRef.current?.getBoundingClientRect().top ??
-      Math.round(viewportHeight * 0.36);
-    const available = Math.floor(viewportHeight - top - 10);
+      containerEl?.getBoundingClientRect().top ?? Math.round(viewportHeight * 0.36);
+    const pageHost =
+      containerEl?.closest(".page.page-mymusic") ??
+      containerEl?.closest(".page.page-queue") ??
+      containerEl?.closest(".library-browser");
+    const hostBottom =
+      pageHost instanceof HTMLElement
+        ? pageHost.getBoundingClientRect().bottom
+        : viewportHeight;
+    const bottomLimit = Math.min(viewportHeight - 8, hostBottom - 6);
+    const available = Math.floor(bottomLimit - top - 8);
     if (!Number.isFinite(available) || available <= 0) {
       setListHeight((prev) => (Math.abs(prev - fallback) <= 1 ? prev : fallback));
       return;
     }
     const minHeight = TRACK_ROW_HEIGHT * 3;
-    const maxHeight = Math.max(minHeight, Math.floor(viewportHeight - 92));
+    const maxHeight = Math.max(minHeight, Math.floor(bottomLimit - top - 4));
     const next = clampNumber(available, minHeight, maxHeight);
     setListHeight((prev) => (Math.abs(prev - next) <= 1 ? prev : next));
   }, [viewport.height, viewport.visualHeight]);
@@ -4464,8 +4473,32 @@ export default function PlaylistBrowser() {
                     onClick={selectAllVisibleTracks}
                     disabled={!visibleTracksBySelectionKey.size || allVisibleTracksSelected}
                     title="Selecteer alle zichtbare tracks"
+                    aria-label="Selecteer alle zichtbare tracks"
                   >
-                    Select all
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 16 16"
+                      width="13"
+                      height="13"
+                      fill="none"
+                    >
+                      <rect
+                        x="2.2"
+                        y="2.2"
+                        width="11.6"
+                        height="11.6"
+                        rx="2.4"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                      />
+                      <path
+                        d="M4.6 8.1l2.1 2.1 4.7-4.7"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
                   </button>
                   {selectedTrackCount > 0 ? (
                     <button
@@ -4568,8 +4601,32 @@ export default function PlaylistBrowser() {
                     onClick={selectAllVisibleTracks}
                     disabled={!visibleTracksBySelectionKey.size || allVisibleTracksSelected}
                     title="Selecteer alle zichtbare tracks"
+                    aria-label="Selecteer alle zichtbare tracks"
                   >
-                    Select all
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 16 16"
+                      width="13"
+                      height="13"
+                      fill="none"
+                    >
+                      <rect
+                        x="2.2"
+                        y="2.2"
+                        width="11.6"
+                        height="11.6"
+                        rx="2.4"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                      />
+                      <path
+                        d="M4.6 8.1l2.1 2.1 4.7-4.7"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
                   </button>
                   {selectedTrackCount > 0 ? (
                     <button

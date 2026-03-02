@@ -757,6 +757,13 @@ a:focus-visible {
   align-items: center;
 }
 
+.track-selection-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .track-selection-clear-btn {
   border: 1px solid rgba(29, 185, 84, 0.4);
   border-radius: 10px;
@@ -770,9 +777,32 @@ a:focus-visible {
   cursor: pointer;
 }
 
+.track-selection-select-all-btn {
+  border: 1px solid rgba(29, 185, 84, 0.4);
+  border-radius: 9px;
+  background: rgba(29, 185, 84, 0.11);
+  color: rgba(233, 255, 242, 0.96);
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  height: 24px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
 .track-selection-clear-btn:hover {
   background: rgba(29, 185, 84, 0.24);
   border-color: rgba(29, 185, 84, 0.62);
+}
+
+.track-selection-select-all-btn:hover:not(:disabled) {
+  background: rgba(29, 185, 84, 0.2);
+  border-color: rgba(29, 185, 84, 0.62);
+}
+
+.track-selection-select-all-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .track-col-track {

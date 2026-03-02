@@ -2204,6 +2204,15 @@ export default function PlaylistBrowser() {
     setSelectedTrackKeys(new Set());
   }, []);
 
+  const selectAllVisibleTracks = useCallback(() => {
+    if (!visibleTracksBySelectionKey.size) return;
+    setSelectedTrackKeys(new Set(Array.from(visibleTracksBySelectionKey.keys())));
+  }, [visibleTracksBySelectionKey]);
+
+  const allVisibleTracksSelected =
+    visibleTracksBySelectionKey.size > 0 &&
+    selectedTrackCount >= visibleTracksBySelectionKey.size;
+
   const resolveTracksForPlaylistApply = useCallback(
     (track: TrackRow | TrackItem) => {
       const clickedKey = resolveTrackSelectionKey(track);
@@ -4448,17 +4457,28 @@ export default function PlaylistBrowser() {
           {tracks.length ? (
             <div className={trackHeaderClassName}>
               <div className="track-col-select-header">
-                {selectedTrackCount > 0 ? (
+                <div className="track-selection-actions">
                   <button
                     type="button"
-                    className="track-selection-clear-btn"
-                    onClick={clearTrackSelection}
+                    className="track-selection-select-all-btn"
+                    onClick={selectAllVisibleTracks}
+                    disabled={!visibleTracksBySelectionKey.size || allVisibleTracksSelected}
+                    title="Selecteer alle zichtbare tracks"
                   >
-                    Selectie wissen ({selectedTrackCount})
+                    Select all
                   </button>
-                ) : (
-                  <span>Selectie</span>
-                )}
+                  {selectedTrackCount > 0 ? (
+                    <button
+                      type="button"
+                      className="track-selection-clear-btn"
+                      onClick={clearTrackSelection}
+                    >
+                      Selectie wissen ({selectedTrackCount})
+                    </button>
+                  ) : (
+                    <span>Selectie</span>
+                  )}
+                </div>
               </div>
               <div>Track</div>
               {!compactTrackLayout ? <div className="track-col-year">Jaar</div> : null}
@@ -4541,17 +4561,28 @@ export default function PlaylistBrowser() {
           {localFilteredTrackItems.length ? (
             <div className={trackHeaderClassName}>
               <div className="track-col-select-header">
-                {selectedTrackCount > 0 ? (
+                <div className="track-selection-actions">
                   <button
                     type="button"
-                    className="track-selection-clear-btn"
-                    onClick={clearTrackSelection}
+                    className="track-selection-select-all-btn"
+                    onClick={selectAllVisibleTracks}
+                    disabled={!visibleTracksBySelectionKey.size || allVisibleTracksSelected}
+                    title="Selecteer alle zichtbare tracks"
                   >
-                    Selectie wissen ({selectedTrackCount})
+                    Select all
                   </button>
-                ) : (
-                  <span>Selectie</span>
-                )}
+                  {selectedTrackCount > 0 ? (
+                    <button
+                      type="button"
+                      className="track-selection-clear-btn"
+                      onClick={clearTrackSelection}
+                    >
+                      Selectie wissen ({selectedTrackCount})
+                    </button>
+                  ) : (
+                    <span>Selectie</span>
+                  )}
+                </div>
               </div>
               <div>Track</div>
               {!compactTrackLayout ? <div className="track-col-year">Jaar</div> : null}

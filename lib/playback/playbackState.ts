@@ -131,7 +131,7 @@ export function derivePlaybackSnapshot({
     durationMs = 0;
   } else {
     verifiedPlayable = true;
-    stale = false;
+    stale = Boolean(focus.stale);
     reason = "ok";
     if (status === "error") {
       uiStatus = "error";
@@ -140,6 +140,11 @@ export function derivePlaybackSnapshot({
       matchTrackIds = [];
     } else if (status === "loading") {
       uiStatus = "loading";
+    } else if (stale) {
+      uiStatus = "ready";
+      if (status === "idle" || status === "ended") {
+        status = focus.isPlaying === false ? "paused" : "loading";
+      }
     } else {
       uiStatus = "ready";
       if (status === "idle" || status === "ended") {
@@ -151,7 +156,7 @@ export function derivePlaybackSnapshot({
       trackId: currentId,
       matchTrackIds,
       status,
-      stale: false,
+      stale,
       positionMs,
       durationMs,
       errorMessage,

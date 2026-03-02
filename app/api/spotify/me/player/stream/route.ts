@@ -1,6 +1,7 @@
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { getCorrelationId, requireAppUser } from "@/lib/api/guards";
+import { nextPlayerSyncSeq } from "@/lib/spotify/playerSyncSeq";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -37,7 +38,8 @@ type SpotifyPlayerResponse = {
   repeat_state?: "off" | "track" | "context";
 };
 
-function normalizeSnapshot(data: SpotifyPlayerResponse | null) {
+function normalizeSnapshot(data: SpotifyPlayerResponse | null, userId: string) {
+  const serverSeq = nextPlayerSyncSeq(userId);
   const disallowsRaw = data?.actions?.disallows;
   const disallows =
     disallowsRaw && typeof disallowsRaw === "object"
@@ -64,6 +66,11 @@ function normalizeSnapshot(data: SpotifyPlayerResponse | null) {
         : "unknown",
     actions: { disallows },
     streamedAt: Date.now(),
+    sync: {
+      serverSeq,
+      serverTime: Date.now(),
+      source: "stream",
+    },
   };
 }
 
@@ -129,7 +136,7 @@ export async function GET(req: Request) {
             cacheTtlMs: 0,
             dedupeWindowMs: 200,
           });
-          writeEvent("snapshot", normalizeSnapshot(data ?? null));
+          writeEvent("snapshot", normalizeSnapshot(data ?? null, userId));
         } catch (error) {
           if (error instanceof SpotifyFetchError) {
             writeEvent("error", {

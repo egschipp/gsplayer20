@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { spotifyFetch } from "@/lib/spotify/client";
+import { nextPlayerSyncSeq } from "@/lib/spotify/playerSyncSeq";
 import {
   getCorrelationId,
   jsonError,
@@ -123,6 +124,7 @@ export async function POST(req: NextRequest) {
 
   const { session, response } = await requireAppUser();
   if (response) return response;
+  const userKey = String(session.appUserId || "");
 
   const rl = await rateLimitResponse({
     key: `me-player-command:${session.appUserId}`,
@@ -189,6 +191,11 @@ export async function POST(req: NextRequest) {
           currentDeviceId,
           commandId,
           intentSeq,
+          sync: {
+            serverSeq: nextPlayerSyncSeq(userKey),
+            serverTime: Date.now(),
+            source: "command_conflict",
+          },
         };
         if (commandId) {
           cacheCommandResult(commandId, 409, conflictBody);
@@ -224,6 +231,11 @@ export async function POST(req: NextRequest) {
       commandId,
       intentSeq,
       appliedAt: Date.now(),
+      sync: {
+        serverSeq: nextPlayerSyncSeq(userKey),
+        serverTime: Date.now(),
+        source: "command_ack",
+      },
     };
     if (commandId) {
       cacheCommandResult(commandId, 200, responseBody);

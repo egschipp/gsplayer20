@@ -24,6 +24,14 @@ import { usePlaybackCommandQueue } from "./player/usePlaybackCommandQueue";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
 import { useStableMenu } from "@/lib/hooks/useStableMenu";
+import {
+  INITIAL_PLAYBACK_SYNC_STATE,
+  reducePlaybackSyncState,
+  shouldApplyPlaybackEvent,
+  type PlaybackIngestSource,
+  type PlaybackSyncEvent,
+  type PlaybackSyncState,
+} from "@/lib/playback/syncCore";
 import type {
   PlayerCommandHandlers,
   PlayerRuntimeState,
@@ -82,6 +90,14 @@ type PlaybackSource =
   | "api_verify"
   | "api_bootstrap"
   | "api_stream";
+
+function toIngestSource(source: PlaybackSource): PlaybackIngestSource {
+  if (source === "sdk") return "sdk";
+  if (source === "api_stream") return "sse";
+  if (source === "api_verify") return "verify";
+  if (source === "api_bootstrap") return "bootstrap";
+  return "poll";
+}
 
 type PendingSeekState = {
   id: number;
@@ -363,6 +379,17 @@ function emitPlaybackDebugEvent(
   } catch {
     // ignore logger issues
   }
+}
+
+function readSyncServerSeq(payload: any): number {
+  const candidate =
+    payload?.sync?.serverSeq ??
+    payload?.serverSeq ??
+    payload?.meta?.serverSeq ??
+    0;
+  return typeof candidate === "number" && Number.isFinite(candidate)
+    ? Math.max(0, Math.floor(candidate))
+    : 0;
 }
 
 function ActiveTrackIndicator({
@@ -694,6 +721,8 @@ export default function SpotifyPlayer({
   const hasConfirmedLivePlaybackRef = useRef(false);
   const playbackFocusRef = useRef<PlaybackFocus>(DEFAULT_PLAYBACK_FOCUS);
   const operationEpochRef = useRef(0);
+  const playbackSyncStateRef = useRef<PlaybackSyncState>(INITIAL_PLAYBACK_SYNC_STATE);
+  const localIngestSeqRef = useRef(0);
   const userIntentSeqRef = useRef(0);
   const trackChangeLockUntilRef = useRef(0);
   const lastProgressSyncRef = useRef(0);
@@ -2190,6 +2219,62 @@ export default function SpotifyPlayer({
     }
   }, [spotifyApiFetch]);
 
+  const shouldApplyIngest = useCallback(
+    (event: PlaybackSyncEvent) => {
+      const activeDevice = activeDeviceIdRef.current || deviceIdRef.current;
+      const sdkDevice = sdkDeviceIdRef.current;
+      const remoteDeviceSelected = Boolean(
+        activeDevice && sdkDevice && activeDevice !== sdkDevice
+      );
+      if (
+        remoteDeviceSelected &&
+        event.source === "sdk" &&
+        event.deviceId &&
+        sdkDevice &&
+        event.deviceId === sdkDevice
+      ) {
+        emitPlaybackDebugEvent("ingest_ignored", {
+          reason: "sdk_while_remote_selected",
+          source: event.source,
+          seq: event.seq,
+          atMs: event.atMs,
+          deviceId: event.deviceId,
+          activeDevice,
+          sdkDevice,
+        });
+        return false;
+      }
+
+      const verdict = shouldApplyPlaybackEvent(playbackSyncStateRef.current, event);
+      if (!verdict.apply) {
+        emitPlaybackDebugEvent("ingest_ignored", {
+          reason: verdict.reason,
+          source: event.source,
+          seq: event.seq,
+          atMs: event.atMs,
+          deviceId: event.deviceId,
+          trackId: event.trackId,
+          state: playbackSyncStateRef.current,
+        });
+        return false;
+      }
+      playbackSyncStateRef.current = reducePlaybackSyncState(
+        playbackSyncStateRef.current,
+        event
+      );
+      emitPlaybackDebugEvent("ingest_applied", {
+        reason: verdict.reason,
+        source: event.source,
+        seq: event.seq,
+        atMs: event.atMs,
+        deviceId: event.deviceId,
+        trackId: event.trackId,
+      });
+      return true;
+    },
+    []
+  );
+
   const ingestApiSnapshot = useCallback(
     (
       data: any,
@@ -2207,6 +2292,27 @@ export default function SpotifyPlayer({
         pauseLocalSdkOnRemote?: boolean;
       }
     ) => {
+      const eventAtMs =
+        typeof data?.timestamp === "number"
+          ? Math.max(0, Math.floor(data.timestamp))
+          : responseReceivedAtWallMs;
+      const eventSeq = readSyncServerSeq(data) || ++localIngestSeqRef.current;
+      const eventTrackId = data?.item ? resolvePlaybackTrackId(data.item) : null;
+      const eventDeviceId =
+        typeof data?.device?.id === "string" ? data.device.id : null;
+      if (
+        !shouldApplyIngest({
+          source: toIngestSource(source),
+          seq: eventSeq,
+          atMs: eventAtMs,
+          deviceId: eventDeviceId,
+          trackId: eventTrackId,
+          isPlaying:
+            typeof data?.is_playing === "boolean" ? data.is_playing : null,
+        })
+      ) {
+        return Boolean(data?.is_playing);
+      }
       lastPlaybackSnapshotAtRef.current = Date.now();
       const device = data?.device;
       const remoteDeviceId = device?.id ?? null;
@@ -2485,6 +2591,7 @@ export default function SpotifyPlayer({
       setPlaybackTrackState,
       setActiveDevice,
       shouldAdoptRemoteDevice,
+      shouldApplyIngest,
       clearRemoteTakeoverCandidate,
       syncQueuePositionFromTrack,
       shouldForceAdoptRemoteDevice,
@@ -2964,6 +3071,22 @@ export default function SpotifyPlayer({
     (state: any) => {
       if (!state) return;
       lastPlaybackSnapshotAtRef.current = Date.now();
+      const eventSeq = ++localIngestSeqRef.current;
+      const eventTrackId = resolvePlaybackTrackId(state.track_window?.current_track);
+      const eventDeviceId =
+        typeof state?.device?.id === "string" ? state.device.id : sdkDeviceIdRef.current;
+      if (
+        !shouldApplyIngest({
+          source: "sdk",
+          seq: eventSeq,
+          atMs: Date.now(),
+          deviceId: eventDeviceId ?? null,
+          trackId: eventTrackId,
+          isPlaying: typeof state?.paused === "boolean" ? !state.paused : null,
+        })
+      ) {
+        return;
+      }
       const eventMonoMs = getMonotonicNow();
       lastSdkStateRef.current = state;
       lastIsPlayingRef.current = Boolean(!state.paused);
@@ -3107,6 +3230,7 @@ export default function SpotifyPlayer({
       reconcileProgressPosition,
       setPlaybackTrackState,
       setActiveDevice,
+      shouldApplyIngest,
       syncQueuePositionFromTrack,
     ]
   );
@@ -4321,6 +4445,15 @@ export default function SpotifyPlayer({
           }
           if (playRes.ok) {
             const expectedTrackId = resolveTrackIdFromUri(resolvedUri);
+            shouldApplyIngest({
+              source: "command",
+              seq: ++localIngestSeqRef.current,
+              atMs: Date.now(),
+              deviceId: currentDevice as string,
+              trackId: expectedTrackId,
+              isPlaying: true,
+              force: true,
+            });
             const started = await ensurePlaybackStartedWithRetry({
               deviceId: currentDevice as string,
               expectedTrackId,
@@ -4532,6 +4665,15 @@ export default function SpotifyPlayer({
           }
           if (contextRes.ok) {
             const expectedTrackId = resolveTrackIdFromUri(offsetUri ?? null);
+            shouldApplyIngest({
+              source: "command",
+              seq: ++localIngestSeqRef.current,
+              atMs: Date.now(),
+              deviceId: currentDevice as string,
+              trackId: expectedTrackId,
+              isPlaying: true,
+              force: true,
+            });
             const started = await ensurePlaybackStartedWithRetry({
               deviceId: currentDevice as string,
               expectedTrackId,

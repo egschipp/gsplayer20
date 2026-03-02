@@ -1,5 +1,6 @@
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
+import { nextPlayerSyncSeq } from "@/lib/spotify/playerSyncSeq";
 import {
   getCorrelationId,
   jsonNoStore,
@@ -53,6 +54,7 @@ export async function GET(req: NextRequest) {
     includeRetryAfter: true,
   });
   if (rl) return rl;
+  const userKey = String(session.appUserId || "");
 
   try {
     const data = await spotifyFetch<SpotifyPlayerResponse | undefined>({
@@ -65,13 +67,22 @@ export async function GET(req: NextRequest) {
     });
 
     if (!data) {
+      const serverSeq = nextPlayerSyncSeq(userKey);
       return new NextResponse(null, {
         status: 204,
         headers: {
           "Cache-Control": "no-store",
+          "X-Player-Sync-Seq": String(serverSeq),
         },
       });
     }
+
+    const serverSeq = nextPlayerSyncSeq(userKey);
+    const syncMeta = {
+      serverSeq,
+      serverTime: Date.now(),
+      source: "player_route",
+    };
 
     if (raw) {
       const disallowsRaw = data.actions?.disallows;
@@ -107,6 +118,7 @@ export async function GET(req: NextRequest) {
         actions: {
           disallows,
         },
+        sync: syncMeta,
       });
     }
 
@@ -167,6 +179,7 @@ export async function GET(req: NextRequest) {
             )
           : {},
       fetchedAt: Date.now(),
+      sync: syncMeta,
     });
   } catch (error) {
     if (error instanceof SpotifyFetchError) {

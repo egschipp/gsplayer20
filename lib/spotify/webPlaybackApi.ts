@@ -16,6 +16,11 @@ export type PlaybackStateSnapshot = {
   currentlyPlayingType?: "track" | "episode" | "ad" | "unknown";
   disallows?: Record<string, boolean>;
   fetchedAt: number;
+  sync?: {
+    serverSeq: number;
+    serverTime: number;
+    source: string;
+  };
 };
 
 export type PlaybackApiError = {

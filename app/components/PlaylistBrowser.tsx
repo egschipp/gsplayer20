@@ -2291,10 +2291,27 @@ export default function PlaylistBrowser() {
     activeTrackIndexInRows < 0;
 
   const hydrationTargetTrackId = activeTrackIdsOrdered[0] ?? null;
+  const lastRowsAutoScrollRef = useRef<{ trackId: string | null; at: number }>({
+    trackId: null,
+    at: 0,
+  });
+  const lastItemsAutoScrollRef = useRef<{ trackId: string | null; at: number }>({
+    trackId: null,
+    at: 0,
+  });
 
   useEffect(() => {
     if (activeTrackIndexInRows < 0) return;
     if (mode !== "playlists" && mode !== "artists") return;
+    const now = Date.now();
+    if (
+      hydrationTargetTrackId &&
+      lastRowsAutoScrollRef.current.trackId === hydrationTargetTrackId &&
+      now - lastRowsAutoScrollRef.current.at < 900
+    ) {
+      return;
+    }
+    lastRowsAutoScrollRef.current = { trackId: hydrationTargetTrackId, at: now };
     window.requestAnimationFrame(() => {
       animateScrollToIndex(trackRowsOuterRef.current, activeTrackIndexInRows, TRACK_ROW_HEIGHT, {
         minDurationMs: 360,
@@ -2302,11 +2319,20 @@ export default function PlaylistBrowser() {
         pxPerMs: 2.0,
       });
     });
-  }, [activeTrackIndexInRows, mode]);
+  }, [activeTrackIndexInRows, hydrationTargetTrackId, mode]);
 
   useEffect(() => {
     if (activeTrackIndexInItems < 0) return;
     if (mode !== "tracks" && mode !== "albums") return;
+    const now = Date.now();
+    if (
+      hydrationTargetTrackId &&
+      lastItemsAutoScrollRef.current.trackId === hydrationTargetTrackId &&
+      now - lastItemsAutoScrollRef.current.at < 900
+    ) {
+      return;
+    }
+    lastItemsAutoScrollRef.current = { trackId: hydrationTargetTrackId, at: now };
     window.requestAnimationFrame(() => {
       animateScrollToIndex(
         trackItemsOuterRef.current,
@@ -2319,7 +2345,7 @@ export default function PlaylistBrowser() {
         }
       );
     });
-  }, [activeTrackIndexInItems, mode]);
+  }, [activeTrackIndexInItems, hydrationTargetTrackId, mode]);
 
   const isContextSwitchLoading = Boolean(
     loadingTracks &&

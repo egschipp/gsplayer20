@@ -147,6 +147,32 @@ test("derivePlaybackSnapshot keeps active playback status despite controller err
   assert.equal(snapshot.errorMessage, "NETWORK_TIMEOUT");
 });
 
+test("derivePlaybackSnapshot preserves stale active track without dropping highlight", () => {
+  const focus = createFocus({
+    trackId: TRACK_A,
+    matchTrackIds: [TRACK_A],
+    isPlaying: true,
+    status: "playing",
+    stale: true,
+    source: "api_stream",
+    positionMs: 10_000,
+    durationMs: 200_000,
+  });
+  const { snapshot } = derivePlaybackSnapshot({
+    focus,
+    lastStableFocus: DEFAULT_PLAYBACK_FOCUS,
+    controllerStatus: "ready",
+    pendingCommand: null,
+    controllerError: null,
+    runtimeError: null,
+    now: 20_000,
+  });
+  assert.equal(snapshot.currentTrackId, TRACK_A);
+  assert.equal(snapshot.uiStatus, "ready");
+  assert.equal(snapshot.verifiedPlayable, true);
+  assert.equal(snapshot.stale, true);
+});
+
 test("derivePlaybackSnapshot reports error when no active track exists", () => {
   const focus = createFocus({
     trackId: null,

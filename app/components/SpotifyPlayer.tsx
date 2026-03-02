@@ -77,6 +77,7 @@ const LOCAL_PLAYER_BOOT_RETRY_MS = [0, 1_500] as const;
 const DEVICE_SWITCH_SYNC_BOOST_MS = 8_000;
 const REMOTE_STALE_TRACK_HOLD_MS = 8_000;
 const LOCAL_STALE_TRACK_HOLD_MS = 4_500;
+const PLAYER_LIVE_TRACK_UI_GRACE_MS = 3_000;
 
 type PlayerPlaylistOption = {
   id: string;
@@ -640,6 +641,7 @@ export default function SpotifyPlayer({
   const [playPauseOptimisticPaused, setPlayPauseOptimisticPaused] = useState<
     boolean | null
   >(null);
+  const [liveTrackUiGraceVisible, setLiveTrackUiGraceVisible] = useState(false);
   const playerRef = useRef<any>(null);
   const deviceIdRef = useRef<string | null>(null);
   const accessTokenRef = useRef<string | undefined>(accessToken);
@@ -672,6 +674,7 @@ export default function SpotifyPlayer({
   const trackPlaylistWasOpenRef = useRef(false);
   const lastSdkStateRef = useRef<any>(null);
   const playPauseOptimisticTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveTrackUiGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastIsPlayingRef = useRef(false);
   const playerStateRef = useRef<typeof playerState>(null);
   const shuffleOnRef = useRef(shuffleOn);
@@ -952,6 +955,41 @@ export default function SpotifyPlayer({
   useEffect(() => {
     currentTrackIdRef.current = currentTrackIdState;
   }, [currentTrackIdState]);
+
+  useEffect(() => {
+    const hasLiveTrackSignal =
+      Boolean(currentTrackIdState) &&
+      playbackFocusState.status !== "idle" &&
+      playbackFocusState.status !== "ended" &&
+      playbackFocusState.status !== "error";
+    if (hasLiveTrackSignal) {
+      if (liveTrackUiGraceTimerRef.current) {
+        clearTimeout(liveTrackUiGraceTimerRef.current);
+        liveTrackUiGraceTimerRef.current = null;
+      }
+      if (!liveTrackUiGraceVisible) {
+        setLiveTrackUiGraceVisible(true);
+      }
+      return;
+    }
+    if (!liveTrackUiGraceVisible) return;
+    if (liveTrackUiGraceTimerRef.current) {
+      clearTimeout(liveTrackUiGraceTimerRef.current);
+    }
+    liveTrackUiGraceTimerRef.current = setTimeout(() => {
+      liveTrackUiGraceTimerRef.current = null;
+      setLiveTrackUiGraceVisible(false);
+    }, PLAYER_LIVE_TRACK_UI_GRACE_MS);
+  }, [currentTrackIdState, liveTrackUiGraceVisible, playbackFocusState.status]);
+
+  useEffect(() => {
+    return () => {
+      if (liveTrackUiGraceTimerRef.current) {
+        clearTimeout(liveTrackUiGraceTimerRef.current);
+        liveTrackUiGraceTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const getMonotonicNow = useCallback(() => {
     if (typeof performance !== "undefined" && typeof performance.now === "function") {
@@ -2546,6 +2584,12 @@ export default function SpotifyPlayer({
         const nowMs = Date.now();
         const activeDevice = activeDeviceIdRef.current || deviceIdRef.current;
         const sdkDevice = sdkDeviceIdRef.current;
+        const pendingDeviceSwitchActive = Boolean(
+          pendingDeviceIdRef.current &&
+            nowMs - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS
+        );
+        const fallbackTrackId =
+          currentTrackIdRef.current || lastTrackIdRef.current || null;
         const remoteDeviceActive = Boolean(
           activeDevice &&
             sdkDevice &&
@@ -2560,19 +2604,29 @@ export default function SpotifyPlayer({
           authorityModeRef.current === "remote_primary" ||
           authorityModeRef.current === "handoff_pending";
         const staleHoldMs =
-          inRateLimitBackoff || remoteDeviceActive || remoteDeviceFromSnapshot || remoteAuthorityActive
+          inRateLimitBackoff ||
+          remoteDeviceActive ||
+          remoteDeviceFromSnapshot ||
+          remoteAuthorityActive ||
+          pendingDeviceSwitchActive
             ? REMOTE_STALE_TRACK_HOLD_MS
             : LOCAL_STALE_TRACK_HOLD_MS;
         const hasRecentPlayableTrack =
-          Boolean(currentTrackIdRef.current) &&
+          Boolean(fallbackTrackId) &&
           nowMs - lastPlayableTrackSeenAtRef.current < staleHoldMs;
         const shouldPreserveTrackState =
-          Boolean(currentTrackIdRef.current) &&
+          Boolean(fallbackTrackId) &&
           (Boolean(data?.is_playing) ||
-            hasRecentPlayableTrack);
+            hasRecentPlayableTrack ||
+            pendingDeviceSwitchActive);
         if (shouldPreserveTrackState) {
-          setPlaybackTrackState(currentTrackIdRef.current, {
-            matchTrackIds: playbackFocusRef.current.matchTrackIds,
+          setPlaybackTrackState(fallbackTrackId, {
+            matchTrackIds:
+              playbackFocusRef.current.matchTrackIds.length > 0
+                ? playbackFocusRef.current.matchTrackIds
+                : fallbackTrackId
+                ? [fallbackTrackId]
+                : [],
             isPlaying: typeof data?.is_playing === "boolean" ? data.is_playing : false,
             status:
               typeof data?.is_playing === "boolean"
@@ -4204,24 +4258,42 @@ export default function SpotifyPlayer({
       if (!state) {
         const activeDevice = activeDeviceIdRef.current || deviceIdRef.current;
         const sdkDevice = sdkDeviceIdRef.current;
+        const nowMs = Date.now();
+        const pendingDeviceSwitchActive = Boolean(
+          pendingDeviceIdRef.current &&
+            nowMs - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS
+        );
+        const fallbackTrackId =
+          currentTrackIdRef.current || lastTrackIdRef.current || null;
         const remoteDeviceActive = Boolean(
           activeDevice && sdkDevice && activeDevice !== sdkDevice
         );
-        const nowMs = Date.now();
         const inRateLimitBackoff = nowMs < rateLimitRef.current.until;
         const remoteAuthorityActive =
           authorityModeRef.current === "remote_primary" ||
           authorityModeRef.current === "handoff_pending";
         const staleHoldMs =
-          remoteDeviceActive || inRateLimitBackoff || remoteAuthorityActive
+          remoteDeviceActive ||
+          inRateLimitBackoff ||
+          remoteAuthorityActive ||
+          pendingDeviceSwitchActive
             ? REMOTE_STALE_TRACK_HOLD_MS
             : LOCAL_STALE_TRACK_HOLD_MS;
         const hasRecentPlayableTrack =
-          Boolean(currentTrackIdRef.current) &&
+          Boolean(fallbackTrackId) &&
           nowMs - lastPlayableTrackSeenAtRef.current < staleHoldMs;
-        if ((remoteDeviceActive || inRateLimitBackoff || hasRecentPlayableTrack) && currentTrackIdRef.current) {
-          setPlaybackTrackState(currentTrackIdRef.current, {
-            matchTrackIds: playbackFocusRef.current.matchTrackIds,
+        if (
+          (remoteDeviceActive ||
+            inRateLimitBackoff ||
+            hasRecentPlayableTrack ||
+            pendingDeviceSwitchActive) &&
+          fallbackTrackId
+        ) {
+          setPlaybackTrackState(fallbackTrackId, {
+            matchTrackIds:
+              playbackFocusRef.current.matchTrackIds.length > 0
+                ? playbackFocusRef.current.matchTrackIds
+                : [fallbackTrackId],
             isPlaying: playbackFocusRef.current.isPlaying,
             status: playbackFocusRef.current.isPlaying ? "playing" : "paused",
             stale: true,
@@ -5912,11 +5984,12 @@ export default function SpotifyPlayer({
       (playbackPausedUi
         ? Boolean(playbackDisallows.resuming)
         : Boolean(playbackDisallows.pausing)));
-  const showLiveTrackInPlayer =
+  const hasLiveTrackSignal =
     Boolean(currentTrackIdState) &&
     playbackFocusState.status !== "idle" &&
     playbackFocusState.status !== "ended" &&
     playbackFocusState.status !== "error";
+  const showLiveTrackInPlayer = hasLiveTrackSignal || liveTrackUiGraceVisible;
   const playerTitleText = showLiveTrackInPlayer
     ? playerState?.name ?? "Unknown track"
     : "Select track";

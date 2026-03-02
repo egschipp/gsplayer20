@@ -3474,8 +3474,10 @@ export default function PlaylistBrowser() {
     };
   }, [
     hydrationTargetTrackId,
+    activeTrackHydrationError,
     activeTrackHydrating,
     activeTrackIndexInRows,
+    activeTrackHydrationRetryAfterMs,
     loadMore,
     loadingTracks,
     mode,

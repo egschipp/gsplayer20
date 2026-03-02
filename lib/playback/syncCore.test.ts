@@ -62,6 +62,22 @@ test("keeps stable state when lower priority and older time", () => {
   assert.equal(verdict.reason, "older_time_lower_or_equal_priority");
 });
 
+test("rejects unsequenced lower-priority events when sequenced state is newer", () => {
+  const verdict = shouldApplyPlaybackEvent(
+    baseState({ lastSeq: 14, lastAtMs: 8000, lastSource: "verify" }),
+    {
+      source: "sse",
+      seq: 0,
+      atMs: 7900,
+      deviceId: "d1",
+      trackId: "t1",
+      isPlaying: false,
+    }
+  );
+  assert.equal(verdict.apply, false);
+  assert.equal(verdict.reason, "unsequenced_lower_priority");
+});
+
 test("forced events always apply", () => {
   const verdict = shouldApplyPlaybackEvent(baseState({ lastSeq: 99 }), {
     source: "command",
@@ -89,4 +105,18 @@ test("reducer updates state for accepted events", () => {
   assert.equal(next.lastAtMs, 1200);
   assert.equal(next.lastDeviceId, "d3");
   assert.equal(next.lastTrackId, "t3");
+});
+
+test("reducer never regresses sequence on forced lower-seq event", () => {
+  const next = reducePlaybackSyncState(baseState({ lastSeq: 40, lastAtMs: 5000 }), {
+    source: "command",
+    seq: 12,
+    atMs: 5200,
+    deviceId: "d3",
+    trackId: "t3",
+    isPlaying: true,
+    force: true,
+  });
+  assert.equal(next.lastSeq, 40);
+  assert.equal(next.lastAtMs, 5200);
 });

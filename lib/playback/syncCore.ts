@@ -69,30 +69,38 @@ export function shouldApplyPlaybackEvent(
   input: PlaybackSyncEvent
 ): { apply: boolean; reason: string } {
   const event = clampEvent(input);
+  const hasEventSeq = event.seq > 0;
+  const hasStateSeq = state.lastSeq > 0;
+  const nextPriority = SOURCE_PRIORITY[event.source];
+  const currentPriority = SOURCE_PRIORITY[state.lastSource];
+
   if (event.force) {
     return { apply: true, reason: "forced" };
   }
 
-  if (event.seq > 0 && event.seq < state.lastSeq) {
+  if (hasEventSeq && hasStateSeq && event.seq < state.lastSeq) {
     return { apply: false, reason: "seq_older" };
   }
 
-  if (event.seq > 0 && event.seq === state.lastSeq) {
+  if (hasEventSeq && hasStateSeq && event.seq === state.lastSeq) {
     if (event.atMs > 0 && event.atMs < state.lastAtMs) {
       return { apply: false, reason: "same_seq_older_time" };
     }
-    const nextPriority = SOURCE_PRIORITY[event.source];
-    const currentPriority = SOURCE_PRIORITY[state.lastSource];
     if (nextPriority < currentPriority) {
       return { apply: false, reason: "same_seq_lower_priority" };
     }
   }
 
-  if (event.seq === 0 && state.lastSeq === 0) {
-    const nextPriority = SOURCE_PRIORITY[event.source];
-    const currentPriority = SOURCE_PRIORITY[state.lastSource];
-    if (event.atMs + 250 < state.lastAtMs && nextPriority <= currentPriority) {
+  if (!hasEventSeq) {
+    if (event.atMs + 350 < state.lastAtMs && nextPriority <= currentPriority) {
       return { apply: false, reason: "older_time_lower_or_equal_priority" };
+    }
+    if (
+      hasStateSeq &&
+      event.atMs <= state.lastAtMs &&
+      nextPriority < currentPriority
+    ) {
+      return { apply: false, reason: "unsequenced_lower_priority" };
     }
   }
 
@@ -109,7 +117,7 @@ export function reducePlaybackSyncState(
     return state;
   }
   return {
-    lastSeq: event.seq > 0 ? event.seq : Math.max(state.lastSeq, event.seq),
+    lastSeq: event.seq > 0 ? Math.max(state.lastSeq, event.seq) : state.lastSeq,
     lastAtMs: Math.max(state.lastAtMs, event.atMs),
     lastSource: event.source,
     lastDeviceId: event.deviceId,

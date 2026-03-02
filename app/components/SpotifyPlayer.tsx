@@ -392,6 +392,18 @@ function readSyncServerSeq(payload: any): number {
     : 0;
 }
 
+function readSyncServerTime(payload: any): number {
+  const candidate =
+    payload?.sync?.serverTime ??
+    payload?.serverTime ??
+    payload?.meta?.serverTime ??
+    payload?.timestamp ??
+    Date.now();
+  return typeof candidate === "number" && Number.isFinite(candidate)
+    ? Math.max(0, Math.floor(candidate))
+    : Date.now();
+}
+
 function ActiveTrackIndicator({
   status,
   isStale,
@@ -722,7 +734,6 @@ export default function SpotifyPlayer({
   const playbackFocusRef = useRef<PlaybackFocus>(DEFAULT_PLAYBACK_FOCUS);
   const operationEpochRef = useRef(0);
   const playbackSyncStateRef = useRef<PlaybackSyncState>(INITIAL_PLAYBACK_SYNC_STATE);
-  const localIngestSeqRef = useRef(0);
   const userIntentSeqRef = useRef(0);
   const trackChangeLockUntilRef = useRef(0);
   const lastProgressSyncRef = useRef(0);
@@ -1946,6 +1957,9 @@ export default function SpotifyPlayer({
     return await ensurePlaybackStarted(args.deviceId, args.expectedTrackId);
   }
 
+  const ensurePlaybackStartedRef = useRef(ensurePlaybackStarted);
+  ensurePlaybackStartedRef.current = ensurePlaybackStarted;
+
   const getIndexFromTrackId = useCallback((uris: string[], trackId?: string | null) => {
     if (!trackId) return -1;
     const target = String(trackId);
@@ -2296,7 +2310,7 @@ export default function SpotifyPlayer({
         typeof data?.timestamp === "number"
           ? Math.max(0, Math.floor(data.timestamp))
           : responseReceivedAtWallMs;
-      const eventSeq = readSyncServerSeq(data) || ++localIngestSeqRef.current;
+      const eventSeq = readSyncServerSeq(data);
       const eventTrackId = data?.item ? resolvePlaybackTrackId(data.item) : null;
       const eventDeviceId =
         typeof data?.device?.id === "string" ? data.device.id : null;
@@ -3071,7 +3085,7 @@ export default function SpotifyPlayer({
     (state: any) => {
       if (!state) return;
       lastPlaybackSnapshotAtRef.current = Date.now();
-      const eventSeq = ++localIngestSeqRef.current;
+      const eventSeq = 0;
       const eventTrackId = resolvePlaybackTrackId(state.track_window?.current_track);
       const eventDeviceId =
         typeof state?.device?.id === "string" ? state.device.id : sdkDeviceIdRef.current;
@@ -4445,10 +4459,11 @@ export default function SpotifyPlayer({
           }
           if (playRes.ok) {
             const expectedTrackId = resolveTrackIdFromUri(resolvedUri);
+            const playAck = await readJsonSafely<any>(playRes.clone());
             shouldApplyIngest({
               source: "command",
-              seq: ++localIngestSeqRef.current,
-              atMs: Date.now(),
+              seq: readSyncServerSeq(playAck),
+              atMs: readSyncServerTime(playAck),
               deviceId: currentDevice as string,
               trackId: expectedTrackId,
               isPlaying: true,
@@ -4665,10 +4680,11 @@ export default function SpotifyPlayer({
           }
           if (contextRes.ok) {
             const expectedTrackId = resolveTrackIdFromUri(offsetUri ?? null);
+            const contextAck = await readJsonSafely<any>(contextRes.clone());
             shouldApplyIngest({
               source: "command",
-              seq: ++localIngestSeqRef.current,
-              atMs: Date.now(),
+              seq: readSyncServerSeq(contextAck),
+              atMs: readSyncServerTime(contextAck),
               deviceId: currentDevice as string,
               trackId: expectedTrackId,
               isPlaying: true,
@@ -4859,7 +4875,10 @@ export default function SpotifyPlayer({
         // continue with verify fallback
       }
       try {
-        await ensurePlaybackStarted(sdkDeviceId, currentTrackIdRef.current ?? null);
+        await ensurePlaybackStartedRef.current(
+          sdkDeviceId,
+          currentTrackIdRef.current ?? null
+        );
       } catch {
         // ignore here; normal sync path will surface actionable errors
       }
@@ -4892,7 +4911,6 @@ export default function SpotifyPlayer({
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [
-    ensurePlaybackStarted,
     refreshClientAccessToken,
     refreshDevices,
     syncPlaybackState,

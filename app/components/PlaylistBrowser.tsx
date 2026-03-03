@@ -2340,6 +2340,7 @@ export default function PlaylistBrowser() {
     () => new Set(activeTrackIdsOrdered),
     [activeTrackIdsOrdered]
   );
+  const activeTrackVisualStatusRef = useRef<PlaybackFocusStatus>("idle");
   const activeTrackIsLatched =
     activeTrackIdSet.size > 0 && rawActiveTrackIdsOrdered.length === 0;
   const activeTrackInTransientGap =
@@ -2349,10 +2350,36 @@ export default function PlaylistBrowser() {
       playbackState.reason === "missing_match" ||
       playbackState.stale ||
       playbackFocus.stale);
+  useEffect(() => {
+    if (activeTrackIdSet.size === 0) {
+      activeTrackVisualStatusRef.current = "idle";
+      return;
+    }
+    if (activeTrackInTransientGap) return;
+    if (playbackState.status === "playing" || playbackState.status === "paused") {
+      activeTrackVisualStatusRef.current = playbackState.status;
+      return;
+    }
+    if (playbackFocus.isPlaying === true) {
+      activeTrackVisualStatusRef.current = "playing";
+      return;
+    }
+    if (playbackFocus.isPlaying === false) {
+      activeTrackVisualStatusRef.current = "paused";
+    }
+  }, [
+    activeTrackIdSet,
+    activeTrackInTransientGap,
+    playbackFocus.isPlaying,
+    playbackState.status,
+  ]);
   const activeTrackStatus: PlaybackFocusStatus = activeTrackInTransientGap
-    ? playbackFocus.isPlaying === false
+    ? activeTrackVisualStatusRef.current === "playing" ||
+      activeTrackVisualStatusRef.current === "paused"
+      ? activeTrackVisualStatusRef.current
+      : playbackFocus.isPlaying === false
       ? "paused"
-      : "loading"
+      : "playing"
     : playbackState.status;
   const activeTrackIsStale =
     activeTrackIdSet.size > 0

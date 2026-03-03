@@ -75,9 +75,13 @@ const PLAYBACK_READY_REFRESH_EVERY_MS = 1_200;
 const PLAYBACK_INTENT_MAX_AGE_MS = 15_000;
 const LOCAL_PLAYER_BOOT_RETRY_MS = [0, 1_500] as const;
 const DEVICE_SWITCH_SYNC_BOOST_MS = 8_000;
-const REMOTE_STALE_TRACK_HOLD_MS = 8_000;
-const LOCAL_STALE_TRACK_HOLD_MS = 4_500;
-const PLAYER_LIVE_TRACK_UI_GRACE_MS = 3_000;
+const REMOTE_STALE_TRACK_HOLD_MS = 12_000;
+const LOCAL_STALE_TRACK_HOLD_MS = 7_000;
+const PLAYER_LIVE_TRACK_UI_GRACE_MS = 6_000;
+const NO_TRACK_HARD_CLEAR_MIN_COUNT = 3;
+const NO_TRACK_HARD_CLEAR_GRACE_MS = 3_500;
+const NO_TRACK_HANDOFF_HARD_CLEAR_MIN_COUNT = 6;
+const NO_TRACK_HANDOFF_HARD_CLEAR_GRACE_MS = 12_000;
 
 type PlayerPlaylistOption = {
   id: string;
@@ -124,6 +128,28 @@ type DeviceSwitchContext = {
   sampledAt: number;
 };
 
+type HandoffPhase =
+  | "idle"
+  | "requested"
+  | "device_ready"
+  | "playback_confirmed"
+  | "failed";
+
+type HandoffState = {
+  phase: HandoffPhase;
+  targetDeviceId: string | null;
+  updatedAt: number;
+  reason: string;
+};
+
+type NoTrackCounterState = {
+  count: number;
+  firstAt: number;
+  lastAt: number;
+  lastSource: PlaybackSource | PlaybackFocusSource | null;
+  lastDeviceId: string | null;
+};
+
 type QueueTrackItem = {
   id: string;
   uri: string | null;
@@ -151,6 +177,21 @@ type DeferredPlayIntent =
       offsetUri?: string;
       createdAt: number;
     };
+
+const INITIAL_HANDOFF_STATE: HandoffState = {
+  phase: "idle",
+  targetDeviceId: null,
+  updatedAt: 0,
+  reason: "init",
+};
+
+const INITIAL_NO_TRACK_COUNTER: NoTrackCounterState = {
+  count: 0,
+  firstAt: 0,
+  lastAt: 0,
+  lastSource: null,
+  lastDeviceId: null,
+};
 
 function detectWebplayerPlatform() {
   if (typeof navigator === "undefined") return "";
@@ -628,6 +669,8 @@ export default function SpotifyPlayer({
   const [connectDockManualOpen, setConnectDockManualOpen] = useState(false);
   const lastDeviceSelectRef = useRef(0);
   const pendingDeviceIdRef = useRef<string | null>(null);
+  const handoffStateRef = useRef<HandoffState>(INITIAL_HANDOFF_STATE);
+  const noTrackCounterRef = useRef<NoTrackCounterState>(INITIAL_NO_TRACK_COUNTER);
   const preferSdkDeviceRef = useRef(true);
   const lastConfirmedActiveDeviceRef = useRef<{ id: string; at: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -957,8 +1000,10 @@ export default function SpotifyPlayer({
   }, [currentTrackIdState]);
 
   useEffect(() => {
+    const uiTrackIdCandidate =
+      currentTrackIdState || playbackFocusState.trackId || lastTrackIdRef.current;
     const hasLiveTrackSignal =
-      Boolean(currentTrackIdState) &&
+      Boolean(uiTrackIdCandidate) &&
       playbackFocusState.status !== "idle" &&
       playbackFocusState.status !== "ended" &&
       playbackFocusState.status !== "error";
@@ -980,7 +1025,12 @@ export default function SpotifyPlayer({
       liveTrackUiGraceTimerRef.current = null;
       setLiveTrackUiGraceVisible(false);
     }, PLAYER_LIVE_TRACK_UI_GRACE_MS);
-  }, [currentTrackIdState, liveTrackUiGraceVisible, playbackFocusState.status]);
+  }, [
+    currentTrackIdState,
+    liveTrackUiGraceVisible,
+    playbackFocusState.status,
+    playbackFocusState.trackId,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -1077,6 +1127,105 @@ export default function SpotifyPlayer({
       return nextMode;
     },
     [emitPlaybackMetric]
+  );
+
+  const setHandoffPhase = useCallback(
+    (
+      phase: HandoffPhase,
+      reason: string,
+      options?: { targetDeviceId?: string | null; updatedAt?: number }
+    ) => {
+      const next: HandoffState = {
+        phase,
+        targetDeviceId:
+          options?.targetDeviceId === undefined
+            ? handoffStateRef.current.targetDeviceId
+            : options.targetDeviceId ?? null,
+        updatedAt:
+          typeof options?.updatedAt === "number" ? options.updatedAt : Date.now(),
+        reason,
+      };
+      const previous = handoffStateRef.current;
+      if (
+        previous.phase === next.phase &&
+        previous.targetDeviceId === next.targetDeviceId &&
+        previous.reason === next.reason
+      ) {
+        return;
+      }
+      handoffStateRef.current = next;
+      emitPlaybackDebugEvent("handoff_phase_change", {
+        from: previous.phase,
+        to: next.phase,
+        reason,
+        targetDeviceId: next.targetDeviceId,
+      });
+      emitPlaybackMetric("handoff_phase_change", 1, {
+        from: previous.phase,
+        to: next.phase,
+        reason,
+        targetDeviceId: next.targetDeviceId,
+      });
+    },
+    [emitPlaybackMetric]
+  );
+
+  const clearPendingDevice = useCallback(
+    (reason: string, snapshotDeviceId?: string | null) => {
+      const pendingId = pendingDeviceIdRef.current;
+      if (!pendingId) return;
+      pendingDeviceIdRef.current = null;
+      refreshAuthorityMode(reason, snapshotDeviceId ?? pendingId);
+      emitPlaybackDebugEvent("pending_device_cleared", {
+        reason,
+        pendingDeviceId: pendingId,
+      });
+      emitPlaybackMetric("pending_device_cleared", 1, {
+        reason,
+        pendingDeviceId: pendingId,
+      });
+    },
+    [emitPlaybackMetric, refreshAuthorityMode]
+  );
+
+  const resetNoTrackCounter = useCallback((reason: string) => {
+    const current = noTrackCounterRef.current;
+    if (current.count <= 0) return;
+    noTrackCounterRef.current = { ...INITIAL_NO_TRACK_COUNTER };
+    emitPlaybackDebugEvent("no_track_counter_reset", {
+      reason,
+      previousCount: current.count,
+      lastSource: current.lastSource,
+      lastDeviceId: current.lastDeviceId,
+    });
+  }, []);
+
+  const recordNoTrackEvent = useCallback(
+    (
+      source: PlaybackSource | PlaybackFocusSource,
+      snapshotDeviceId?: string | null,
+      atMs = Date.now()
+    ) => {
+      const prev = noTrackCounterRef.current;
+      const nextCount = prev.count + 1;
+      const next: NoTrackCounterState = {
+        count: nextCount,
+        firstAt: prev.firstAt || atMs,
+        lastAt: atMs,
+        lastSource: source,
+        lastDeviceId: snapshotDeviceId ?? null,
+      };
+      noTrackCounterRef.current = next;
+      emitPlaybackDebugEvent("no_track_event", {
+        count: next.count,
+        source,
+        snapshotDeviceId: snapshotDeviceId ?? null,
+        firstAt: next.firstAt,
+        lastAt: next.lastAt,
+      });
+      return next;
+    },
+    []
   );
 
   const bumpDeviceEpoch = useCallback(
@@ -1225,9 +1374,21 @@ export default function SpotifyPlayer({
       source: PlaybackSource | PlaybackFocusSource = "system",
       isPlaying: boolean | null = null
     ) => {
+      const pendingId = pendingDeviceIdRef.current;
+      const handoffPhase = handoffStateRef.current.phase;
+      if (
+        pendingId &&
+        (handoffPhase === "requested" || handoffPhase === "device_ready")
+      ) {
+        clearPendingDevice("handoff_no_track_hard_clear", pendingId);
+        setHandoffPhase("failed", "handoff_no_track_hard_clear", {
+          targetDeviceId: pendingId,
+        });
+      }
       hasConfirmedLivePlaybackRef.current = false;
       lastTrackIdRef.current = null;
       pendingTrackIdRef.current = null;
+      noTrackCounterRef.current = { ...INITIAL_NO_TRACK_COUNTER };
       setOptimisticTrack(null);
       setPlayerState(null);
       setPlaybackTrackState(null, {
@@ -1247,7 +1408,13 @@ export default function SpotifyPlayer({
         applyProgressPosition(0, receivedAtMonoMs);
       }
     },
-    [applyProgressPosition, getMonotonicNow, setPlaybackTrackState]
+    [
+      applyProgressPosition,
+      clearPendingDevice,
+      getMonotonicNow,
+      setHandoffPhase,
+      setPlaybackTrackState,
+    ]
   );
 
   const beginScrub = useCallback(
@@ -1831,8 +1998,10 @@ export default function SpotifyPlayer({
     );
     if (!transferred) {
       if (pendingDeviceIdRef.current === targetId) {
-        pendingDeviceIdRef.current = null;
-        refreshAuthorityMode("ensure_active_device_transfer_failed", targetId);
+        clearPendingDevice("ensure_active_device_transfer_failed", targetId);
+        setHandoffPhase("failed", "ensure_active_device_transfer_failed", {
+          targetDeviceId: targetId,
+        });
       }
       lastConfirmedActiveDeviceRef.current = null;
       setDeviceReady(false);
@@ -1856,8 +2025,10 @@ export default function SpotifyPlayer({
       await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
     }
     if (pendingDeviceIdRef.current === targetId) {
-      pendingDeviceIdRef.current = null;
-      refreshAuthorityMode("ensure_active_device_verify_failed", targetId);
+      clearPendingDevice("ensure_active_device_verify_failed", targetId);
+      setHandoffPhase("failed", "ensure_active_device_verify_failed", {
+        targetDeviceId: targetId,
+      });
     }
     lastConfirmedActiveDeviceRef.current = null;
     setDeviceReady(false);
@@ -2254,8 +2425,10 @@ export default function SpotifyPlayer({
       const pendingFresh =
         Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
       if (!pendingFresh) {
-        pendingDeviceIdRef.current = null;
-        refreshAuthorityMode("pending_device_expired_before_adopt", remoteDeviceId);
+        clearPendingDevice("pending_device_expired_before_adopt", remoteDeviceId);
+        setHandoffPhase("failed", "pending_device_expired_before_adopt", {
+          targetDeviceId: remoteDeviceId ?? null,
+        });
       } else {
         return remoteDeviceId === pendingId;
       }
@@ -2267,7 +2440,7 @@ export default function SpotifyPlayer({
       Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
     if (heldSelection) return false;
     return true;
-  }, [refreshAuthorityMode]);
+  }, [clearPendingDevice, setHandoffPhase]);
 
   const clearRemoteTakeoverCandidate = useCallback(() => {
     remoteTakeoverCandidateRef.current = null;
@@ -2300,9 +2473,11 @@ export default function SpotifyPlayer({
     const pendingFresh =
       Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
     if (pendingFresh) return;
-    pendingDeviceIdRef.current = null;
-    refreshAuthorityMode("pending_device_cleared_stale");
-  }, [refreshAuthorityMode]);
+    clearPendingDevice("pending_device_cleared_stale", pendingId);
+    setHandoffPhase("failed", "pending_device_cleared_stale", {
+      targetDeviceId: pendingId,
+    });
+  }, [clearPendingDevice, setHandoffPhase]);
 
   const fetchQueue = useCallback(async () => {
     if (!accessTokenRef.current) return;
@@ -2544,6 +2719,87 @@ export default function SpotifyPlayer({
     [setPlaybackTrackState]
   );
 
+  const confirmPendingHandoffOnPlayback = useCallback(
+    (
+      trackId: string | null,
+      source: PlaybackSource | PlaybackFocusSource,
+      snapshotDeviceId?: string | null
+    ) => {
+      if (!trackId) return;
+      const pendingId = pendingDeviceIdRef.current;
+      if (!pendingId) return;
+      const activeDevice = activeDeviceIdRef.current || deviceIdRef.current || null;
+      const effectiveSnapshotDevice = snapshotDeviceId ?? activeDevice;
+      const confirmsPendingDevice = Boolean(
+        effectiveSnapshotDevice && effectiveSnapshotDevice === pendingId
+      );
+      if (!confirmsPendingDevice) return;
+      clearPendingDevice("handoff_playback_confirmed", effectiveSnapshotDevice);
+      setHandoffPhase("playback_confirmed", "handoff_playback_confirmed", {
+        targetDeviceId: effectiveSnapshotDevice,
+      });
+      emitPlaybackMetric("handoff_playback_confirmed", 1, {
+        source,
+        trackId,
+        deviceId: effectiveSnapshotDevice,
+      });
+    },
+    [clearPendingDevice, emitPlaybackMetric, setHandoffPhase]
+  );
+
+  const decideNoTrackTransition = useCallback(
+    (args: {
+      source: PlaybackSource | PlaybackFocusSource;
+      isPlaying?: boolean | null;
+      snapshotDeviceId?: string | null;
+      fallbackStatus?: PlaybackFocusStatus;
+      nowMs?: number;
+      confidence?: number;
+    }) => {
+      const nowMs = typeof args.nowMs === "number" ? args.nowMs : Date.now();
+      const preserved = preserveTransientNoTrackState(args);
+      if (preserved) {
+        emitPlaybackMetric("no_track_preserved", 1, {
+          source: args.source,
+          snapshotDeviceId: args.snapshotDeviceId ?? null,
+          reason: "preserve_transient",
+        });
+        return { preserved: true, hardClear: false };
+      }
+
+      const counter = recordNoTrackEvent(args.source, args.snapshotDeviceId, nowMs);
+      const handoffPhase = handoffStateRef.current.phase;
+      const handoffActive = handoffPhase === "requested" || handoffPhase === "device_ready";
+      const minCount = handoffActive
+        ? NO_TRACK_HANDOFF_HARD_CLEAR_MIN_COUNT
+        : NO_TRACK_HARD_CLEAR_MIN_COUNT;
+      const graceMs = handoffActive
+        ? NO_TRACK_HANDOFF_HARD_CLEAR_GRACE_MS
+        : NO_TRACK_HARD_CLEAR_GRACE_MS;
+      const ageMs = Math.max(0, nowMs - counter.firstAt);
+      const hardClear = counter.count >= minCount && ageMs >= graceMs;
+      if (hardClear) {
+        emitPlaybackMetric("no_track_hard_clear", 1, {
+          source: args.source,
+          snapshotDeviceId: args.snapshotDeviceId ?? null,
+          count: counter.count,
+          ageMs,
+          handoffPhase,
+        });
+      } else {
+        emitPlaybackMetric("no_track_waiting", 1, {
+          source: args.source,
+          snapshotDeviceId: args.snapshotDeviceId ?? null,
+          count: counter.count,
+          ageMs,
+          handoffPhase,
+        });
+      }
+      return { preserved: false, hardClear };
+    },
+    [emitPlaybackMetric, preserveTransientNoTrackState, recordNoTrackEvent]
+  );
+
   const ingestApiSnapshot = useCallback(
     (
       data: any,
@@ -2603,7 +2859,11 @@ export default function SpotifyPlayer({
         if (shouldForceAdoptRemoteDevice(remoteDeviceId)) {
           setConnectConflict(null);
           preferSdkDeviceRef.current = remoteDeviceId === sdkDeviceIdRef.current;
-          pendingDeviceIdRef.current = null;
+          if (pendingDeviceIdRef.current === remoteDeviceId) {
+            setHandoffPhase("device_ready", "force_adopt_remote_device", {
+              targetDeviceId: remoteDeviceId,
+            });
+          }
           refreshAuthorityMode("force_adopt_remote_device", remoteDeviceId);
           setActiveDevice(remoteDeviceId, device?.name ?? null);
           setActiveDeviceRestricted(Boolean(device?.is_restricted));
@@ -2622,7 +2882,9 @@ export default function SpotifyPlayer({
         setActiveDeviceSupportsVolume(device.supports_volume !== false);
         lastConfirmedActiveDeviceRef.current = { id: device.id, at: Date.now() };
         if (device.id === pendingDeviceIdRef.current) {
-          pendingDeviceIdRef.current = null;
+          setHandoffPhase("device_ready", "adopt_remote_device_resolved_pending", {
+            targetDeviceId: device.id,
+          });
           refreshAuthorityMode("adopt_remote_device_resolved_pending", device.id);
         }
       }
@@ -2660,16 +2922,15 @@ export default function SpotifyPlayer({
       const isPlaying = Boolean(data?.is_playing);
       if (!data?.item) {
         const nowMs = Date.now();
-        if (
-          preserveTransientNoTrackState({
-            source,
-            isPlaying:
-              typeof data?.is_playing === "boolean" ? data.is_playing : null,
-            snapshotDeviceId: eventDeviceId,
-            nowMs,
-            confidence: 0.75,
-          })
-        ) {
+        const noTrackTransition = decideNoTrackTransition({
+          source,
+          isPlaying:
+            typeof data?.is_playing === "boolean" ? data.is_playing : null,
+          snapshotDeviceId: eventDeviceId,
+          nowMs,
+          confidence: 0.75,
+        });
+        if (noTrackTransition.preserved || !noTrackTransition.hardClear) {
           postCrossTabEvent({
             type: "sync",
             at: nowMs,
@@ -2702,17 +2963,16 @@ export default function SpotifyPlayer({
       const matchTrackIds = resolvePlaybackTrackIds(item);
       if (!trackId || matchTrackIds.length === 0) {
         const nowMs = Date.now();
-        if (
-          preserveTransientNoTrackState({
-            source,
-            isPlaying:
-              typeof data?.is_playing === "boolean" ? data.is_playing : null,
-            snapshotDeviceId: eventDeviceId,
-            fallbackStatus: "loading",
-            nowMs,
-            confidence: 0.7,
-          })
-        ) {
+        const noTrackTransition = decideNoTrackTransition({
+          source,
+          isPlaying:
+            typeof data?.is_playing === "boolean" ? data.is_playing : null,
+          snapshotDeviceId: eventDeviceId,
+          fallbackStatus: "loading",
+          nowMs,
+          confidence: 0.7,
+        });
+        if (noTrackTransition.preserved || !noTrackTransition.hardClear) {
           postCrossTabEvent({
             type: "sync",
             at: nowMs,
@@ -2798,6 +3058,8 @@ export default function SpotifyPlayer({
         errorMessage: null,
         updatedAt: Date.now(),
       });
+      resetNoTrackCounter("api_valid_track");
+      confirmPendingHandoffOnPlayback(trackId, source, eventDeviceId);
       syncQueuePositionFromTrack(trackId);
       if (trackId && Date.now() - lastProgressSyncRef.current > 5000) {
         lastProgressSyncRef.current = Date.now();
@@ -2842,13 +3104,16 @@ export default function SpotifyPlayer({
       applyPendingSeekGuard,
       applyProgressPosition,
       clearPlaybackViewState,
+      confirmPendingHandoffOnPlayback,
+      decideNoTrackTransition,
       emitPlaybackMetric,
       postCrossTabEvent,
-      preserveTransientNoTrackState,
       projectRemoteProgressMs,
       refreshAuthorityMode,
       rebuildQueueOrder,
       reconcileProgressPosition,
+      resetNoTrackCounter,
+      setHandoffPhase,
       setPlaybackTrackState,
       setActiveDevice,
       shouldAdoptRemoteDevice,
@@ -3386,7 +3651,9 @@ export default function SpotifyPlayer({
         setActiveDeviceRestricted(Boolean(state?.device?.is_restricted));
         setActiveDevicePrivateSession(Boolean(state?.device?.is_private_session));
         setActiveDeviceSupportsVolume(state?.device?.supports_volume !== false);
-        pendingDeviceIdRef.current = null;
+        setHandoffPhase("device_ready", "sdk_state_resolved_pending", {
+          targetDeviceId: stateDeviceId ?? null,
+        });
         refreshAuthorityMode("sdk_state_resolved_pending", stateDeviceId ?? null);
         setDeviceReady(true);
       }
@@ -3400,16 +3667,15 @@ export default function SpotifyPlayer({
         return;
       }
       if (!trackId || matchTrackIds.length === 0) {
-        if (
-          preserveTransientNoTrackState({
-            source: "sdk",
-            isPlaying: sdkSaysPlaying,
-            snapshotDeviceId: stateDeviceId ?? eventDeviceId ?? null,
-            fallbackStatus: sdkSaysPlaying ? "playing" : "paused",
-            nowMs: Date.now(),
-            confidence: 0.65,
-          })
-        ) {
+        const noTrackTransition = decideNoTrackTransition({
+          source: "sdk",
+          isPlaying: sdkSaysPlaying,
+          snapshotDeviceId: stateDeviceId ?? eventDeviceId ?? null,
+          fallbackStatus: sdkSaysPlaying ? "playing" : "paused",
+          nowMs: Date.now(),
+          confidence: 0.65,
+        });
+        if (noTrackTransition.preserved || !noTrackTransition.hardClear) {
           return;
         }
         clearPlaybackViewState(eventMonoMs, "sdk", sdkSaysPlaying);
@@ -3483,6 +3749,8 @@ export default function SpotifyPlayer({
         errorMessage: null,
         updatedAt: Date.now(),
       });
+      resetNoTrackCounter("sdk_valid_track");
+      confirmPendingHandoffOnPlayback(trackId, "sdk", stateDeviceId ?? eventDeviceId ?? null);
       setPlaybackDisallows((prev) => {
         if (!prev || (!prev.pausing && !prev.resuming)) return prev;
         return {
@@ -3503,11 +3771,14 @@ export default function SpotifyPlayer({
       applyPendingSeekGuard,
       applyProgressPosition,
       clearPlaybackViewState,
+      confirmPendingHandoffOnPlayback,
+      decideNoTrackTransition,
       getMonotonicNow,
       playbackTouched,
-      preserveTransientNoTrackState,
       reconcileProgressPosition,
       refreshAuthorityMode,
+      resetNoTrackCounter,
+      setHandoffPhase,
       setPlaybackTrackState,
       setActiveDevice,
       shouldApplyIngest,
@@ -4316,54 +4587,16 @@ export default function SpotifyPlayer({
 
     const onStateChanged = (state: any) => {
       if (!state) {
-        const activeDevice = activeDeviceIdRef.current || deviceIdRef.current;
-        const sdkDevice = sdkDeviceIdRef.current;
         const nowMs = Date.now();
-        const pendingDeviceSwitchActive = Boolean(
-          pendingDeviceIdRef.current &&
-            nowMs - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS
-        );
-        const fallbackTrackId =
-          currentTrackIdRef.current || lastTrackIdRef.current || null;
-        const remoteDeviceActive = Boolean(
-          activeDevice && sdkDevice && activeDevice !== sdkDevice
-        );
-        const inRateLimitBackoff = nowMs < rateLimitRef.current.until;
-        const remoteAuthorityActive =
-          authorityModeRef.current === "remote_primary" ||
-          authorityModeRef.current === "handoff_pending";
-        const staleHoldMs =
-          remoteDeviceActive ||
-          inRateLimitBackoff ||
-          remoteAuthorityActive ||
-          pendingDeviceSwitchActive
-            ? REMOTE_STALE_TRACK_HOLD_MS
-            : LOCAL_STALE_TRACK_HOLD_MS;
-        const hasRecentPlayableTrack =
-          Boolean(fallbackTrackId) &&
-          nowMs - lastPlayableTrackSeenAtRef.current < staleHoldMs;
-        if (
-          (remoteDeviceActive ||
-            inRateLimitBackoff ||
-            hasRecentPlayableTrack ||
-            pendingDeviceSwitchActive) &&
-          fallbackTrackId
-        ) {
-          setPlaybackTrackState(fallbackTrackId, {
-            matchTrackIds:
-              playbackFocusRef.current.matchTrackIds.length > 0
-                ? playbackFocusRef.current.matchTrackIds
-                : [fallbackTrackId],
-            isPlaying: playbackFocusRef.current.isPlaying,
-            status: playbackFocusRef.current.isPlaying ? "playing" : "paused",
-            stale: true,
-            source: "sdk",
-            confidence: 0.65,
-            positionMs: lastKnownPositionRef.current,
-            durationMs: durationMsRef.current,
-            errorMessage: null,
-            updatedAt: Date.now(),
-          });
+        const noTrackTransition = decideNoTrackTransition({
+          source: "sdk",
+          isPlaying: false,
+          snapshotDeviceId: activeDeviceIdRef.current || deviceIdRef.current || null,
+          fallbackStatus: "paused",
+          nowMs,
+          confidence: 0.65,
+        });
+        if (noTrackTransition.preserved || !noTrackTransition.hardClear) {
           return;
         }
         clearPlaybackViewState(getMonotonicNow(), "sdk", false);
@@ -5437,6 +5670,9 @@ export default function SpotifyPlayer({
     pendingDeviceIdRef.current = targetId;
     lastDeviceSelectRef.current = Date.now();
     refreshAuthorityMode("device_switch_requested", targetId);
+    setHandoffPhase("requested", "device_switch_requested", {
+      targetDeviceId: targetId,
+    });
     const deviceName = targetDevice?.name ?? devices.find((d) => d.id === targetId)?.name;
     setActiveDevice(targetId, deviceName ?? null);
     setActiveDeviceRestricted(Boolean(targetDevice.isRestricted));
@@ -5457,13 +5693,15 @@ export default function SpotifyPlayer({
       );
       if (ready) {
         lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
-        if (pendingDeviceIdRef.current === targetId) {
-          pendingDeviceIdRef.current = null;
-        }
+        setHandoffPhase("device_ready", "device_switch_ready", {
+          targetDeviceId: targetId,
+        });
         refreshAuthorityMode("device_switch_ready", targetId);
       } else if (pendingDeviceIdRef.current === targetId) {
-        pendingDeviceIdRef.current = null;
-        refreshAuthorityMode("device_switch_failed", targetId);
+        clearPendingDevice("device_switch_failed", targetId);
+        setHandoffPhase("failed", "device_switch_failed", {
+          targetDeviceId: targetId,
+        });
       }
       if (ready) {
         const shuffleReady = await setRemoteShuffleState(
@@ -6044,8 +6282,10 @@ export default function SpotifyPlayer({
       (playbackPausedUi
         ? Boolean(playbackDisallows.resuming)
         : Boolean(playbackDisallows.pausing)));
+  const playerUiTrackId =
+    currentTrackIdState || playbackFocusState.trackId || lastTrackIdRef.current;
   const hasLiveTrackSignal =
-    Boolean(currentTrackIdState) &&
+    Boolean(playerUiTrackId) &&
     playbackFocusState.status !== "idle" &&
     playbackFocusState.status !== "ended" &&
     playbackFocusState.status !== "error";

@@ -231,3 +231,72 @@ test("derivePlaybackSnapshot keeps last stable track for transient source gaps",
   assert.equal(snapshot.positionMs, 33_000);
   assert.equal(snapshot.durationMs, 180_000);
 });
+
+test("derivePlaybackSnapshot clears stale track after grace window expires", () => {
+  const focus = createFocus({
+    trackId: null,
+    isPlaying: null,
+    status: "idle",
+    source: "api_poll",
+    updatedAt: 20_000,
+  });
+  const lastStable = createFocus({
+    trackId: TRACK_A,
+    matchTrackIds: [TRACK_A],
+    isPlaying: true,
+    status: "playing",
+    source: "sdk",
+    updatedAt: 1_000,
+    positionMs: 5_000,
+    durationMs: 200_000,
+  });
+  const { snapshot } = derivePlaybackSnapshot({
+    focus,
+    lastStableFocus: lastStable,
+    controllerStatus: "ready",
+    pendingCommand: null,
+    controllerError: null,
+    runtimeError: null,
+    now: 30_000,
+  });
+  assert.equal(snapshot.currentTrackId, null);
+  assert.equal(snapshot.status, "idle");
+  assert.equal(snapshot.uiStatus, "empty");
+  assert.equal(snapshot.verifiedPlayable, false);
+  assert.equal(snapshot.reason, "no_track");
+});
+
+test("derivePlaybackSnapshot keeps stable track while transfer is pending", () => {
+  const focus = createFocus({
+    trackId: null,
+    isPlaying: null,
+    status: "idle",
+    source: "api_verify",
+    updatedAt: 2_000,
+  });
+  const lastStable = createFocus({
+    trackId: TRACK_B,
+    matchTrackIds: [TRACK_B],
+    isPlaying: false,
+    status: "paused",
+    source: "api_sync",
+    updatedAt: 1_200,
+    positionMs: 44_000,
+    durationMs: 240_000,
+  });
+  const { snapshot } = derivePlaybackSnapshot({
+    focus,
+    lastStableFocus: lastStable,
+    controllerStatus: "loading",
+    pendingCommand: "transfer",
+    controllerError: null,
+    runtimeError: null,
+    now: 4_000,
+  });
+  assert.equal(snapshot.currentTrackId, TRACK_B);
+  assert.equal(snapshot.status, "loading");
+  assert.equal(snapshot.uiStatus, "loading");
+  assert.equal(snapshot.stale, true);
+  assert.equal(snapshot.verifiedPlayable, true);
+  assert.equal(snapshot.reason, "controller_initializing");
+});

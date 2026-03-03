@@ -152,6 +152,7 @@ function findBestTrackMatchIndex<T extends TrackRow | TrackItem>(
   activeTrackIds: Set<string>
 ) {
   if (!items.length || !activeTrackIds.size) return -1;
+  let fallbackIndex = -1;
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
     const directMatches = collectTrackMatchCandidates(item, {
@@ -160,8 +161,27 @@ function findBestTrackMatchIndex<T extends TrackRow | TrackItem>(
     if (directMatches.some((candidate) => activeTrackIds.has(candidate))) {
       return index;
     }
+    if (fallbackIndex < 0) {
+      const linkedMatches = collectTrackMatchCandidates(item, {
+        includeLinkedFrom: true,
+      });
+      if (linkedMatches.some((candidate) => activeTrackIds.has(candidate))) {
+        fallbackIndex = index;
+      }
+    }
   }
-  return -1;
+  if (fallbackIndex >= 0 && typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("gs-playback-metric", {
+        detail: {
+          name: "match_fallback_used",
+          value: 1,
+          at: Date.now(),
+        },
+      })
+    );
+  }
+  return fallbackIndex;
 }
 
 function buildQueueTrackInput(track: TrackRow | TrackItem) {

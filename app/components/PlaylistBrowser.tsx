@@ -2478,41 +2478,27 @@ export default function PlaylistBrowser() {
     trackKey: null,
     at: 0,
   });
-  const stableRowsActiveIndexRef = useRef<{ index: number; hits: number }>({
-    index: -1,
-    hits: 0,
-  });
-  const stableItemsActiveIndexRef = useRef<{ index: number; hits: number }>({
-    index: -1,
-    hits: 0,
-  });
+  const lastRowsAutoScrollIndexRef = useRef(-1);
+  const lastItemsAutoScrollIndexRef = useRef(-1);
 
   useEffect(() => {
     if (activeTrackIndexInRows < 0) return;
     if (mode !== "playlists" && mode !== "artists") return;
-    const stable = stableRowsActiveIndexRef.current;
-    if (stable.index !== activeTrackIndexInRows) {
-      stableRowsActiveIndexRef.current = { index: activeTrackIndexInRows, hits: 1 };
-      return;
-    }
-    if (stable.hits < 2) {
-      stableRowsActiveIndexRef.current = { index: activeTrackIndexInRows, hits: stable.hits + 1 };
-      return;
-    }
-    const now = Date.now();
     if (
       hydrationTargetTrackKey &&
       lastRowsAutoScrollRef.current.trackKey === hydrationTargetTrackKey &&
-      now - lastRowsAutoScrollRef.current.at < 900
+      lastRowsAutoScrollIndexRef.current === activeTrackIndexInRows
     ) {
       return;
     }
+    const now = Date.now();
     lastRowsAutoScrollRef.current = { trackKey: hydrationTargetTrackKey, at: now };
+    lastRowsAutoScrollIndexRef.current = activeTrackIndexInRows;
     window.requestAnimationFrame(() => {
       animateScrollToIndex(trackRowsOuterRef.current, activeTrackIndexInRows, TRACK_ROW_HEIGHT, {
-        minDurationMs: 360,
-        maxDurationMs: 1150,
-        pxPerMs: 2.0,
+        minDurationMs: 420,
+        maxDurationMs: 1350,
+        pxPerMs: 1.6,
       });
     });
   }, [activeTrackIndexInRows, hydrationTargetTrackKey, mode]);
@@ -2520,33 +2506,25 @@ export default function PlaylistBrowser() {
   useEffect(() => {
     if (activeTrackIndexInItems < 0) return;
     if (mode !== "tracks" && mode !== "albums") return;
-    const stable = stableItemsActiveIndexRef.current;
-    if (stable.index !== activeTrackIndexInItems) {
-      stableItemsActiveIndexRef.current = { index: activeTrackIndexInItems, hits: 1 };
-      return;
-    }
-    if (stable.hits < 2) {
-      stableItemsActiveIndexRef.current = { index: activeTrackIndexInItems, hits: stable.hits + 1 };
-      return;
-    }
-    const now = Date.now();
     if (
       hydrationTargetTrackKey &&
       lastItemsAutoScrollRef.current.trackKey === hydrationTargetTrackKey &&
-      now - lastItemsAutoScrollRef.current.at < 900
+      lastItemsAutoScrollIndexRef.current === activeTrackIndexInItems
     ) {
       return;
     }
+    const now = Date.now();
     lastItemsAutoScrollRef.current = { trackKey: hydrationTargetTrackKey, at: now };
+    lastItemsAutoScrollIndexRef.current = activeTrackIndexInItems;
     window.requestAnimationFrame(() => {
       animateScrollToIndex(
         trackItemsOuterRef.current,
         activeTrackIndexInItems,
         TRACK_ROW_HEIGHT,
         {
-          minDurationMs: 360,
-          maxDurationMs: 1150,
-          pxPerMs: 2.0,
+          minDurationMs: 420,
+          maxDurationMs: 1350,
+          pxPerMs: 1.6,
         }
       );
     });
@@ -4243,6 +4221,20 @@ export default function PlaylistBrowser() {
             ? selectedPlaylist.type
             : null,
       });
+      if (typeof rowIndex === "number" && Number.isFinite(rowIndex) && rowIndex >= 0) {
+        const target = Math.floor(rowIndex);
+        const listEl =
+          mode === "tracks" || mode === "albums"
+            ? trackItemsOuterRef.current
+            : trackRowsOuterRef.current;
+        window.requestAnimationFrame(() => {
+          animateScrollToIndex(listEl, target, TRACK_ROW_HEIGHT, {
+            minDurationMs: 420,
+            maxDurationMs: 1350,
+            pxPerMs: 1.6,
+          });
+        });
+      }
     } catch (error) {
       const message = String(error).toLowerCase();
       if (

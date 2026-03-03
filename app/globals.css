@@ -2043,7 +2043,7 @@ details[open] > .details-summary::after {
 }
 
 .playing-indicator.stale {
-  border: 1px dashed rgba(226, 232, 240, 0.5);
+  border-color: rgba(226, 232, 240, 0.45);
 }
 
 .playing-indicator-icon {

@@ -2444,6 +2444,12 @@ export default function PlaylistBrowser() {
         ? "paused"
         : "loading"
       : activeTrackStatus;
+  const activeTrackStatusFinalForUi: PlaybackFocusStatus =
+    activeTrackIdSet.size > 0 && activeTrackStatusForUi === "loading"
+      ? playbackFocus.isPlaying === false
+        ? "paused"
+        : "playing"
+      : activeTrackStatusForUi;
 
   const activeTrackIndexInRows = useMemo(() => {
     return findBestTrackMatchIndex(tracks, activeTrackIdSet);
@@ -4790,7 +4796,7 @@ export default function PlaylistBrowser() {
                 toggleTrackSelection,
                 resolveTracksForPlaylistApply,
                 activeTrackIndex: activeTrackIndexInRows,
-                activeTrackStatus: activeTrackStatusForUi,
+                activeTrackStatus: activeTrackStatusFinalForUi,
                 activeTrackIsStale,
                 openDetailFromRow,
                 handlePlayTrack,
@@ -4912,7 +4918,7 @@ export default function PlaylistBrowser() {
                 toggleTrackSelection,
                 resolveTracksForPlaylistApply,
                 activeTrackIndex: activeTrackIndexInItems,
-                activeTrackStatus: activeTrackStatusForUi,
+                activeTrackStatus: activeTrackStatusFinalForUi,
                 activeTrackIsStale,
                 openDetailFromItem,
                 handlePlayTrack,

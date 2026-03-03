@@ -47,6 +47,8 @@ import {
 } from "@/lib/ui/trackLayout";
 import { animateScrollToIndex } from "@/lib/ui/smoothScroll";
 
+const ACTIVE_TRACK_LIST_HOLD_MS = 15_000;
+
 function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   if (!track) return null;
   if ("trackId" in track && typeof track.trackId === "string" && track.trackId) {
@@ -1125,7 +1127,7 @@ export default function PlaylistBrowser() {
   const [addingTargetKey, setAddingTargetKey] = useState<string | null>(null);
   const [removingTargetKey, setRemovingTargetKey] = useState<string | null>(null);
   const [selectedTrackKeys, setSelectedTrackKeys] = useState<Set<string>>(new Set());
-  const { controller, playbackState } = usePlayer();
+  const { controller, playbackState, playbackFocus } = usePlayer();
   const viewport = useViewport();
   const queue = useQueueStore();
   const listContainerRef = useRef<HTMLDivElement | null>(null);
@@ -2280,22 +2282,68 @@ export default function PlaylistBrowser() {
     setSelectedTrackKeys(new Set());
   }, [tracksContextKey]);
 
-  const activeTrackIdsOrdered = useMemo(
+  const rawActiveTrackIdsOrdered = useMemo(
     () =>
       normalizeTrackIdCollection([
+        ...(Array.isArray(playbackFocus.matchTrackIds)
+          ? playbackFocus.matchTrackIds
+          : []),
         ...(Array.isArray(playbackState.matchTrackIds)
           ? playbackState.matchTrackIds
           : []),
+        playbackFocus.trackId,
         playbackState.currentTrackId,
       ]),
-    [playbackState.currentTrackId, playbackState.matchTrackIds]
+    [
+      playbackFocus.matchTrackIds,
+      playbackFocus.trackId,
+      playbackState.currentTrackId,
+      playbackState.matchTrackIds,
+    ]
   );
+  const activeTrackIdsLatchRef = useRef<{ ids: string[]; at: number }>({
+    ids: [],
+    at: 0,
+  });
+  const activeTrackIdsOrdered = useMemo(() => {
+    if (rawActiveTrackIdsOrdered.length > 0) {
+      activeTrackIdsLatchRef.current = {
+        ids: rawActiveTrackIdsOrdered,
+        at: Date.now(),
+      };
+      return rawActiveTrackIdsOrdered;
+    }
+    const latched = activeTrackIdsLatchRef.current;
+    if (!latched.ids.length) return rawActiveTrackIdsOrdered;
+    const ageMs = Math.max(0, Date.now() - latched.at);
+    const transientGap =
+      playbackState.uiStatus === "loading" ||
+      playbackState.reason === "controller_initializing" ||
+      playbackState.reason === "missing_match" ||
+      playbackState.stale ||
+      playbackFocus.stale;
+    if (transientGap && ageMs <= ACTIVE_TRACK_LIST_HOLD_MS) {
+      return latched.ids;
+    }
+    return rawActiveTrackIdsOrdered;
+  }, [
+    playbackFocus.stale,
+    playbackState.reason,
+    playbackState.stale,
+    playbackState.uiStatus,
+    rawActiveTrackIdsOrdered,
+  ]);
   const activeTrackIdSet = useMemo(
     () => new Set(activeTrackIdsOrdered),
     [activeTrackIdsOrdered]
   );
   const activeTrackStatus = playbackState.status;
-  const activeTrackIsStale = Boolean(playbackState.stale);
+  const activeTrackIsLatched =
+    activeTrackIdSet.size > 0 && rawActiveTrackIdsOrdered.length === 0;
+  const activeTrackIsStale =
+    activeTrackIdSet.size > 0
+      ? Boolean(playbackFocus.stale || playbackState.stale || activeTrackIsLatched)
+      : false;
 
   const activeTrackIndexInRows = useMemo(() => {
     return findBestTrackMatchIndex(tracks, activeTrackIdSet);
@@ -4625,13 +4673,14 @@ export default function PlaylistBrowser() {
               }}
               itemKey={(index: number, data: TrackRowData) => {
                 const item = data.items[index];
-                return (
-                  item.itemId ||
+                const playlistItemId = String(item.itemId ?? "").trim();
+                if (playlistItemId) return `item:${playlistItemId}`;
+                const keyBase =
                   resolveTrackRowCanonicalId(item) ||
                   item.trackId ||
                   item.id ||
-                  `row:${index}`
-                );
+                  "row";
+                return `${keyBase}:${index}`;
               }}
               itemData={{
                 items: tracks,
@@ -4748,12 +4797,13 @@ export default function PlaylistBrowser() {
               outerRef={trackItemsOuterRef}
               itemKey={(index: number, data: TrackItemData) => {
                 const item = data.items[index];
-                return (
+                const itemId = String(item.id ?? "").trim();
+                const keyBase =
                   resolveTrackItemCanonicalId(item) ||
-                  item.id ||
+                  itemId ||
                   item.trackId ||
-                  `item:${index}`
-                );
+                  "item";
+                return `${keyBase}:${index}`;
               }}
               itemData={{
                 items: localFilteredTrackItems,

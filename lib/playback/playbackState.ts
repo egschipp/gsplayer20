@@ -9,7 +9,7 @@ import type {
   PlayerPlaybackStatus,
 } from "./playerControllerTypes";
 
-const STABLE_TRACK_SNAPSHOT_GRACE_MS = 9_000;
+const STABLE_TRACK_SNAPSHOT_GRACE_MS = 15_000;
 
 export type PlaybackSnapshot = {
   currentTrackId: string | null;

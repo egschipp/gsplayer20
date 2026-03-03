@@ -48,7 +48,8 @@ import {
 import { animateScrollToIndex } from "@/lib/ui/smoothScroll";
 
 const ACTIVE_TRACK_LIST_HOLD_MS = 15_000;
-const ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_MS = 5_000;
+const ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_LOCAL_MS = 3_000;
+const ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_REMOTE_MS = 8_000;
 
 function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   if (!track) return null;
@@ -2377,10 +2378,14 @@ export default function PlaylistBrowser() {
       return;
     }
     if (activeTrackErrorVisible || activeTrackErrorTimerRef.current) return;
+    const errorVisibilityDelayMs =
+      playbackState.source === "sdk"
+        ? ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_LOCAL_MS
+        : ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_REMOTE_MS;
     activeTrackErrorTimerRef.current = setTimeout(() => {
       activeTrackErrorTimerRef.current = null;
       setActiveTrackErrorVisible(true);
-    }, ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_MS);
+    }, errorVisibilityDelayMs);
     return () => {
       if (!activeTrackErrorTimerRef.current) return;
       clearTimeout(activeTrackErrorTimerRef.current);
@@ -2391,6 +2396,7 @@ export default function PlaylistBrowser() {
     activeTrackIdSet,
     activeTrackInTransientGap,
     activeTrackStatus,
+    playbackState.source,
   ]);
   const activeTrackStatusForUi: PlaybackFocusStatus =
     activeTrackStatus === "error" && !activeTrackErrorVisible

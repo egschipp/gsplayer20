@@ -2373,7 +2373,7 @@ export default function PlaylistBrowser() {
     playbackFocus.isPlaying,
     playbackState.status,
   ]);
-  const activeTrackStatus: PlaybackFocusStatus = activeTrackInTransientGap
+  const activeTrackStatusBase: PlaybackFocusStatus = activeTrackInTransientGap
     ? activeTrackVisualStatusRef.current === "playing" ||
       activeTrackVisualStatusRef.current === "paused"
       ? activeTrackVisualStatusRef.current
@@ -2381,6 +2381,19 @@ export default function PlaylistBrowser() {
       ? "paused"
       : "playing"
     : playbackState.status;
+  const activeTrackStatus: PlaybackFocusStatus =
+    activeTrackIdSet.size > 0 &&
+    activeTrackStatusBase === "loading" &&
+    (activeTrackInTransientGap ||
+      playbackState.stale ||
+      playbackFocus.stale ||
+      activeTrackIsLatched ||
+      playbackState.reason === "controller_initializing" ||
+      playbackState.reason === "missing_match")
+      ? playbackFocus.isPlaying === false
+        ? "paused"
+        : "playing"
+      : activeTrackStatusBase;
   const activeTrackIsStale =
     activeTrackIdSet.size > 0
       ? Boolean(

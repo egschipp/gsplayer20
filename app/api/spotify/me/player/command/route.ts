@@ -10,6 +10,10 @@ import {
   requireAppUser,
   requireSameOrigin,
 } from "@/lib/api/guards";
+import {
+  ephemeralGetJson,
+  ephemeralSetJson,
+} from "@/lib/server/ephemeralStore";
 
 export const runtime = "nodejs";
 
@@ -32,10 +36,7 @@ const COMMAND_IDEMPOTENCY_TTL_MS = 60_000;
 type CachedCommandResult = {
   status: number;
   body: Record<string, unknown>;
-  expiresAt: number;
 };
-
-const commandResultCache = new Map<string, CachedCommandResult>();
 
 function parseSearch(input: unknown) {
   if (typeof input !== "string" || !input) return "";
@@ -80,15 +81,6 @@ function mapSpotifyError(error: unknown) {
   return jsonNoStore({ error: "PLAYER_COMMAND_FAILED" }, 500);
 }
 
-function cleanupCommandCache() {
-  const now = Date.now();
-  for (const [key, entry] of commandResultCache.entries()) {
-    if (entry.expiresAt <= now) {
-      commandResultCache.delete(key);
-    }
-  }
-}
-
 function parseCommandId(input: unknown) {
   if (typeof input !== "string") return null;
   const trimmed = input.trim();
@@ -108,13 +100,24 @@ function parseIntentSeq(input: unknown) {
   return Math.max(0, Math.floor(input));
 }
 
-function cacheCommandResult(commandId: string, status: number, body: Record<string, unknown>) {
-  cleanupCommandCache();
-  commandResultCache.set(commandId, {
-    status,
-    body,
-    expiresAt: Date.now() + COMMAND_IDEMPOTENCY_TTL_MS,
-  });
+function commandCacheKey(userKey: string, commandId: string) {
+  return `player:command-result:${userKey}:${commandId}`;
+}
+
+async function cacheCommandResult(
+  userKey: string,
+  commandId: string,
+  status: number,
+  body: Record<string, unknown>
+) {
+  await ephemeralSetJson(
+    commandCacheKey(userKey, commandId),
+    {
+      status,
+      body,
+    } satisfies CachedCommandResult,
+    COMMAND_IDEMPOTENCY_TTL_MS
+  );
 }
 
 export async function POST(req: NextRequest) {
@@ -165,9 +168,10 @@ export async function POST(req: NextRequest) {
 
   const isMutatingCommand = method !== "GET";
   if (isMutatingCommand && commandId) {
-    cleanupCommandCache();
-    const cached = commandResultCache.get(commandId);
-    if (cached && cached.expiresAt > Date.now()) {
+    const cached = await ephemeralGetJson<CachedCommandResult>(
+      commandCacheKey(userKey, commandId)
+    );
+    if (cached) {
       return jsonNoStore({ ...cached.body, cached: true }, cached.status);
     }
   }
@@ -198,7 +202,7 @@ export async function POST(req: NextRequest) {
           },
         };
         if (commandId) {
-          cacheCommandResult(commandId, 409, conflictBody);
+          await cacheCommandResult(userKey, commandId, 409, conflictBody);
         }
         return jsonNoStore(conflictBody, 409);
       }
@@ -238,7 +242,7 @@ export async function POST(req: NextRequest) {
       },
     };
     if (commandId) {
-      cacheCommandResult(commandId, 200, responseBody);
+      await cacheCommandResult(userKey, commandId, 200, responseBody);
     }
     return jsonNoStore(responseBody);
   } catch (error) {

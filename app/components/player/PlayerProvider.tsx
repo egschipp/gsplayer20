@@ -31,6 +31,10 @@ import {
   derivePlaybackSnapshot,
   type PlaybackSnapshot,
 } from "@/lib/playback/playbackState";
+import {
+  derivePlaybackViewModel,
+  type PlaybackViewModel,
+} from "@/lib/playback/viewModel";
 
 type PlayerController = {
   playbackStatus: PlayerPlaybackStatus;
@@ -63,6 +67,7 @@ type PlayerContextValue = {
   currentTrackId: string | null;
   playbackFocus: PlaybackFocus;
   playbackState: PlaybackSnapshot;
+  playbackView: PlaybackViewModel;
   controller: PlayerController;
 };
 
@@ -108,6 +113,22 @@ const PlayerContext = createContext<PlayerContextValue>({
     positionMs: 0,
     durationMs: 0,
     errorMessage: null,
+  },
+  playbackView: {
+    activeTrackId: null,
+    activeTrackIds: [],
+    status: "idle",
+    uiStatus: "empty",
+    isPlaying: null,
+    stale: false,
+    transientGap: false,
+    source: "system",
+    reason: "no_track",
+    updatedAt: 0,
+    error: null,
+    controllerStatus: "empty",
+    pendingCommand: null,
+    runtime: INITIAL_RUNTIME,
   },
   controller: NOOP_CONTROLLER,
 });
@@ -401,10 +422,29 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     playbackFocus,
   ]);
   const currentTrackId = playbackState.currentTrackId;
+  const playbackView = useMemo(
+    () =>
+      derivePlaybackViewModel({
+        focus: playbackFocus,
+        snapshot: playbackState,
+        controllerStatus: controllerPlaybackStatus,
+        pendingCommand,
+        runtime: controllerRuntime,
+        controllerError,
+      }),
+    [
+      controllerError,
+      controllerPlaybackStatus,
+      controllerRuntime,
+      pendingCommand,
+      playbackFocus,
+      playbackState,
+    ]
+  );
 
   const value = useMemo(
-    () => ({ api, currentTrackId, playbackFocus, playbackState, controller }),
-    [api, currentTrackId, playbackFocus, playbackState, controller]
+    () => ({ api, currentTrackId, playbackFocus, playbackState, playbackView, controller }),
+    [api, currentTrackId, playbackFocus, playbackState, playbackView, controller]
   );
 
   useEffect(() => {

@@ -46,11 +46,16 @@ import {
   TRACK_ROW_HEIGHT,
 } from "@/lib/ui/trackLayout";
 import { animateScrollToIndex } from "@/lib/ui/smoothScroll";
+import { PLAYBACK_FEATURE_FLAGS } from "@/lib/playback/featureFlags";
+import { projectPlaybackStatusForUi } from "@/lib/playback/statusMatrix";
+import { useActiveTrackAutoScroll } from "@/lib/playback/useActiveTrackAutoScroll";
+import { emitPlaybackUiMetric } from "@/lib/playback/uiTelemetry";
 
 const ACTIVE_TRACK_LIST_HOLD_MS = 15_000;
 const ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_LOCAL_MS = 3_000;
 const ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_REMOTE_MS = 8_000;
-const REMOTE_ACTIVE_TRACK_HIDE_LOADING_INDICATOR = true;
+const REMOTE_ACTIVE_TRACK_HIDE_LOADING_INDICATOR =
+  PLAYBACK_FEATURE_FLAGS.remoteActiveTrackHideLoadingIndicator;
 
 function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   if (!track) return null;
@@ -1131,7 +1136,7 @@ export default function PlaylistBrowser() {
   const [removingTargetKey, setRemovingTargetKey] = useState<string | null>(null);
   const [selectedTrackKeys, setSelectedTrackKeys] = useState<Set<string>>(new Set());
   const [activeTrackErrorVisible, setActiveTrackErrorVisible] = useState(false);
-  const { controller, playbackState, playbackFocus } = usePlayer();
+  const { controller, playbackState, playbackFocus, playbackView } = usePlayer();
   const viewport = useViewport();
   const queue = useQueueStore();
   const listContainerRef = useRef<HTMLDivElement | null>(null);
@@ -2289,16 +2294,16 @@ export default function PlaylistBrowser() {
   const rawActiveTrackIdsOrdered = useMemo(
     () =>
       normalizeTrackIdCollection([
-        ...(Array.isArray(playbackFocus.matchTrackIds)
-          ? playbackFocus.matchTrackIds
-          : []),
-        ...(Array.isArray(playbackState.matchTrackIds)
-          ? playbackState.matchTrackIds
-          : []),
+        ...(Array.isArray(playbackView.activeTrackIds) ? playbackView.activeTrackIds : []),
+        ...(Array.isArray(playbackFocus.matchTrackIds) ? playbackFocus.matchTrackIds : []),
+        ...(Array.isArray(playbackState.matchTrackIds) ? playbackState.matchTrackIds : []),
+        playbackView.activeTrackId,
         playbackFocus.trackId,
         playbackState.currentTrackId,
       ]),
     [
+      playbackView.activeTrackId,
+      playbackView.activeTrackIds,
       playbackFocus.matchTrackIds,
       playbackFocus.trackId,
       playbackState.currentTrackId,
@@ -2346,7 +2351,8 @@ export default function PlaylistBrowser() {
     activeTrackIdSet.size > 0 && rawActiveTrackIdsOrdered.length === 0;
   const activeTrackInTransientGap =
     activeTrackIsLatched &&
-    (playbackState.uiStatus === "loading" ||
+    (playbackView.transientGap ||
+      playbackState.uiStatus === "loading" ||
       playbackState.reason === "controller_initializing" ||
       playbackState.reason === "missing_match" ||
       playbackState.stale ||
@@ -2439,18 +2445,17 @@ export default function PlaylistBrowser() {
     activeTrackStatus,
     playbackState.source,
   ]);
-  const activeTrackStatusForUi: PlaybackFocusStatus =
-    activeTrackStatus === "error" && !activeTrackErrorVisible
-      ? playbackFocus.isPlaying === false
-        ? "paused"
-        : "loading"
-      : activeTrackStatus;
-  const activeTrackStatusFinalForUi: PlaybackFocusStatus =
-    activeTrackIdSet.size > 0 && activeTrackStatusForUi === "loading"
-      ? playbackFocus.isPlaying === false
-        ? "paused"
-        : "playing"
-      : activeTrackStatusForUi;
+  const activeTrackStatusForUi: PlaybackFocusStatus = projectPlaybackStatusForUi({
+    status: activeTrackStatus,
+    isPlaying: playbackFocus.isPlaying,
+    isActiveTrack: activeTrackIdSet.size > 0,
+    isRemoteSource: playbackState.source !== "sdk",
+    stale: activeTrackIsStale,
+    transientGap: activeTrackInTransientGap,
+    errorVisible: activeTrackErrorVisible,
+    hideLoadingForRemoteActiveTrack: REMOTE_ACTIVE_TRACK_HIDE_LOADING_INDICATOR,
+  });
+  const activeTrackStatusFinalForUi: PlaybackFocusStatus = activeTrackStatusForUi;
   const suppressLoadingIndicatorForActiveTrack =
     REMOTE_ACTIVE_TRACK_HIDE_LOADING_INDICATOR && playbackState.source !== "sdk";
 
@@ -2470,67 +2475,43 @@ export default function PlaylistBrowser() {
   const hydrationTargetTrackId = activeTrackIdsOrdered[0] ?? null;
   const hydrationTargetTrackKey =
     activeTrackIdsOrdered.length > 0 ? activeTrackIdsOrdered.join("|") : null;
-  const lastRowsAutoScrollRef = useRef<{ trackKey: string | null; at: number }>({
-    trackKey: null,
-    at: 0,
+  useActiveTrackAutoScroll({
+    enabled:
+      PLAYBACK_FEATURE_FLAGS.activeTrackAutoScrollV1 &&
+      (mode === "playlists" || mode === "artists"),
+    listElement: trackRowsOuterRef.current,
+    activeIndex: activeTrackIndexInRows,
+    trackKey: hydrationTargetTrackKey,
+    rowHeight: TRACK_ROW_HEIGHT,
+    metricContext: "rows",
   });
-  const lastItemsAutoScrollRef = useRef<{ trackKey: string | null; at: number }>({
-    trackKey: null,
-    at: 0,
+  useActiveTrackAutoScroll({
+    enabled:
+      PLAYBACK_FEATURE_FLAGS.activeTrackAutoScrollV1 &&
+      (mode === "tracks" || mode === "albums"),
+    listElement: trackItemsOuterRef.current,
+    activeIndex: activeTrackIndexInItems,
+    trackKey: hydrationTargetTrackKey,
+    rowHeight: TRACK_ROW_HEIGHT,
+    metricContext: "items",
   });
-  const lastRowsAutoScrollIndexRef = useRef(-1);
-  const lastItemsAutoScrollIndexRef = useRef(-1);
 
+  const lastUiStatusRef = useRef<PlaybackFocusStatus>("idle");
   useEffect(() => {
-    if (activeTrackIndexInRows < 0) return;
-    if (mode !== "playlists" && mode !== "artists") return;
-    if (
-      hydrationTargetTrackKey &&
-      lastRowsAutoScrollRef.current.trackKey === hydrationTargetTrackKey &&
-      lastRowsAutoScrollIndexRef.current === activeTrackIndexInRows
-    ) {
-      return;
-    }
-    const now = Date.now();
-    lastRowsAutoScrollRef.current = { trackKey: hydrationTargetTrackKey, at: now };
-    lastRowsAutoScrollIndexRef.current = activeTrackIndexInRows;
-    window.requestAnimationFrame(() => {
-      animateScrollToIndex(trackRowsOuterRef.current, activeTrackIndexInRows, TRACK_ROW_HEIGHT, {
-        minDurationMs: 420,
-        maxDurationMs: 1350,
-        pxPerMs: 1.6,
-        offsetPx: 8,
-      });
+    if (!PLAYBACK_FEATURE_FLAGS.playbackUiTelemetryV1) return;
+    if (lastUiStatusRef.current === activeTrackStatusFinalForUi) return;
+    emitPlaybackUiMetric("status_transition", {
+      from: lastUiStatusRef.current,
+      to: activeTrackStatusFinalForUi,
+      source: playbackState.source,
+      transient: activeTrackInTransientGap,
     });
-  }, [activeTrackIndexInRows, hydrationTargetTrackKey, mode]);
-
-  useEffect(() => {
-    if (activeTrackIndexInItems < 0) return;
-    if (mode !== "tracks" && mode !== "albums") return;
-    if (
-      hydrationTargetTrackKey &&
-      lastItemsAutoScrollRef.current.trackKey === hydrationTargetTrackKey &&
-      lastItemsAutoScrollIndexRef.current === activeTrackIndexInItems
-    ) {
-      return;
-    }
-    const now = Date.now();
-    lastItemsAutoScrollRef.current = { trackKey: hydrationTargetTrackKey, at: now };
-    lastItemsAutoScrollIndexRef.current = activeTrackIndexInItems;
-    window.requestAnimationFrame(() => {
-      animateScrollToIndex(
-        trackItemsOuterRef.current,
-        activeTrackIndexInItems,
-        TRACK_ROW_HEIGHT,
-        {
-          minDurationMs: 420,
-          maxDurationMs: 1350,
-          pxPerMs: 1.6,
-          offsetPx: 8,
-        }
-      );
-    });
-  }, [activeTrackIndexInItems, hydrationTargetTrackKey, mode]);
+    lastUiStatusRef.current = activeTrackStatusFinalForUi;
+  }, [
+    activeTrackInTransientGap,
+    activeTrackStatusFinalForUi,
+    playbackState.source,
+  ]);
 
   const isContextSwitchLoading = Boolean(
     loadingTracks &&
@@ -4236,6 +4217,11 @@ export default function PlaylistBrowser() {
             pxPerMs: 1.6,
             offsetPx: 8,
           });
+        });
+        emitPlaybackUiMetric("track_focus_changed", {
+          mode,
+          index: target,
+          trigger: "manual_select",
         });
       }
     } catch (error) {

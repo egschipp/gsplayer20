@@ -2,11 +2,12 @@ import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { getCorrelationId, requireAppUser } from "@/lib/api/guards";
 import { nextPlayerSyncSeq } from "@/lib/spotify/playerSyncSeq";
+import { ephemeralDecr, ephemeralIncrWithTtl } from "@/lib/server/ephemeralStore";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 const STREAM_MAX_PER_USER = 3;
-const streamCountByUser = new Map<string, number>();
+const STREAM_COUNTER_TTL_MS = 130_000;
 
 type SpotifyPlayerResponse = {
   timestamp?: number;
@@ -79,8 +80,10 @@ export async function GET(req: Request) {
   const { session, response } = await requireAppUser();
   if (response) return response;
   const userId = String(session.appUserId || "");
-  const active = streamCountByUser.get(userId) || 0;
-  if (active >= STREAM_MAX_PER_USER) {
+  const streamCounterKey = `player:stream:active:${userId}`;
+  const active = await ephemeralIncrWithTtl(streamCounterKey, STREAM_COUNTER_TTL_MS);
+  if (active > STREAM_MAX_PER_USER) {
+    await ephemeralDecr(streamCounterKey);
     return new NextResponse(
       JSON.stringify({ error: "RATE_LIMIT", retryAfter: 10 }),
       {
@@ -93,8 +96,6 @@ export async function GET(req: Request) {
       }
     );
   }
-  streamCountByUser.set(userId, active + 1);
-
   const encoder = new TextEncoder();
   let closed = false;
 
@@ -116,9 +117,7 @@ export async function GET(req: Request) {
       const close = () => {
         if (closed) return;
         closed = true;
-        const current = streamCountByUser.get(userId) || 0;
-        if (current <= 1) streamCountByUser.delete(userId);
-        else streamCountByUser.set(userId, current - 1);
+        void ephemeralDecr(streamCounterKey);
         if (pollTimer) clearInterval(pollTimer);
         if (pingTimer) clearInterval(pingTimer);
         if (hardTimeout) clearTimeout(hardTimeout);
@@ -173,9 +172,7 @@ export async function GET(req: Request) {
     },
     cancel() {
       closed = true;
-      const current = streamCountByUser.get(userId) || 0;
-      if (current <= 1) streamCountByUser.delete(userId);
-      else streamCountByUser.set(userId, current - 1);
+      void ephemeralDecr(streamCounterKey);
     },
   });
 

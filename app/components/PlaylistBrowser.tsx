@@ -48,6 +48,7 @@ import {
 import { animateScrollToIndex } from "@/lib/ui/smoothScroll";
 
 const ACTIVE_TRACK_LIST_HOLD_MS = 15_000;
+const ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_MS = 5_000;
 
 function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   if (!track) return null;
@@ -1127,6 +1128,7 @@ export default function PlaylistBrowser() {
   const [addingTargetKey, setAddingTargetKey] = useState<string | null>(null);
   const [removingTargetKey, setRemovingTargetKey] = useState<string | null>(null);
   const [selectedTrackKeys, setSelectedTrackKeys] = useState<Set<string>>(new Set());
+  const [activeTrackErrorVisible, setActiveTrackErrorVisible] = useState(false);
   const { controller, playbackState, playbackFocus } = usePlayer();
   const viewport = useViewport();
   const queue = useQueueStore();
@@ -2358,6 +2360,44 @@ export default function PlaylistBrowser() {
             !activeTrackInTransientGap
         )
       : false;
+  const activeTrackErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const hasActiveTrack = activeTrackIdSet.size > 0;
+    const shouldDelayError =
+      hasActiveTrack && activeTrackStatus === "error" && !activeTrackInTransientGap;
+    if (!shouldDelayError) {
+      if (activeTrackErrorTimerRef.current) {
+        clearTimeout(activeTrackErrorTimerRef.current);
+        activeTrackErrorTimerRef.current = null;
+      }
+      if (activeTrackErrorVisible) {
+        setActiveTrackErrorVisible(false);
+      }
+      return;
+    }
+    if (activeTrackErrorVisible || activeTrackErrorTimerRef.current) return;
+    activeTrackErrorTimerRef.current = setTimeout(() => {
+      activeTrackErrorTimerRef.current = null;
+      setActiveTrackErrorVisible(true);
+    }, ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_MS);
+    return () => {
+      if (!activeTrackErrorTimerRef.current) return;
+      clearTimeout(activeTrackErrorTimerRef.current);
+      activeTrackErrorTimerRef.current = null;
+    };
+  }, [
+    activeTrackErrorVisible,
+    activeTrackIdSet,
+    activeTrackInTransientGap,
+    activeTrackStatus,
+  ]);
+  const activeTrackStatusForUi: PlaybackFocusStatus =
+    activeTrackStatus === "error" && !activeTrackErrorVisible
+      ? playbackFocus.isPlaying === false
+        ? "paused"
+        : "loading"
+      : activeTrackStatus;
 
   const activeTrackIndexInRows = useMemo(() => {
     return findBestTrackMatchIndex(tracks, activeTrackIdSet);
@@ -4704,7 +4744,7 @@ export default function PlaylistBrowser() {
                 toggleTrackSelection,
                 resolveTracksForPlaylistApply,
                 activeTrackIndex: activeTrackIndexInRows,
-                activeTrackStatus,
+                activeTrackStatus: activeTrackStatusForUi,
                 activeTrackIsStale,
                 openDetailFromRow,
                 handlePlayTrack,
@@ -4826,7 +4866,7 @@ export default function PlaylistBrowser() {
                 toggleTrackSelection,
                 resolveTracksForPlaylistApply,
                 activeTrackIndex: activeTrackIndexInItems,
-                activeTrackStatus,
+                activeTrackStatus: activeTrackStatusForUi,
                 activeTrackIsStale,
                 openDetailFromItem,
                 handlePlayTrack,

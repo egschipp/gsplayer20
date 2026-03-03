@@ -6287,8 +6287,7 @@ export default function SpotifyPlayer({
   const hasLiveTrackSignal =
     Boolean(playerUiTrackId) &&
     playbackFocusState.status !== "idle" &&
-    playbackFocusState.status !== "ended" &&
-    playbackFocusState.status !== "error";
+    playbackFocusState.status !== "ended";
   const showLiveTrackInPlayer = hasLiveTrackSignal || liveTrackUiGraceVisible;
   const playerTitleText = showLiveTrackInPlayer
     ? playerState?.name ?? "Unknown track"

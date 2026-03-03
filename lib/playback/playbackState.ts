@@ -116,14 +116,40 @@ export function derivePlaybackSnapshot({
     controllerStatus === "loading";
 
   if (hasControllerError && !hasActiveTrack) {
-    status = "error";
-    uiStatus = "error";
-    verifiedPlayable = false;
-    reason = "controller_error";
-    errorMessage = controllerError || runtimeError;
-    currentId = null;
-    matchTrackIds = [];
-    stale = false;
+    const shouldHoldStableTrack = stableTrackFresh;
+    if (shouldHoldStableTrack) {
+      currentId = lastStableFocus.trackId;
+      matchTrackIds = stableMatchTrackIds;
+      stale = true;
+      status = lastStableFocus.isPlaying === false ? "paused" : "loading";
+      uiStatus = "ready";
+      verifiedPlayable = true;
+      reason = "controller_error";
+      errorMessage = controllerError || runtimeError;
+      positionMs = clampMs(lastStableFocus.positionMs);
+      durationMs = clampMs(lastStableFocus.durationMs);
+      nextStableFocus = {
+        ...lastStableFocus,
+        trackId: currentId,
+        matchTrackIds,
+        status,
+        stale: true,
+        source,
+        positionMs,
+        durationMs,
+        errorMessage,
+        updatedAt,
+      };
+    } else {
+      status = "error";
+      uiStatus = "error";
+      verifiedPlayable = false;
+      reason = "controller_error";
+      errorMessage = controllerError || runtimeError;
+      currentId = null;
+      matchTrackIds = [];
+      stale = false;
+    }
   } else if (!hasActiveTrack) {
     const shouldHoldStableTrack =
       stableTrackFresh &&

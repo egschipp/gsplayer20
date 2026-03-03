@@ -196,6 +196,42 @@ test("derivePlaybackSnapshot reports error when no active track exists", () => {
   assert.equal(snapshot.errorMessage, "PLAYER_UNAVAILABLE");
 });
 
+test("derivePlaybackSnapshot keeps stable track during transient controller error", () => {
+  const focus = createFocus({
+    trackId: null,
+    isPlaying: null,
+    status: "idle",
+    source: "api_poll",
+    updatedAt: 1_900,
+  });
+  const lastStable = createFocus({
+    trackId: TRACK_A,
+    matchTrackIds: [TRACK_A],
+    isPlaying: true,
+    status: "playing",
+    source: "sdk",
+    updatedAt: 1_000,
+    positionMs: 12_000,
+    durationMs: 180_000,
+  });
+  const { snapshot } = derivePlaybackSnapshot({
+    focus,
+    lastStableFocus: lastStable,
+    controllerStatus: "ready",
+    pendingCommand: null,
+    controllerError: "PLAYER_UNAVAILABLE",
+    runtimeError: null,
+    now: 2_300,
+  });
+  assert.equal(snapshot.currentTrackId, TRACK_A);
+  assert.equal(snapshot.status, "loading");
+  assert.equal(snapshot.uiStatus, "ready");
+  assert.equal(snapshot.verifiedPlayable, true);
+  assert.equal(snapshot.stale, true);
+  assert.equal(snapshot.reason, "controller_error");
+  assert.equal(snapshot.errorMessage, "PLAYER_UNAVAILABLE");
+});
+
 test("derivePlaybackSnapshot keeps last stable track for transient source gaps", () => {
   const focus = createFocus({
     trackId: null,

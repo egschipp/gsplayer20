@@ -150,8 +150,33 @@ jobs:
         run: |
           set -euo pipefail
           TAG="v${VERSION}"
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            echo "Release ${TAG} already exists."
-            exit 0
-          fi
-          gh release create "${TAG}" --title "${TAG}" --generate-notes
+          REPO="${GITHUB_REPOSITORY}"
+          for attempt in 1 2 3 4 5; do
+            if gh api "repos/${REPO}/releases/tags/${TAG}" >/dev/null 2>&1; then
+              echo "Release ${TAG} already exists."
+              exit 0
+            fi
+            status="$(gh api "repos/${REPO}/releases/tags/${TAG}" --silent >/dev/null 2>&1; echo $?)"
+            # Exit code 1 can be both "not found" and transient API failures; continue to create flow.
+            if [ "${status}" -eq 0 ]; then
+              break
+            fi
+            echo "Release lookup attempt ${attempt} inconclusive; retrying..."
+            sleep $((attempt * 2))
+          done
+
+          for attempt in 1 2 3 4 5; do
+            if gh release create "${TAG}" --title "${TAG}" --generate-notes; then
+              echo "Created release ${TAG}."
+              exit 0
+            fi
+            if gh release view "${TAG}" >/dev/null 2>&1; then
+              echo "Release ${TAG} became available after failed create attempt."
+              exit 0
+            fi
+            echo "Create release attempt ${attempt} failed; retrying..."
+            sleep $((attempt * 3))
+          done
+
+          echo "Failed to create GitHub release ${TAG} after retries."
+          exit 1

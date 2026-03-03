@@ -2239,7 +2239,7 @@ details[open] > .details-summary::after {
 }
 
 .player-queue-item.active.stale {
-  border-style: dashed;
+  border-color: rgba(226, 232, 240, 0.45);
 }
 
 .player-queue-cover {

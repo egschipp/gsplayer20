@@ -20,6 +20,9 @@ import {
   type PlaybackFocusSource,
   resolvePlaybackFocusStatus,
 } from "./player/playbackFocus";
+import { PLAYBACK_FEATURE_FLAGS } from "@/lib/playback/featureFlags";
+import { projectPlaybackStatusForUi } from "@/lib/playback/statusMatrix";
+import { emitPlaybackUiMetric } from "@/lib/playback/uiTelemetry";
 import { usePlaybackCommandQueue } from "./player/usePlaybackCommandQueue";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
@@ -82,6 +85,8 @@ const NO_TRACK_HARD_CLEAR_MIN_COUNT = 3;
 const NO_TRACK_HARD_CLEAR_GRACE_MS = 3_500;
 const NO_TRACK_HANDOFF_HARD_CLEAR_MIN_COUNT = 6;
 const NO_TRACK_HANDOFF_HARD_CLEAR_GRACE_MS = 12_000;
+const QUEUE_ACTIVE_ERROR_VISIBILITY_DELAY_LOCAL_MS = 3_000;
+const QUEUE_ACTIVE_ERROR_VISIBILITY_DELAY_REMOTE_MS = 8_000;
 
 type PlayerPlaylistOption = {
   id: string;
@@ -630,6 +635,7 @@ export default function SpotifyPlayer({
   const [queueItems, setQueueItems] = useState<QueueTrackItem[]>([]);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
+  const [queueActiveTrackErrorVisible, setQueueActiveTrackErrorVisible] = useState(false);
   const [devices, setDevices] = useState<
     {
       id: string;
@@ -731,6 +737,7 @@ export default function SpotifyPlayer({
   const shuffleInitDoneRef = useRef(false);
   const connectDockOpenDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectDockCloseDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queueActiveTrackErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [deviceReady, setDeviceReady] = useState(false);
   const { enqueue: enqueueCommand, busy: commandBusy } = usePlaybackCommandQueue();
   const lastCommandAtRef = useRef(0);
@@ -784,6 +791,7 @@ export default function SpotifyPlayer({
   const pendingTrackIdRef = useRef<string | null>(null);
   const currentTrackIdRef = useRef<string | null>(null);
   const lastQueueActiveTrackIdRef = useRef<string | null>(null);
+  const lastQueueUiStatusRef = useRef<PlaybackFocusStatus>("idle");
   const hasConfirmedLivePlaybackRef = useRef(false);
   const playbackFocusRef = useRef<PlaybackFocus>(DEFAULT_PLAYBACK_FOCUS);
   const operationEpochRef = useRef(0);
@@ -1518,8 +1526,78 @@ export default function SpotifyPlayer({
     () => new Set(activeTrackIdsOrdered),
     [activeTrackIdsOrdered]
   );
-  const activeQueueTrackStatus: PlaybackFocusStatus = playbackFocusState.status;
-  const activeQueueTrackIsStale = Boolean(playbackFocusState.stale);
+  const activeQueueTrackStatusRaw: PlaybackFocusStatus = playbackFocusState.status;
+  const activeQueueTrackIsStaleRaw = Boolean(playbackFocusState.stale);
+  const activeQueueTrackTransientGap =
+    activeTrackIdSet.size > 0 &&
+    (playbackFocusState.stale ||
+      playbackFocusState.status === "loading" ||
+      playbackFocusState.status === "idle");
+  useEffect(() => {
+    if (!PLAYBACK_FEATURE_FLAGS.delayedActiveTrackErrorIndicator) {
+      setQueueActiveTrackErrorVisible(true);
+      return;
+    }
+    const shouldDelayError = activeTrackIdSet.size > 0 && activeQueueTrackStatusRaw === "error";
+    if (!shouldDelayError) {
+      if (queueActiveTrackErrorTimerRef.current) {
+        clearTimeout(queueActiveTrackErrorTimerRef.current);
+        queueActiveTrackErrorTimerRef.current = null;
+      }
+      if (queueActiveTrackErrorVisible) {
+        setQueueActiveTrackErrorVisible(false);
+      }
+      return;
+    }
+    if (queueActiveTrackErrorVisible || queueActiveTrackErrorTimerRef.current) return;
+    const delayMs =
+      playbackFocusState.source === "sdk"
+        ? QUEUE_ACTIVE_ERROR_VISIBILITY_DELAY_LOCAL_MS
+        : QUEUE_ACTIVE_ERROR_VISIBILITY_DELAY_REMOTE_MS;
+    queueActiveTrackErrorTimerRef.current = setTimeout(() => {
+      queueActiveTrackErrorTimerRef.current = null;
+      setQueueActiveTrackErrorVisible(true);
+    }, delayMs);
+    return () => {
+      if (!queueActiveTrackErrorTimerRef.current) return;
+      clearTimeout(queueActiveTrackErrorTimerRef.current);
+      queueActiveTrackErrorTimerRef.current = null;
+    };
+  }, [
+    activeQueueTrackStatusRaw,
+    activeTrackIdSet.size,
+    playbackFocusState.source,
+    queueActiveTrackErrorVisible,
+  ]);
+  const activeQueueTrackStatus: PlaybackFocusStatus =
+    PLAYBACK_FEATURE_FLAGS.playbackStatusMatrixV1
+      ? projectPlaybackStatusForUi({
+          status: activeQueueTrackStatusRaw,
+          isPlaying: playbackFocusState.isPlaying,
+          isActiveTrack: activeTrackIdSet.size > 0,
+          isRemoteSource: playbackFocusState.source !== "sdk",
+          stale: activeQueueTrackIsStaleRaw,
+          transientGap: activeQueueTrackTransientGap,
+          errorVisible: queueActiveTrackErrorVisible,
+          hideLoadingForRemoteActiveTrack:
+            PLAYBACK_FEATURE_FLAGS.remoteActiveTrackHideLoadingIndicator,
+        })
+      : activeQueueTrackStatusRaw;
+  const activeQueueTrackIsStale =
+    activeTrackIdSet.size > 0
+      ? Boolean(activeQueueTrackIsStaleRaw && !activeQueueTrackTransientGap)
+      : false;
+  useEffect(() => {
+    if (!PLAYBACK_FEATURE_FLAGS.playbackUiTelemetryV1) return;
+    if (lastQueueUiStatusRef.current === activeQueueTrackStatus) return;
+    emitPlaybackUiMetric("status_transition", {
+      context: "queue",
+      from: lastQueueUiStatusRef.current,
+      to: activeQueueTrackStatus,
+      source: playbackFocusState.source,
+    });
+    lastQueueUiStatusRef.current = activeQueueTrackStatus;
+  }, [activeQueueTrackStatus, playbackFocusState.source]);
   const queueDisplayItems = useMemo(() => {
     if (!queueItems.length) return [];
     const fallbackActiveId = lastQueueActiveTrackIdRef.current;

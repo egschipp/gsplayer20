@@ -43,6 +43,7 @@ import {
   type PlaybackAuthorityMode,
   type PlaybackVersion,
 } from "@/lib/playback/authority";
+import { animateScrollTop } from "@/lib/ui/smoothScroll";
 import type {
   PlayerCommandHandlers,
   PlayerRuntimeState,
@@ -738,6 +739,11 @@ export default function SpotifyPlayer({
   const connectDockOpenDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectDockCloseDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queueActiveTrackErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queueListRef = useRef<HTMLDivElement | null>(null);
+  const lastQueueAutoScrollRef = useRef<{ key: string | null; index: number }>({
+    key: null,
+    index: -1,
+  });
   const [deviceReady, setDeviceReady] = useState(false);
   const { enqueue: enqueueCommand, busy: commandBusy } = usePlaybackCommandQueue();
   const lastCommandAtRef = useRef(0);
@@ -1640,6 +1646,48 @@ export default function SpotifyPlayer({
     const after = marked.slice(activeIndex + 1);
     return [activeItem, ...before, ...after];
   }, [activeTrackIdSet, queueItems]);
+  const activeQueueDisplayIndex = useMemo(
+    () => queueDisplayItems.findIndex((item) => item.isCurrent),
+    [queueDisplayItems]
+  );
+  const activeQueueDisplayKey =
+    activeQueueDisplayIndex >= 0
+      ? `${queueDisplayItems[activeQueueDisplayIndex]?.id ?? "queue"}:${
+          queueDisplayItems[activeQueueDisplayIndex]?.uri ?? "nouri"
+        }`
+      : null;
+  useEffect(() => {
+    if (!queueOpen) return;
+    if (activeQueueDisplayIndex < 0) return;
+    const listEl = queueListRef.current;
+    if (!listEl) return;
+    if (
+      lastQueueAutoScrollRef.current.key === activeQueueDisplayKey &&
+      lastQueueAutoScrollRef.current.index === activeQueueDisplayIndex
+    ) {
+      return;
+    }
+    lastQueueAutoScrollRef.current = {
+      key: activeQueueDisplayKey,
+      index: activeQueueDisplayIndex,
+    };
+    window.requestAnimationFrame(() => {
+      const rowEl = listEl.querySelector<HTMLElement>(
+        `[data-queue-index="${activeQueueDisplayIndex}"]`
+      );
+      if (!rowEl) return;
+      const targetTop = Math.max(0, rowEl.offsetTop - 8);
+      animateScrollTop(listEl, targetTop, {
+        minDurationMs: 360,
+        maxDurationMs: 1100,
+        pxPerMs: 1.5,
+      });
+      emitPlaybackUiMetric("scroll_to_active_track", {
+        context: "queue",
+        index: activeQueueDisplayIndex,
+      });
+    });
+  }, [activeQueueDisplayIndex, activeQueueDisplayKey, queueOpen]);
   const selectableDevicesCount = useMemo(
     () => devices.filter((device) => device.selectable).length,
     [devices]
@@ -7005,8 +7053,8 @@ export default function SpotifyPlayer({
           ) : queueDisplayItems.length === 0 ? (
             <div className="text-subtle">Geen volgende nummers.</div>
           ) : (
-            <div className="player-queue-list">
-              {queueDisplayItems.slice(0, 10).map((track) => {
+            <div className="player-queue-list" ref={queueListRef}>
+              {queueDisplayItems.slice(0, 10).map((track, index) => {
                 const trackStatus: PlaybackFocusStatus = track.isCurrent
                   ? activeQueueTrackStatus
                   : "idle";
@@ -7024,6 +7072,8 @@ export default function SpotifyPlayer({
                   <div
                     key={`${track.id}:${track.uri ?? "nouri"}`}
                     className={`player-queue-item${stateClasses}`}
+                    data-queue-index={index}
+                    aria-current={track.isCurrent ? "true" : undefined}
                   >
                   {track.coverUrl ? (
                     <Image

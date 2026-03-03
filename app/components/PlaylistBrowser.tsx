@@ -50,6 +50,7 @@ import { animateScrollToIndex } from "@/lib/ui/smoothScroll";
 const ACTIVE_TRACK_LIST_HOLD_MS = 15_000;
 const ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_LOCAL_MS = 3_000;
 const ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_REMOTE_MS = 8_000;
+const REMOTE_ACTIVE_TRACK_HIDE_LOADING_INDICATOR = true;
 
 function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
   if (!track) return null;
@@ -2450,6 +2451,8 @@ export default function PlaylistBrowser() {
         ? "paused"
         : "playing"
       : activeTrackStatusForUi;
+  const suppressLoadingIndicatorForActiveTrack =
+    REMOTE_ACTIVE_TRACK_HIDE_LOADING_INDICATOR && playbackState.source !== "sdk";
 
   const activeTrackIndexInRows = useMemo(() => {
     return findBestTrackMatchIndex(tracks, activeTrackIdSet);
@@ -4798,6 +4801,8 @@ export default function PlaylistBrowser() {
                 activeTrackIndex: activeTrackIndexInRows,
                 activeTrackStatus: activeTrackStatusFinalForUi,
                 activeTrackIsStale,
+                activeTrackIsPlaying: playbackFocus.isPlaying,
+                suppressLoadingIndicator: suppressLoadingIndicatorForActiveTrack,
                 openDetailFromRow,
                 handlePlayTrack,
                 addTrackToQueue: handleAddTrackToQueue,
@@ -4920,6 +4925,8 @@ export default function PlaylistBrowser() {
                 activeTrackIndex: activeTrackIndexInItems,
                 activeTrackStatus: activeTrackStatusFinalForUi,
                 activeTrackIsStale,
+                activeTrackIsPlaying: playbackFocus.isPlaying,
+                suppressLoadingIndicator: suppressLoadingIndicatorForActiveTrack,
                 openDetailFromItem,
                 handlePlayTrack,
                 addTrackToQueue: handleAddTrackToQueue,
@@ -5743,6 +5750,8 @@ type TrackRowData = {
   activeTrackIndex: number;
   activeTrackStatus: PlaybackFocusStatus;
   activeTrackIsStale: boolean;
+  activeTrackIsPlaying: boolean | null;
+  suppressLoadingIndicator: boolean;
   openDetailFromRow: (track: TrackRow, trigger?: HTMLElement | null) => void;
   handlePlayTrack: (
     track: TrackRow | TrackItem | null | undefined,
@@ -5781,7 +5790,13 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
       .filter(Boolean)[0] ?? "";
   const albumLine = String(track.albumName ?? "").trim();
   const isTrackActive = index === data.activeTrackIndex;
-  const trackStatus: PlaybackFocusStatus = isTrackActive ? data.activeTrackStatus : "idle";
+  const rawTrackStatus: PlaybackFocusStatus = isTrackActive ? data.activeTrackStatus : "idle";
+  const trackStatus: PlaybackFocusStatus =
+    isTrackActive && data.suppressLoadingIndicator && rawTrackStatus === "loading"
+      ? data.activeTrackIsPlaying === false
+        ? "paused"
+        : "playing"
+      : rawTrackStatus;
   const isPaused = trackStatus === "paused";
   const isLoading = trackStatus === "loading";
   const isEnded = trackStatus === "ended";
@@ -5980,6 +5995,8 @@ type TrackItemData = {
   activeTrackIndex: number;
   activeTrackStatus: PlaybackFocusStatus;
   activeTrackIsStale: boolean;
+  activeTrackIsPlaying: boolean | null;
+  suppressLoadingIndicator: boolean;
   openDetailFromItem: (track: TrackItem, trigger?: HTMLElement | null) => void;
   handlePlayTrack: (
     track: TrackRow | TrackItem | null | undefined,
@@ -6014,7 +6031,13 @@ function TrackItemRenderer({
   const isSelected = data.isTrackSelected(track);
   const showExtendedColumns = !data.compactTrackLayout;
   const isTrackActive = index === data.activeTrackIndex;
-  const trackStatus: PlaybackFocusStatus = isTrackActive ? data.activeTrackStatus : "idle";
+  const rawTrackStatus: PlaybackFocusStatus = isTrackActive ? data.activeTrackStatus : "idle";
+  const trackStatus: PlaybackFocusStatus =
+    isTrackActive && data.suppressLoadingIndicator && rawTrackStatus === "loading"
+      ? data.activeTrackIsPlaying === false
+        ? "paused"
+        : "playing"
+      : rawTrackStatus;
   const isPaused = trackStatus === "paused";
   const isLoading = trackStatus === "loading";
   const isEnded = trackStatus === "ended";

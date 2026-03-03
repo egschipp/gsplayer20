@@ -2499,6 +2499,7 @@ export default function PlaylistBrowser() {
         minDurationMs: 420,
         maxDurationMs: 1350,
         pxPerMs: 1.6,
+        offsetPx: 8,
       });
     });
   }, [activeTrackIndexInRows, hydrationTargetTrackKey, mode]);
@@ -2525,6 +2526,7 @@ export default function PlaylistBrowser() {
           minDurationMs: 420,
           maxDurationMs: 1350,
           pxPerMs: 1.6,
+          offsetPx: 8,
         }
       );
     });
@@ -4232,6 +4234,7 @@ export default function PlaylistBrowser() {
             minDurationMs: 420,
             maxDurationMs: 1350,
             pxPerMs: 1.6,
+            offsetPx: 8,
           });
         });
       }

@@ -75,9 +75,15 @@ export function animateScrollToIndex(
   element: HTMLElement | null,
   index: number,
   rowHeight: number,
-  options?: Parameters<typeof animateScrollTop>[2]
+  options?: Parameters<typeof animateScrollTop>[2] & {
+    offsetPx?: number;
+  }
 ) {
   if (!element || index < 0 || rowHeight <= 0) return;
-  const targetTop = index * rowHeight;
+  const offsetPx =
+    typeof options?.offsetPx === "number" && Number.isFinite(options.offsetPx)
+      ? Math.max(0, Math.floor(options.offsetPx))
+      : 0;
+  const targetTop = Math.max(0, index * rowHeight - offsetPx);
   animateScrollTop(element, targetTop, options);
 }

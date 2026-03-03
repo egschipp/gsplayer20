@@ -8,6 +8,8 @@ import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
 import { type QueueItem } from "@/lib/queue/types";
 import { usePlayer } from "@/app/components/player/PlayerProvider";
 import type { PlaybackFocusStatus } from "@/app/components/player/playbackFocus";
+import { PLAYBACK_FEATURE_FLAGS } from "@/lib/playback/featureFlags";
+import { deriveQueueActivePresentation } from "@/lib/playback/queuePresentation";
 import { TRACK_ROW_HEIGHT } from "@/lib/ui/trackLayout";
 import { animateScrollTop } from "@/lib/ui/smoothScroll";
 import styles from "./QueuePageClient.module.css";
@@ -206,7 +208,7 @@ export default function QueuePageClient() {
   const router = useRouter();
   const queue = useQueueStore();
   const playback = useQueuePlayback();
-  const { playbackState } = usePlayer();
+  const { playbackFocus, playbackState } = usePlayer();
   const [draggingQueueId, setDraggingQueueId] = useState<string | null>(null);
   const [dragOverQueueId, setDragOverQueueId] = useState<string | null>(null);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
@@ -225,12 +227,37 @@ export default function QueuePageClient() {
     () => new Set(activeTrackIdsOrdered),
     [activeTrackIdsOrdered]
   );
-  const activeTrackStatus: PlaybackFocusStatus = playbackState.status;
-  const activeTrackIsStale = Boolean(playbackState.stale);
+  const activeTrackStatusRaw: PlaybackFocusStatus = playbackState.status;
   const activeQueueTrackIndex = useMemo(
     () => findBestQueueTrackMatchIndex(queue.items, activeTrackIdSet),
     [activeTrackIdSet, queue.items]
   );
+  const hasActiveTrack = activeQueueTrackIndex >= 0;
+  const activeTrackTransientGap =
+    hasActiveTrack &&
+    (playbackState.uiStatus === "loading" ||
+      playbackState.reason === "controller_initializing" ||
+      playbackState.reason === "missing_match" ||
+      playbackState.stale);
+  const activeTrackErrorVisible =
+    hasActiveTrack && activeTrackStatusRaw === "error" && !activeTrackTransientGap;
+
+  const queuePresentation = deriveQueueActivePresentation({
+    hasActiveTrack,
+    status: activeTrackStatusRaw,
+    isPlaying: playbackFocus.isPlaying,
+    source: playbackState.source,
+    stale: Boolean(playbackState.stale),
+    errorVisible: activeTrackErrorVisible,
+    commandBusy: playback.busy,
+    handoffPending: false,
+    hideLoadingForRemoteActiveTrack:
+      PLAYBACK_FEATURE_FLAGS.remoteActiveTrackHideLoadingIndicator,
+  });
+  const activeTrackStatus: PlaybackFocusStatus = PLAYBACK_FEATURE_FLAGS.playbackStatusMatrixV1
+    ? queuePresentation.status
+    : activeTrackStatusRaw;
+  const activeTrackIsStale = queuePresentation.stale;
   const resolvedActiveQueueId =
     activeQueueTrackIndex >= 0
       ? queue.items[activeQueueTrackIndex]?.queueId ?? null
@@ -390,6 +417,7 @@ export default function QueuePageClient() {
                   key={item.queueId}
                   data-queue-id={item.queueId}
                   className={`track-row ${styles.queueRow}`}
+                  aria-current={isCurrent ? "true" : undefined}
                   draggable
                   onDragStart={(event) => handleDragStart(item.queueId, event)}
                   onDragOver={(event) => handleDragOver(item.queueId, event)}

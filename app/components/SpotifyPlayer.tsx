@@ -21,7 +21,7 @@ import {
   resolvePlaybackFocusStatus,
 } from "./player/playbackFocus";
 import { PLAYBACK_FEATURE_FLAGS } from "@/lib/playback/featureFlags";
-import { projectPlaybackStatusForUi } from "@/lib/playback/statusMatrix";
+import { deriveQueueActivePresentation } from "@/lib/playback/queuePresentation";
 import { emitPlaybackUiMetric } from "@/lib/playback/uiTelemetry";
 import { usePlaybackCommandQueue } from "./player/usePlaybackCommandQueue";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
@@ -740,6 +740,7 @@ export default function SpotifyPlayer({
   const connectDockCloseDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queueActiveTrackErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queueListRef = useRef<HTMLDivElement | null>(null);
+  const queueRowRefsRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const lastQueueAutoScrollRef = useRef<{ key: string | null; index: number }>({
     key: null,
     index: -1,
@@ -798,6 +799,7 @@ export default function SpotifyPlayer({
   const currentTrackIdRef = useRef<string | null>(null);
   const lastQueueActiveTrackIdRef = useRef<string | null>(null);
   const lastQueueUiStatusRef = useRef<PlaybackFocusStatus>("idle");
+  const lastQueueFocusIdRef = useRef<string | null>(null);
   const hasConfirmedLivePlaybackRef = useRef(false);
   const playbackFocusRef = useRef<PlaybackFocus>(DEFAULT_PLAYBACK_FOCUS);
   const operationEpochRef = useRef(0);
@@ -1534,11 +1536,9 @@ export default function SpotifyPlayer({
   );
   const activeQueueTrackStatusRaw: PlaybackFocusStatus = playbackFocusState.status;
   const activeQueueTrackIsStaleRaw = Boolean(playbackFocusState.stale);
-  const activeQueueTrackTransientGap =
-    activeTrackIdSet.size > 0 &&
-    (playbackFocusState.stale ||
-      playbackFocusState.status === "loading" ||
-      playbackFocusState.status === "idle");
+  const queueHandoffPending =
+    Boolean(pendingDeviceIdRef.current) &&
+    Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
   useEffect(() => {
     if (!PLAYBACK_FEATURE_FLAGS.delayedActiveTrackErrorIndicator) {
       setQueueActiveTrackErrorVisible(true);
@@ -1575,24 +1575,23 @@ export default function SpotifyPlayer({
     playbackFocusState.source,
     queueActiveTrackErrorVisible,
   ]);
-  const activeQueueTrackStatus: PlaybackFocusStatus =
-    PLAYBACK_FEATURE_FLAGS.playbackStatusMatrixV1
-      ? projectPlaybackStatusForUi({
-          status: activeQueueTrackStatusRaw,
-          isPlaying: playbackFocusState.isPlaying,
-          isActiveTrack: activeTrackIdSet.size > 0,
-          isRemoteSource: playbackFocusState.source !== "sdk",
-          stale: activeQueueTrackIsStaleRaw,
-          transientGap: activeQueueTrackTransientGap,
-          errorVisible: queueActiveTrackErrorVisible,
-          hideLoadingForRemoteActiveTrack:
-            PLAYBACK_FEATURE_FLAGS.remoteActiveTrackHideLoadingIndicator,
-        })
-      : activeQueueTrackStatusRaw;
-  const activeQueueTrackIsStale =
-    activeTrackIdSet.size > 0
-      ? Boolean(activeQueueTrackIsStaleRaw && !activeQueueTrackTransientGap)
-      : false;
+  const queuePresentation = deriveQueueActivePresentation({
+    hasActiveTrack: activeTrackIdSet.size > 0,
+    status: activeQueueTrackStatusRaw,
+    isPlaying: playbackFocusState.isPlaying,
+    source: playbackFocusState.source,
+    stale: activeQueueTrackIsStaleRaw,
+    errorVisible: queueActiveTrackErrorVisible,
+    commandBusy,
+    handoffPending: queueHandoffPending,
+    hideLoadingForRemoteActiveTrack:
+      PLAYBACK_FEATURE_FLAGS.remoteActiveTrackHideLoadingIndicator,
+  });
+  const activeQueueTrackStatus: PlaybackFocusStatus = PLAYBACK_FEATURE_FLAGS
+    .playbackStatusMatrixV1
+    ? queuePresentation.status
+    : activeQueueTrackStatusRaw;
+  const activeQueueTrackIsStale = queuePresentation.stale;
   useEffect(() => {
     if (!PLAYBACK_FEATURE_FLAGS.playbackUiTelemetryV1) return;
     if (lastQueueUiStatusRef.current === activeQueueTrackStatus) return;
@@ -1637,14 +1636,7 @@ export default function SpotifyPlayer({
       ...item,
       isCurrent: activeIndex >= 0 && index === activeIndex,
     }));
-
-    if (activeIndex <= 0) {
-      return marked;
-    }
-    const activeItem = marked[activeIndex];
-    const before = marked.slice(0, activeIndex);
-    const after = marked.slice(activeIndex + 1);
-    return [activeItem, ...before, ...after];
+    return marked;
   }, [activeTrackIdSet, queueItems]);
   const activeQueueDisplayIndex = useMemo(
     () => queueDisplayItems.findIndex((item) => item.isCurrent),
@@ -1672,9 +1664,7 @@ export default function SpotifyPlayer({
       index: activeQueueDisplayIndex,
     };
     window.requestAnimationFrame(() => {
-      const rowEl = listEl.querySelector<HTMLElement>(
-        `[data-queue-index="${activeQueueDisplayIndex}"]`
-      );
+      const rowEl = queueRowRefsRef.current.get(activeQueueDisplayIndex) ?? null;
       if (!rowEl) return;
       const targetTop = Math.max(0, rowEl.offsetTop - 8);
       animateScrollTop(listEl, targetTop, {
@@ -1688,6 +1678,16 @@ export default function SpotifyPlayer({
       });
     });
   }, [activeQueueDisplayIndex, activeQueueDisplayKey, queueOpen]);
+  useEffect(() => {
+    if (!PLAYBACK_FEATURE_FLAGS.playbackUiTelemetryV1) return;
+    const nextId = activeQueueDisplayKey;
+    if (!nextId || lastQueueFocusIdRef.current === nextId) return;
+    emitPlaybackUiMetric("track_focus_changed", {
+      context: "queue",
+      key: nextId,
+    });
+    lastQueueFocusIdRef.current = nextId;
+  }, [activeQueueDisplayKey]);
   const selectableDevicesCount = useMemo(
     () => devices.filter((device) => device.selectable).length,
     [devices]
@@ -7053,8 +7053,8 @@ export default function SpotifyPlayer({
           ) : queueDisplayItems.length === 0 ? (
             <div className="text-subtle">Geen volgende nummers.</div>
           ) : (
-            <div className="player-queue-list" ref={queueListRef}>
-              {queueDisplayItems.slice(0, 10).map((track, index) => {
+            <div className="player-queue-list" ref={queueListRef} role="list">
+              {queueDisplayItems.map((track, index) => {
                 const trackStatus: PlaybackFocusStatus = track.isCurrent
                   ? activeQueueTrackStatus
                   : "idle";
@@ -7073,7 +7073,15 @@ export default function SpotifyPlayer({
                     key={`${track.id}:${track.uri ?? "nouri"}`}
                     className={`player-queue-item${stateClasses}`}
                     data-queue-index={index}
+                    role="listitem"
                     aria-current={track.isCurrent ? "true" : undefined}
+                    ref={(node) => {
+                      if (node) {
+                        queueRowRefsRef.current.set(index, node);
+                        return;
+                      }
+                      queueRowRefsRef.current.delete(index);
+                    }}
                   >
                   {track.coverUrl ? (
                     <Image

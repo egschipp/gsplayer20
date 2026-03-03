@@ -2337,12 +2337,26 @@ export default function PlaylistBrowser() {
     () => new Set(activeTrackIdsOrdered),
     [activeTrackIdsOrdered]
   );
-  const activeTrackStatus = playbackState.status;
   const activeTrackIsLatched =
     activeTrackIdSet.size > 0 && rawActiveTrackIdsOrdered.length === 0;
+  const activeTrackInTransientGap =
+    activeTrackIsLatched &&
+    (playbackState.uiStatus === "loading" ||
+      playbackState.reason === "controller_initializing" ||
+      playbackState.reason === "missing_match" ||
+      playbackState.stale ||
+      playbackFocus.stale);
+  const activeTrackStatus: PlaybackFocusStatus = activeTrackInTransientGap
+    ? playbackFocus.isPlaying === false
+      ? "paused"
+      : "loading"
+    : playbackState.status;
   const activeTrackIsStale =
     activeTrackIdSet.size > 0
-      ? Boolean(playbackFocus.stale || playbackState.stale || activeTrackIsLatched)
+      ? Boolean(
+          (playbackFocus.stale || playbackState.stale || activeTrackIsLatched) &&
+            !activeTrackInTransientGap
+        )
       : false;
 
   const activeTrackIndexInRows = useMemo(() => {

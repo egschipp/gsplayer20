@@ -1635,8 +1635,7 @@ details[open] > .details-summary::after {
 }
 
 .track-row-inner.playing.stale {
-  border-style: dashed;
-  opacity: 0.9;
+  opacity: 0.95;
 }
 
 .track-virtual-list .track-row {

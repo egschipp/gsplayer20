@@ -148,6 +148,7 @@ export async function GET() {
     now
   );
   const rateLimitSnapshot = getSpotifyRateLimitSnapshot(now);
+  const hasActiveBackoff = (rateLimitSnapshot.backoffRemainingMs ?? 0) > 0;
 
   const expiresInSec =
     typeof tokenRow?.accessExpiresAt === "number" && tokenRow.accessExpiresAt > 0
@@ -261,6 +262,11 @@ export async function GET() {
     rateLimits: {
       count429: count429 || 0,
       sampleWindowSec: metricsWindowSec,
+      status: hasActiveBackoff
+        ? "active_backoff"
+        : (count429 || 0) > 0
+        ? "recent_events"
+        : "clear",
       backoffState: rateLimitSnapshot.backoffState,
       backoffRemainingMs: rateLimitSnapshot.backoffRemainingMs,
       backoffUntilTs: rateLimitSnapshot.backoffUntilTs,

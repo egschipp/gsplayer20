@@ -876,6 +876,8 @@ export default function MonitoringDashboard() {
   const rateBackoffRemainingMs = Math.max(backoffFromSnapshotMs, backoffFromUntilMs);
   const rateBackoffRemainingSec = Math.ceil(rateBackoffRemainingMs / 1000);
   const hasActiveRateBackoff = rateBackoffRemainingSec > 0;
+  const rateLimitCount = summary?.rateLimits.count429 ?? 0;
+  const hasRecentRateLimitEvents = rateLimitCount > 0;
   const lastRateTriggeredAgoSec = summary?.rateLimits.lastTriggeredAt
     ? Math.max(0, Math.floor((clockNowMs - summary.rateLimits.lastTriggeredAt) / 1000))
     : null;
@@ -884,10 +886,10 @@ export default function MonitoringDashboard() {
     typeof lastRateTriggeredAgoSec === "number" && lastRateTriggeredAgoSec > 120;
 
   const rateTone: Tone = hasActiveRateBackoff
-    ? (summary?.rateLimits.count429 ?? 0) >= 10 || rateBackoffRemainingSec >= 10
+    ? rateLimitCount >= 10 || rateBackoffRemainingSec >= 10
       ? "error"
       : "warn"
-    : (summary?.rateLimits.count429 ?? 0) === 0
+    : rateLimitCount === 0
     ? "ok"
     : recentRateBurst
     ? "warn"
@@ -943,12 +945,11 @@ export default function MonitoringDashboard() {
   );
   const rateBackoffSubtitle = hasActiveRateBackoff
     ? `backoff actief · ${rateBackoffRemainingSec}s`
-    : summary?.rateLimits.lastRetryAfterMs
-    ? `geen actieve backoff · laatste ${Math.max(
-        1,
-        Math.round(summary.rateLimits.lastRetryAfterMs / 1000)
-      )}s (${fmtAgoShort(lastRateTriggeredAgoSec)} geleden)`
-    : "geen actieve backoff";
+    : hasRecentRateLimitEvents
+    ? `geen actieve backoff · ${rateLimitCount} recente blokkades (${fmtAgoShort(
+        lastRateTriggeredAgoSec
+      )} geleden)`
+    : "geen rate limits in venster";
   const rateBackoffSubtitleWithWindow = `${rateBackoffSubtitle} · venster ${metricsWindowLabel}`;
 
   const insights = useMemo<Insight[]>(() => {
@@ -987,23 +988,26 @@ export default function MonitoringDashboard() {
       });
     }
 
-    if (summary.rateLimits.count429 >= 5) {
+    if (hasActiveRateBackoff && rateLimitCount >= 5) {
       list.push({
         id: "rate-hard",
-        tone: hasActiveRateBackoff ? "error" : "warn",
+        tone: "error",
         title: "Spotify rate limit blokkeert requests",
-        text: hasActiveRateBackoff
-          ? `Er zijn ${summary.rateLimits.count429} blokkades in de laatste ${metricsWindowLabel}; backoff loopt nog ${rateBackoffRemainingSec}s.`
-          : `Er zijn ${summary.rateLimits.count429} blokkades in de laatste ${metricsWindowLabel}; verlaag korte piekacties.`,
+        text: `Er zijn ${rateLimitCount} blokkades in de laatste ${metricsWindowLabel}; backoff loopt nog ${rateBackoffRemainingSec}s.`,
       });
-    } else if (summary.rateLimits.count429 > 0) {
+    } else if (hasActiveRateBackoff && rateLimitCount > 0) {
       list.push({
         id: "rate-soft",
         tone: "warn",
         title: "Spotify rate limit actief",
-        text: hasActiveRateBackoff
-          ? `Er zijn ${summary.rateLimits.count429} tijdelijke blokkades in de laatste ${metricsWindowLabel}; backoff telt af: ${rateBackoffRemainingSec}s.`
-          : `Er zijn ${summary.rateLimits.count429} tijdelijke blokkades in de laatste ${metricsWindowLabel}; app vangt dit op met backoff.`,
+        text: `Er zijn ${rateLimitCount} tijdelijke blokkades in de laatste ${metricsWindowLabel}; backoff telt af: ${rateBackoffRemainingSec}s.`,
+      });
+    } else if (rateLimitCount > 0) {
+      list.push({
+        id: "rate-recent",
+        tone: "warn",
+        title: "Recente rate limits (nu hersteld)",
+        text: `Er waren ${rateLimitCount} tijdelijke blokkades in de laatste ${metricsWindowLabel}, maar er is nu geen actieve backoff.`,
       });
     }
 
@@ -1057,6 +1061,7 @@ export default function MonitoringDashboard() {
     authStatusTone,
     hasActiveRateBackoff,
     metricsWindowLabel,
+    rateLimitCount,
     restrictionViolatedCount,
     rateBackoffRemainingSec,
     summary,

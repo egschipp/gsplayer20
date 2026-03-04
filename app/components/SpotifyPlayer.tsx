@@ -698,6 +698,8 @@ export default function SpotifyPlayer({
   const readyRef = useRef(false);
   const rateLimitRef = useRef({ until: 0, backoffMs: 5000 });
   const lastRequestAtRef = useRef(0);
+  const lastSyncStartedAtRef = useRef(0);
+  const syncInFlightRef = useRef(false);
   const lastDevicesRefreshRef = useRef(0);
   const lastDevicesPlaybackFetchRef = useRef(0);
   const playbackRestrictionUntilRef = useRef(0);
@@ -3269,38 +3271,65 @@ export default function SpotifyPlayer({
 
   const syncPlaybackState = useCallback(
     async (source: PlaybackSource = "api_sync", minEpoch?: number) => {
+      const nowMs = Date.now();
+      const minSyncIntervalMs =
+        source === "api_bootstrap"
+          ? 0
+          : source === "api_verify"
+          ? 900
+          : source === "api_sync"
+          ? 1_400
+          : source === "api_poll"
+          ? 2_200
+          : 1_200;
+      if (
+        source !== "api_bootstrap" &&
+        nowMs - lastSyncStartedAtRef.current < minSyncIntervalMs
+      ) {
+        return;
+      }
+      if (syncInFlightRef.current) {
+        return;
+      }
+      syncInFlightRef.current = true;
+      lastSyncStartedAtRef.current = nowMs;
       const requestEpoch =
         typeof minEpoch === "number" ? minEpoch : operationEpochRef.current;
       if (requestEpoch < operationEpochRef.current) {
+        syncInFlightRef.current = false;
         return;
       }
-      const requestStartedAtWallMs = Date.now();
-      const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
-      if (!res?.ok) return;
-      const responseReceivedAtWallMs = Date.now();
-      const responseReceivedAtMonoMs = getMonotonicNow();
-      const observedRttMs = Math.max(0, responseReceivedAtWallMs - requestStartedAtWallMs);
-      rttEwmaMsRef.current = rttEwmaMsRef.current * 0.8 + observedRttMs * 0.2;
-      playbackMetricsRef.current.avgRttMs = rttEwmaMsRef.current;
-      seekRollbackTimeoutMsRef.current = Math.min(
-        3200,
-        Math.max(1200, Math.round(rttEwmaMsRef.current * 3))
-      );
-      emitPlaybackMetric("rtt_ms", observedRttMs, {
-        avgRttMs: Math.round(rttEwmaMsRef.current),
-        source,
-      });
-      if (requestEpoch < operationEpochRef.current) {
-        return;
+      try {
+        const requestStartedAtWallMs = Date.now();
+        const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
+        if (!res?.ok) return;
+        const responseReceivedAtWallMs = Date.now();
+        const responseReceivedAtMonoMs = getMonotonicNow();
+        const observedRttMs = Math.max(0, responseReceivedAtWallMs - requestStartedAtWallMs);
+        rttEwmaMsRef.current = rttEwmaMsRef.current * 0.8 + observedRttMs * 0.2;
+        playbackMetricsRef.current.avgRttMs = rttEwmaMsRef.current;
+        seekRollbackTimeoutMsRef.current = Math.min(
+          3200,
+          Math.max(1200, Math.round(rttEwmaMsRef.current * 3))
+        );
+        emitPlaybackMetric("rtt_ms", observedRttMs, {
+          avgRttMs: Math.round(rttEwmaMsRef.current),
+          source,
+        });
+        if (requestEpoch < operationEpochRef.current) {
+          return;
+        }
+        const data = await readJsonSafely(res);
+        ingestApiSnapshot(data, {
+          source,
+          requestStartedAtWallMs,
+          responseReceivedAtWallMs,
+          responseReceivedAtMonoMs,
+          pauseLocalSdkOnRemote: source === "api_poll",
+        });
+      } finally {
+        syncInFlightRef.current = false;
       }
-      const data = await readJsonSafely(res);
-      ingestApiSnapshot(data, {
-        source,
-        requestStartedAtWallMs,
-        responseReceivedAtWallMs,
-        responseReceivedAtMonoMs,
-        pauseLocalSdkOnRemote: source === "api_poll",
-      });
     },
     [
       emitPlaybackMetric,
@@ -4006,7 +4035,8 @@ export default function SpotifyPlayer({
       await refreshClientAccessToken(force);
     }
     const now = Date.now();
-    if (!force && now - lastDevicesRefreshRef.current < 3000) return;
+    const minRefreshGapMs = force ? 1500 : 3000;
+    if (now - lastDevicesRefreshRef.current < minRefreshGapMs) return;
     lastDevicesRefreshRef.current = now;
     if (!force && now < rateLimitRef.current.until) return;
 

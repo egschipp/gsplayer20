@@ -516,6 +516,34 @@ a:focus-visible {
   cursor: not-allowed;
 }
 
+.player-playlist-state-btn {
+  min-width: 36px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.44);
+  background: rgba(100, 116, 139, 0.22);
+  color: rgba(226, 232, 240, 0.95);
+  font-weight: 700;
+  line-height: 1;
+  transition: transform 0.08s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.player-playlist-state-btn:hover:not(:disabled) {
+  transform: scale(1.03);
+  border-color: rgba(148, 163, 184, 0.62);
+  background: rgba(100, 116, 139, 0.28);
+}
+
+.player-playlist-state-btn.active {
+  border-color: rgba(29, 185, 84, 0.5);
+  background: rgba(29, 185, 84, 0.2);
+  color: #1ed760;
+}
+
+.player-playlist-state-btn.loading {
+  opacity: 0.9;
+}
+
 .track-row:focus-visible {
   border-color: rgba(29, 185, 84, 0.5);
   background: rgba(29, 185, 84, 0.12);
@@ -1809,6 +1837,12 @@ details[open] > .details-summary::after {
 
 .track-playlist-menu {
   z-index: 220;
+}
+
+.track-playlist-membership-summary {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+  margin-bottom: 6px;
 }
 
 .text-subtle {

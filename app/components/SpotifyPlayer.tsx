@@ -3648,6 +3648,20 @@ export default function SpotifyPlayer({
     trackPlaylistSelectedIds,
   ]);
 
+  const selectedPlaylistIdsForTrack = useMemo(
+    () =>
+      Array.from(trackPlaylistSelectedIds).filter(
+        (id) => id && id !== PLAYER_LIKED_PLAYLIST_ID
+      ),
+    [trackPlaylistSelectedIds]
+  );
+  const selectedPlaylistNamesForTrack = useMemo(() => {
+    if (!selectedPlaylistIdsForTrack.length) return [] as string[];
+    const optionById = new Map(trackPlaylistOptions.map((option) => [option.id, option.name]));
+    return selectedPlaylistIdsForTrack.map((id) => optionById.get(id) ?? id);
+  }, [selectedPlaylistIdsForTrack, trackPlaylistOptions]);
+  const currentTrackInAnyPlaylist = selectedPlaylistIdsForTrack.length > 0;
+
   const handleLikeCurrentTrack = useCallback(async () => {
     if (!currentTrackIdState) return;
     if (likedStateSaving || likedStateLoading) return;
@@ -3696,7 +3710,7 @@ export default function SpotifyPlayer({
   ]);
 
   useEffect(() => {
-    if (!trackPlaylistMenuOpen || !currentTrackIdState || !accessToken) return;
+    if (!currentTrackIdState || !accessToken) return;
     void ensureTrackPlaylistOptionsLoaded().catch(() => {
       setError("Playlist-doelen laden lukt nu niet.");
     });
@@ -3708,7 +3722,6 @@ export default function SpotifyPlayer({
     currentTrackIdState,
     ensureTrackPlaylistOptionsLoaded,
     syncCurrentTrackPlaylistSelection,
-    trackPlaylistMenuOpen,
   ]);
 
   useEffect(() => {
@@ -6467,14 +6480,22 @@ export default function SpotifyPlayer({
               </button>
               <button
                 type="button"
-                className="detail-btn queue-add-btn"
-                aria-label="Toevoegen aan playlists"
-                title="Playlist-selectie voor huidige track"
+                className={`detail-btn player-playlist-state-btn${
+                  currentTrackInAnyPlaylist ? " active" : ""
+                }${trackPlaylistLoading ? " loading" : ""}`}
+                aria-label="Track playlists tonen"
+                title={
+                  currentTrackInAnyPlaylist
+                    ? `Track staat in ${selectedPlaylistIdsForTrack.length} playlist${
+                        selectedPlaylistIdsForTrack.length === 1 ? "" : "s"
+                      }`
+                    : "Track staat niet in je playlists"
+                }
                 disabled={trackPlaylistSaving}
                 onClick={() =>
                   setTrackPlaylistMenuOpen((prev) => {
                     const next = !prev;
-                    if (next && currentTrackIdState && accessToken) {
+                    if (next) {
                       void ensureTrackPlaylistOptionsLoaded().catch(() => {
                         setError("Playlist-doelen laden lukt nu niet.");
                       });
@@ -6487,7 +6508,11 @@ export default function SpotifyPlayer({
                 }
                 onBlur={trackPlaylistMenu.handleBlur}
               >
-                {trackPlaylistSaving ? "…" : "＋"}
+                {trackPlaylistSaving || trackPlaylistLoading
+                  ? "…"
+                  : currentTrackInAnyPlaylist
+                  ? String(selectedPlaylistIdsForTrack.length)
+                  : "0"}
               </button>
               {trackPlaylistMenuOpen ? (
                 <div
@@ -6495,6 +6520,17 @@ export default function SpotifyPlayer({
                   role="menu"
                   style={{ right: 0, left: "auto", width: "min(560px, calc(100vw - 32px))" }}
                 >
+                  <div className="track-playlist-membership-summary">
+                    {trackPlaylistLoading ? (
+                      <div className="combo-empty">Track-playlists laden...</div>
+                    ) : currentTrackInAnyPlaylist ? (
+                      <div className="text-subtle">
+                        In playlists: {selectedPlaylistNamesForTrack.join(", ")}
+                      </div>
+                    ) : (
+                      <div className="text-subtle">Track staat niet in je playlists.</div>
+                    )}
+                  </div>
                   {trackPlaylistLoading ? (
                     <div className="combo-empty">Playlists laden...</div>
                   ) : trackPlaylistOptions.length === 0 ? (

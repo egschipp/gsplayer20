@@ -258,10 +258,16 @@ export default function QueuePageClient() {
       playbackFocus.stale);
   const activeTrackErrorVisible =
     hasActiveTrack && activeTrackStatusRaw === "error" && !activeTrackTransientGap;
+  const activeTrackStatusForProjection: PlaybackFocusStatus =
+    hasActiveTrack && activeTrackStatusRaw === "error" && activeTrackTransientGap
+      ? playbackFocus.isPlaying === false
+        ? "paused"
+        : "playing"
+      : activeTrackStatusRaw;
 
   const queuePresentation = deriveQueueActivePresentation({
     hasActiveTrack,
-    status: activeTrackStatusRaw,
+    status: activeTrackStatusForProjection,
     isPlaying: playbackFocus.isPlaying,
     source: playbackState.source,
     stale: Boolean(playbackState.stale),

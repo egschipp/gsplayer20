@@ -1537,12 +1537,30 @@ export default function SpotifyPlayer({
   const queueHandoffPending =
     Boolean(pendingDeviceIdRef.current) &&
     Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
+  const activeQueueTrackTransientGap =
+    activeTrackIdSet.size > 0 &&
+    (activeQueueTrackIsStaleRaw ||
+      queueHandoffPending ||
+      commandBusy ||
+      activeQueueTrackStatusRaw === "loading" ||
+      activeQueueTrackStatusRaw === "idle");
+  const activeQueueTrackStatusForProjection: PlaybackFocusStatus =
+    activeTrackIdSet.size > 0 &&
+    activeQueueTrackStatusRaw === "error" &&
+    activeQueueTrackTransientGap
+      ? playbackFocusState.isPlaying === false
+        ? "paused"
+        : "playing"
+      : activeQueueTrackStatusRaw;
   useEffect(() => {
     if (!PLAYBACK_FEATURE_FLAGS.delayedActiveTrackErrorIndicator) {
       setQueueActiveTrackErrorVisible(true);
       return;
     }
-    const shouldDelayError = activeTrackIdSet.size > 0 && activeQueueTrackStatusRaw === "error";
+    const shouldDelayError =
+      activeTrackIdSet.size > 0 &&
+      activeQueueTrackStatusRaw === "error" &&
+      !activeQueueTrackTransientGap;
     if (!shouldDelayError) {
       if (queueActiveTrackErrorTimerRef.current) {
         clearTimeout(queueActiveTrackErrorTimerRef.current);
@@ -1568,6 +1586,7 @@ export default function SpotifyPlayer({
       queueActiveTrackErrorTimerRef.current = null;
     };
   }, [
+    activeQueueTrackTransientGap,
     activeQueueTrackStatusRaw,
     activeTrackIdSet.size,
     playbackFocusState.source,
@@ -1575,7 +1594,7 @@ export default function SpotifyPlayer({
   ]);
   const queuePresentation = deriveQueueActivePresentation({
     hasActiveTrack: activeTrackIdSet.size > 0,
-    status: activeQueueTrackStatusRaw,
+    status: activeQueueTrackStatusForProjection,
     isPlaying: playbackFocusState.isPlaying,
     source: playbackFocusState.source,
     stale: activeQueueTrackIsStaleRaw,

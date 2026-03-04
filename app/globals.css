@@ -516,34 +516,6 @@ a:focus-visible {
   cursor: not-allowed;
 }
 
-.player-playlist-state-btn {
-  min-width: 36px;
-  height: 32px;
-  border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.44);
-  background: rgba(100, 116, 139, 0.22);
-  color: rgba(226, 232, 240, 0.95);
-  font-weight: 700;
-  line-height: 1;
-  transition: transform 0.08s ease, background 0.12s ease, border-color 0.12s ease;
-}
-
-.player-playlist-state-btn:hover:not(:disabled) {
-  transform: scale(1.03);
-  border-color: rgba(148, 163, 184, 0.62);
-  background: rgba(100, 116, 139, 0.28);
-}
-
-.player-playlist-state-btn.active {
-  border-color: rgba(29, 185, 84, 0.5);
-  background: rgba(29, 185, 84, 0.2);
-  color: #1ed760;
-}
-
-.player-playlist-state-btn.loading {
-  opacity: 0.9;
-}
-
 .track-row:focus-visible {
   border-color: rgba(29, 185, 84, 0.5);
   background: rgba(29, 185, 84, 0.12);
@@ -2333,40 +2305,62 @@ details[open] > .details-summary::after {
   margin-bottom: 0;
 }
 
-.player-like-btn {
-  width: 32px;
+.player-track-actions {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.player-track-action-btn {
+  min-width: 36px;
   height: 32px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(0, 0, 0, 0.35);
-  color: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.44);
+  background: rgba(100, 116, 139, 0.22);
+  color: rgba(226, 232, 240, 0.95);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 16px;
+  font-weight: 700;
   line-height: 1;
   cursor: pointer;
-  transition: transform 0.08s ease, color 0.12s ease, background 0.12s ease;
-  flex: 0 0 auto;
+  transition: transform 0.08s ease, background 0.12s ease, border-color 0.12s ease;
 }
 
-.player-like-btn:hover:not(:disabled) {
-  transform: scale(1.05);
-  color: #ffffff;
+.player-track-action-btn:hover:not(:disabled) {
+  transform: scale(1.03);
+  border-color: rgba(148, 163, 184, 0.62);
+  background: rgba(100, 116, 139, 0.28);
 }
 
-.player-like-btn.active {
-  border-color: rgba(29, 185, 84, 0.45);
-  background: rgba(29, 185, 84, 0.18);
+.player-track-action-btn.active {
+  border-color: rgba(29, 185, 84, 0.5);
+  background: rgba(29, 185, 84, 0.2);
   color: #1ed760;
 }
 
-.player-like-btn:disabled {
+.player-track-action-btn.loading {
+  opacity: 0.9;
+}
+
+.player-track-action-like {
+  font-size: 18px;
+}
+
+.player-track-action-add {
+  font-size: 19px;
+}
+
+.player-track-action-btn:disabled {
   opacity: 0.75;
   cursor: default;
 }
 
-.player-like-btn:focus-visible {
+.player-track-action-btn:focus-visible {
   outline: 2px solid var(--tide);
   outline-offset: 2px;
 }
@@ -2391,9 +2385,10 @@ details[open] > .details-summary::after {
   grid-row: 2;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 16px;
   width: 100%;
+  padding-left: 24px;
 }
 
 .player-progress-main {
@@ -3932,6 +3927,7 @@ details[open] > .details-summary::after {
     flex-direction: column;
     align-items: stretch;
     gap: 8px;
+    padding-left: 0;
   }
 
   .player-progress-main {

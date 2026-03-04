@@ -699,6 +699,7 @@ export default function SpotifyPlayer({
   const rateLimitRef = useRef({ until: 0, backoffMs: 5000 });
   const lastRequestAtRef = useRef(0);
   const lastDevicesRefreshRef = useRef(0);
+  const lastDevicesPlaybackFetchRef = useRef(0);
   const playbackRestrictionUntilRef = useRef(0);
   const lastSdkEventAtRef = useRef(0);
   const sdkReadyRef = useRef(false);
@@ -4009,13 +4010,20 @@ export default function SpotifyPlayer({
         // ignore proxy fallback issues
       }
     }
-    try {
-      const playbackRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
-      if (playbackRes?.ok) {
-        playbackState = await playbackRes.json().catch(() => null);
+    const shouldFetchPlaybackForDeviceMerge =
+      force &&
+      now - lastDevicesPlaybackFetchRef.current >= 12_000 &&
+      !Array.isArray(data?.devices);
+    if (shouldFetchPlaybackForDeviceMerge) {
+      try {
+        const playbackRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
+        if (playbackRes?.ok) {
+          playbackState = await playbackRes.json().catch(() => null);
+          lastDevicesPlaybackFetchRef.current = Date.now();
+        }
+      } catch {
+        // ignore playback-state merge errors
       }
-    } catch {
-      // ignore playback-state merge errors
     }
 
     setDevicesLoaded(true);
@@ -5651,9 +5659,9 @@ export default function SpotifyPlayer({
           scheduleNext(isPlaying, isPlaying ? 12000 : 15000);
           return;
         }
-        if (enablePlaybackStream && streamFresh && !remoteDeviceActive && playbackFresh) {
+        if (enablePlaybackStream && streamFresh && playbackFresh) {
           const isPlaying = !playerStateRef.current?.paused;
-          scheduleNext(isPlaying, isPlaying ? 7000 : 12000);
+          scheduleNext(isPlaying, isPlaying ? 8500 : 13000);
           return;
         }
         const hidden =
@@ -5670,7 +5678,8 @@ export default function SpotifyPlayer({
           scheduleNext(isPlaying, isPlaying ? 5500 : 9500);
           return;
         }
-        if (now - lastRequestAtRef.current < 1200) {
+        const minRequestGapMs = remoteDeviceActive ? (streamFresh ? 4200 : 2600) : 1200;
+        if (now - lastRequestAtRef.current < minRequestGapMs) {
           scheduleNext();
           return;
         }
@@ -5742,7 +5751,7 @@ export default function SpotifyPlayer({
         effectiveType === "3g";
       let baseDelay = isPlaying ? 3000 : 9000;
       if (remoteDeviceActive) {
-        baseDelay = streamFresh ? (isPlaying ? 2400 : 4200) : isPlaying ? 1200 : 2200;
+        baseDelay = streamFresh ? (isPlaying ? 4800 : 7600) : isPlaying ? 2600 : 4400;
       } else if (enablePlaybackStream && streamFresh) {
         baseDelay = isPlaying ? 6500 : 11000;
       }
@@ -6450,188 +6459,189 @@ export default function SpotifyPlayer({
       <div className="player-meta player-meta-wide">
         <div className="player-title-row">
           <div className="player-title">{playerTitleText}</div>
-          {accessToken && showLiveTrackInPlayer && currentTrackIdState ? (
-            <div
-              ref={trackPlaylistMenu.rootRef}
-              style={{ position: "relative", display: "inline-flex", gap: 8 }}
-              onPointerDownCapture={trackPlaylistMenu.markInteraction}
-              onTouchStartCapture={trackPlaylistMenu.markInteraction}
-            >
-              <button
-                type="button"
-                className={`player-like-btn${currentTrackLiked ? " active" : ""}`}
-                aria-label={
-                  currentTrackLiked
-                    ? "Verwijderen uit Liked Songs"
-                    : "Toevoegen aan Liked Songs"
-                }
-                title={
-                  currentTrackLiked
-                    ? "Verwijderen uit Liked Songs"
-                    : "Toevoegen aan Liked Songs"
-                }
-                disabled={likedStateSaving || likedStateLoading || trackPlaylistSaving}
-                onClick={handleLikeCurrentTrack}
-              >
-                {likedStateSaving ? "…" : currentTrackLiked ? "−" : "+"}
-              </button>
-              <button
-                type="button"
-                className={`detail-btn player-playlist-state-btn${
-                  currentTrackInAnyPlaylist ? " active" : ""
-                }${trackPlaylistLoading ? " loading" : ""}`}
-                aria-label="Track playlists tonen"
-                title={
-                  currentTrackInAnyPlaylist
-                    ? `Track staat in ${selectedPlaylistNamesForTrack.length} lijst${
-                        selectedPlaylistNamesForTrack.length === 1 ? "" : "en"
-                      }`
-                    : "Track staat niet in je lijsten"
-                }
-                disabled={trackPlaylistSaving}
-                onClick={() =>
-                  setTrackPlaylistMembershipOpen((prev) => {
-                    const next = !prev;
-                    if (next) {
-                      setTrackPlaylistMenuOpen(false);
-                      void ensureTrackPlaylistOptionsLoaded().catch(() => {
-                        setError("Playlist-doelen laden lukt nu niet.");
-                      });
-                      void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(() => {
-                        setError("Track-playlists laden lukt nu niet.");
-                      });
-                    }
-                    return next;
-                  })
-                }
-                onBlur={trackPlaylistMenu.handleBlur}
-              >
-                {trackPlaylistSaving || trackPlaylistLoading
-                  ? "…"
-                  : currentTrackInAnyPlaylist
-                  ? String(selectedPlaylistNamesForTrack.length)
-                  : "0"}
-              </button>
-              <button
-                type="button"
-                className="detail-btn queue-add-btn"
-                aria-label="Track toevoegen aan lijsten"
-                title="Track toevoegen aan lijsten"
-                disabled={trackPlaylistSaving}
-                onClick={() =>
-                  setTrackPlaylistMenuOpen((prev) => {
-                    const next = !prev;
-                    if (next) {
-                      setTrackPlaylistMembershipOpen(false);
-                      void ensureTrackPlaylistOptionsLoaded().catch(() => {
-                        setError("Playlist-doelen laden lukt nu niet.");
-                      });
-                      void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(() => {
-                        setError("Track-playlists laden lukt nu niet.");
-                      });
-                    }
-                    return next;
-                  })
-                }
-                onBlur={trackPlaylistMenu.handleBlur}
-              >
-                {trackPlaylistSaving ? "…" : "＋"}
-              </button>
-              {trackPlaylistMembershipOpen ? (
-                <div
-                  className="combo-list track-playlist-menu track-playlist-membership-menu"
-                  role="status"
-                  style={{ right: 0, left: "auto", width: "min(520px, calc(100vw - 32px))" }}
-                >
-                  <div className="track-playlist-membership-summary">
-                    {trackPlaylistLoading ? (
-                      <div className="combo-empty">Track-playlists laden...</div>
-                    ) : currentTrackInAnyPlaylist ? (
-                      <div className="text-subtle">Deze track staat in:</div>
-                    ) : (
-                      <div className="text-subtle">Track staat niet in je lijsten.</div>
-                    )}
-                  </div>
-                  {!trackPlaylistLoading && currentTrackInAnyPlaylist ? (
-                    selectedPlaylistNamesForTrack.map((name) => (
-                      <div key={name} className="combo-item">
-                        {name}
-                      </div>
-                    ))
-                  ) : null}
-                </div>
-              ) : null}
-              {trackPlaylistMenuOpen ? (
-                <div
-                  className="combo-list track-playlist-menu"
-                  role="menu"
-                  style={{ right: 0, left: "auto", width: "min(560px, calc(100vw - 32px))" }}
-                >
-                  <div className="track-playlist-membership-summary">
-                    {trackPlaylistLoading ? (
-                      <div className="combo-empty">Track-playlists laden...</div>
-                    ) : currentTrackInAnyPlaylist ? (
-                      <div className="text-subtle">
-                        In playlists: {selectedPlaylistNamesForTrack.join(", ")}
-                      </div>
-                    ) : (
-                      <div className="text-subtle">Track staat niet in je playlists.</div>
-                    )}
-                  </div>
-                  {trackPlaylistLoading ? (
-                    <div className="combo-empty">Playlists laden...</div>
-                  ) : trackPlaylistOptions.length === 0 ? (
-                    <div className="combo-empty">Geen playlist-doelen.</div>
-                  ) : (
-                    trackPlaylistOptions.map((option) => {
-                      const opKey = `${currentTrackIdState}:${option.id}`;
-                      const busy =
-                        trackPlaylistSaving || trackPlaylistActionKey === opKey;
-                      const checked = trackPlaylistSelectedIds.has(option.id);
-                      return (
-                        <label
-                          key={option.id}
-                          role="menuitem"
-                          className="combo-item"
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 10,
-                            justifyContent: "flex-start",
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={busy}
-                            onChange={() => {
-                              if (busy) return;
-                              setTrackPlaylistSelectedIds((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(option.id)) {
-                                  next.delete(option.id);
-                                } else {
-                                  next.add(option.id);
-                                }
-                                return next;
-                              });
-                            }}
-                            onClick={(event) => event.stopPropagation()}
-                          />
-                          <span style={{ whiteSpace: "nowrap" }}>{option.name}</span>
-                        </label>
-                      );
-                    })
-                  )}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
         </div>
         {playerArtistText ? <div className="text-body">{playerArtistText}</div> : null}
         {playerAlbumText ? (
           <div className="text-subtle">
             {playerAlbumText}
+          </div>
+        ) : null}
+        {accessToken && showLiveTrackInPlayer && currentTrackIdState ? (
+          <div
+            className="player-track-actions"
+            ref={trackPlaylistMenu.rootRef}
+            onPointerDownCapture={trackPlaylistMenu.markInteraction}
+            onTouchStartCapture={trackPlaylistMenu.markInteraction}
+          >
+            <button
+              type="button"
+              className={`player-track-action-btn player-track-action-like${
+                currentTrackLiked ? " active" : ""
+              }`}
+              aria-label={
+                currentTrackLiked
+                  ? "Verwijderen uit Liked Songs"
+                  : "Toevoegen aan Liked Songs"
+              }
+              title={
+                currentTrackLiked
+                  ? "Verwijderen uit Liked Songs"
+                  : "Toevoegen aan Liked Songs"
+              }
+              disabled={likedStateSaving || likedStateLoading || trackPlaylistSaving}
+              onClick={handleLikeCurrentTrack}
+            >
+              {likedStateSaving ? "…" : currentTrackLiked ? "−" : "+"}
+            </button>
+            <button
+              type="button"
+              className={`player-track-action-btn player-track-action-membership${
+                currentTrackInAnyPlaylist ? " active" : ""
+              }${trackPlaylistLoading ? " loading" : ""}`}
+              aria-label="Track playlists tonen"
+              title={
+                currentTrackInAnyPlaylist
+                  ? `Track staat in ${selectedPlaylistNamesForTrack.length} lijst${
+                      selectedPlaylistNamesForTrack.length === 1 ? "" : "en"
+                    }`
+                  : "Track staat niet in je lijsten"
+              }
+              disabled={trackPlaylistSaving}
+              onClick={() =>
+                setTrackPlaylistMembershipOpen((prev) => {
+                  const next = !prev;
+                  if (next) {
+                    setTrackPlaylistMenuOpen(false);
+                    void ensureTrackPlaylistOptionsLoaded().catch(() => {
+                      setError("Playlist-doelen laden lukt nu niet.");
+                    });
+                    void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(() => {
+                      setError("Track-playlists laden lukt nu niet.");
+                    });
+                  }
+                  return next;
+                })
+              }
+              onBlur={trackPlaylistMenu.handleBlur}
+            >
+              {trackPlaylistSaving || trackPlaylistLoading
+                ? "…"
+                : currentTrackInAnyPlaylist
+                ? String(selectedPlaylistNamesForTrack.length)
+                : "0"}
+            </button>
+            <button
+              type="button"
+              className="player-track-action-btn player-track-action-add"
+              aria-label="Track toevoegen aan lijsten"
+              title="Track toevoegen aan lijsten"
+              disabled={trackPlaylistSaving}
+              onClick={() =>
+                setTrackPlaylistMenuOpen((prev) => {
+                  const next = !prev;
+                  if (next) {
+                    setTrackPlaylistMembershipOpen(false);
+                    void ensureTrackPlaylistOptionsLoaded().catch(() => {
+                      setError("Playlist-doelen laden lukt nu niet.");
+                    });
+                    void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(() => {
+                      setError("Track-playlists laden lukt nu niet.");
+                    });
+                  }
+                  return next;
+                })
+              }
+              onBlur={trackPlaylistMenu.handleBlur}
+            >
+              {trackPlaylistSaving ? "…" : "＋"}
+            </button>
+            {trackPlaylistMembershipOpen ? (
+              <div
+                className="combo-list track-playlist-menu track-playlist-membership-menu"
+                role="status"
+                style={{ right: 0, left: "auto", width: "min(520px, calc(100vw - 32px))" }}
+              >
+                <div className="track-playlist-membership-summary">
+                  {trackPlaylistLoading ? (
+                    <div className="combo-empty">Track-playlists laden...</div>
+                  ) : currentTrackInAnyPlaylist ? (
+                    <div className="text-subtle">Deze track staat in:</div>
+                  ) : (
+                    <div className="text-subtle">Track staat niet in je lijsten.</div>
+                  )}
+                </div>
+                {!trackPlaylistLoading && currentTrackInAnyPlaylist ? (
+                  selectedPlaylistNamesForTrack.map((name) => (
+                    <div key={name} className="combo-item">
+                      {name}
+                    </div>
+                  ))
+                ) : null}
+              </div>
+            ) : null}
+            {trackPlaylistMenuOpen ? (
+              <div
+                className="combo-list track-playlist-menu"
+                role="menu"
+                style={{ right: 0, left: "auto", width: "min(560px, calc(100vw - 32px))" }}
+              >
+                <div className="track-playlist-membership-summary">
+                  {trackPlaylistLoading ? (
+                    <div className="combo-empty">Track-playlists laden...</div>
+                  ) : currentTrackInAnyPlaylist ? (
+                    <div className="text-subtle">
+                      In playlists: {selectedPlaylistNamesForTrack.join(", ")}
+                    </div>
+                  ) : (
+                    <div className="text-subtle">Track staat niet in je playlists.</div>
+                  )}
+                </div>
+                {trackPlaylistLoading ? (
+                  <div className="combo-empty">Playlists laden...</div>
+                ) : trackPlaylistOptions.length === 0 ? (
+                  <div className="combo-empty">Geen playlist-doelen.</div>
+                ) : (
+                  trackPlaylistOptions.map((option) => {
+                    const opKey = `${currentTrackIdState}:${option.id}`;
+                    const busy = trackPlaylistSaving || trackPlaylistActionKey === opKey;
+                    const checked = trackPlaylistSelectedIds.has(option.id);
+                    return (
+                      <label
+                        key={option.id}
+                        role="menuitem"
+                        className="combo-item"
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          justifyContent: "flex-start",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={busy}
+                          onChange={() => {
+                            if (busy) return;
+                            setTrackPlaylistSelectedIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(option.id)) {
+                                next.delete(option.id);
+                              } else {
+                                next.add(option.id);
+                              }
+                              return next;
+                            });
+                          }}
+                          onClick={(event) => event.stopPropagation()}
+                        />
+                        <span style={{ whiteSpace: "nowrap" }}>{option.name}</span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            ) : null}
           </div>
         ) : null}
         {playerErrorMessage &&

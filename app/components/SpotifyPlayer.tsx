@@ -95,13 +95,6 @@ type PlayerPlaylistOption = {
   type: "liked" | "playlist";
 };
 
-const LEADING_EMOJI_PATTERN =
-  /^[\s\u200B-\u200D\u200E\u200F\u2060\uFEFF]*(?:\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)/u;
-
-function startsWithEmoji(value: string | null | undefined) {
-  return LEADING_EMOJI_PATTERN.test(String(value ?? ""));
-}
-
 type PlaybackSource =
   | "sdk"
   | "api_sync"
@@ -611,6 +604,7 @@ export default function SpotifyPlayer({
   const [likedStateLoading, setLikedStateLoading] = useState(false);
   const [likedStateSaving, setLikedStateSaving] = useState(false);
   const [trackPlaylistMenuOpen, setTrackPlaylistMenuOpen] = useState(false);
+  const [trackPlaylistMembershipOpen, setTrackPlaylistMembershipOpen] = useState(false);
   const [trackPlaylistOptions, setTrackPlaylistOptions] = useState<PlayerPlaylistOption[]>([
     { id: PLAYER_LIKED_PLAYLIST_ID, name: "Liked Songs", type: "liked" },
   ]);
@@ -758,7 +752,10 @@ export default function SpotifyPlayer({
     onClose: () => setDeviceMenuOpen(false),
   });
   const trackPlaylistMenu = useStableMenu<HTMLDivElement>({
-    onClose: () => setTrackPlaylistMenuOpen(false),
+    onClose: () => {
+      setTrackPlaylistMenuOpen(false);
+      setTrackPlaylistMembershipOpen(false);
+    },
   });
 
   function formatPlayerError(message?: string | null) {
@@ -3382,6 +3379,7 @@ export default function SpotifyPlayer({
       setCurrentTrackLiked(null);
       setLikedStateLoading(false);
       setTrackPlaylistMenuOpen(false);
+      setTrackPlaylistMembershipOpen(false);
       setTrackPlaylistSelectedIds(new Set());
       setTrackPlaylistInitialIds(new Set());
       setTrackPlaylistLoading(false);
@@ -3511,7 +3509,6 @@ export default function SpotifyPlayer({
       const id = String(item?.playlistId ?? "").trim();
       const name = String(item?.name ?? "").trim();
       if (!id || !name) continue;
-      if (!startsWithEmoji(name)) continue;
       deduped.set(id, { id, name, type: "playlist" });
     }
     const mapped = Array.from(deduped.values()).sort((a, b) =>
@@ -3649,16 +3646,16 @@ export default function SpotifyPlayer({
   ]);
 
   const selectedPlaylistIdsForTrack = useMemo(
-    () =>
-      Array.from(trackPlaylistSelectedIds).filter(
-        (id) => id && id !== PLAYER_LIKED_PLAYLIST_ID
-      ),
+    () => Array.from(trackPlaylistSelectedIds).filter((id) => Boolean(id)),
     [trackPlaylistSelectedIds]
   );
   const selectedPlaylistNamesForTrack = useMemo(() => {
     if (!selectedPlaylistIdsForTrack.length) return [] as string[];
     const optionById = new Map(trackPlaylistOptions.map((option) => [option.id, option.name]));
-    return selectedPlaylistIdsForTrack.map((id) => optionById.get(id) ?? id);
+    return selectedPlaylistIdsForTrack.map((id) => {
+      if (id === PLAYER_LIKED_PLAYLIST_ID) return "Liked Songs";
+      return optionById.get(id) ?? id;
+    });
   }, [selectedPlaylistIdsForTrack, trackPlaylistOptions]);
   const currentTrackInAnyPlaylist = selectedPlaylistIdsForTrack.length > 0;
 
@@ -6486,16 +6483,17 @@ export default function SpotifyPlayer({
                 aria-label="Track playlists tonen"
                 title={
                   currentTrackInAnyPlaylist
-                    ? `Track staat in ${selectedPlaylistIdsForTrack.length} playlist${
-                        selectedPlaylistIdsForTrack.length === 1 ? "" : "s"
+                    ? `Track staat in ${selectedPlaylistNamesForTrack.length} lijst${
+                        selectedPlaylistNamesForTrack.length === 1 ? "" : "en"
                       }`
-                    : "Track staat niet in je playlists"
+                    : "Track staat niet in je lijsten"
                 }
                 disabled={trackPlaylistSaving}
                 onClick={() =>
-                  setTrackPlaylistMenuOpen((prev) => {
+                  setTrackPlaylistMembershipOpen((prev) => {
                     const next = !prev;
                     if (next) {
+                      setTrackPlaylistMenuOpen(false);
                       void ensureTrackPlaylistOptionsLoaded().catch(() => {
                         setError("Playlist-doelen laden lukt nu niet.");
                       });
@@ -6511,9 +6509,58 @@ export default function SpotifyPlayer({
                 {trackPlaylistSaving || trackPlaylistLoading
                   ? "…"
                   : currentTrackInAnyPlaylist
-                  ? String(selectedPlaylistIdsForTrack.length)
+                  ? String(selectedPlaylistNamesForTrack.length)
                   : "0"}
               </button>
+              <button
+                type="button"
+                className="detail-btn queue-add-btn"
+                aria-label="Track toevoegen aan lijsten"
+                title="Track toevoegen aan lijsten"
+                disabled={trackPlaylistSaving}
+                onClick={() =>
+                  setTrackPlaylistMenuOpen((prev) => {
+                    const next = !prev;
+                    if (next) {
+                      setTrackPlaylistMembershipOpen(false);
+                      void ensureTrackPlaylistOptionsLoaded().catch(() => {
+                        setError("Playlist-doelen laden lukt nu niet.");
+                      });
+                      void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(() => {
+                        setError("Track-playlists laden lukt nu niet.");
+                      });
+                    }
+                    return next;
+                  })
+                }
+                onBlur={trackPlaylistMenu.handleBlur}
+              >
+                {trackPlaylistSaving ? "…" : "＋"}
+              </button>
+              {trackPlaylistMembershipOpen ? (
+                <div
+                  className="combo-list track-playlist-menu track-playlist-membership-menu"
+                  role="status"
+                  style={{ right: 0, left: "auto", width: "min(520px, calc(100vw - 32px))" }}
+                >
+                  <div className="track-playlist-membership-summary">
+                    {trackPlaylistLoading ? (
+                      <div className="combo-empty">Track-playlists laden...</div>
+                    ) : currentTrackInAnyPlaylist ? (
+                      <div className="text-subtle">Deze track staat in:</div>
+                    ) : (
+                      <div className="text-subtle">Track staat niet in je lijsten.</div>
+                    )}
+                  </div>
+                  {!trackPlaylistLoading && currentTrackInAnyPlaylist ? (
+                    selectedPlaylistNamesForTrack.map((name) => (
+                      <div key={name} className="combo-item">
+                        {name}
+                      </div>
+                    ))
+                  ) : null}
+                </div>
+              ) : null}
               {trackPlaylistMenuOpen ? (
                 <div
                   className="combo-list track-playlist-menu"

@@ -1845,6 +1845,10 @@ details[open] > .details-summary::after {
   margin-bottom: 6px;
 }
 
+.track-playlist-membership-menu .combo-item {
+  cursor: default;
+}
+
 .text-subtle {
   color: var(--text-subtle);
   font-size: 0.75rem;

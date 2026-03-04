@@ -208,21 +208,33 @@ export default function QueuePageClient() {
   const router = useRouter();
   const queue = useQueueStore();
   const playback = useQueuePlayback();
-  const { playbackFocus, playbackState } = usePlayer();
+  const { playbackFocus, playbackState, playbackView } = usePlayer();
   const [draggingQueueId, setDraggingQueueId] = useState<string | null>(null);
   const [dragOverQueueId, setDragOverQueueId] = useState<string | null>(null);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const queueRowsRef = useRef<HTMLOListElement | null>(null);
   const activeQueueId = playback.startingQueueId ?? playback.activeQueueId ?? queue.currentQueueId;
 
-  const activeTrackIdsOrdered = useMemo(
+  const rawActiveTrackIdsOrdered = useMemo(
     () =>
       normalizeTrackIdCollection([
+        ...(Array.isArray(playbackView.activeTrackIds) ? playbackView.activeTrackIds : []),
+        ...(Array.isArray(playbackFocus.matchTrackIds) ? playbackFocus.matchTrackIds : []),
         ...(Array.isArray(playbackState.matchTrackIds) ? playbackState.matchTrackIds : []),
+        playbackView.activeTrackId,
+        playbackFocus.trackId,
         playbackState.currentTrackId,
       ]),
-    [playbackState.currentTrackId, playbackState.matchTrackIds]
+    [
+      playbackFocus.matchTrackIds,
+      playbackFocus.trackId,
+      playbackState.currentTrackId,
+      playbackState.matchTrackIds,
+      playbackView.activeTrackId,
+      playbackView.activeTrackIds,
+    ]
   );
+  const activeTrackIdsOrdered = rawActiveTrackIdsOrdered;
   const activeTrackIdSet = useMemo(
     () => new Set(activeTrackIdsOrdered),
     [activeTrackIdsOrdered]
@@ -233,12 +245,17 @@ export default function QueuePageClient() {
     [activeTrackIdSet, queue.items]
   );
   const hasActiveTrack = activeQueueTrackIndex >= 0;
+  const activeTrackIsLatched =
+    activeTrackIdSet.size > 0 && rawActiveTrackIdsOrdered.length === 0;
   const activeTrackTransientGap =
     hasActiveTrack &&
-    (playbackState.uiStatus === "loading" ||
+    (activeTrackIsLatched ||
+      playbackView.transientGap ||
+      playbackState.uiStatus === "loading" ||
       playbackState.reason === "controller_initializing" ||
       playbackState.reason === "missing_match" ||
-      playbackState.stale);
+      playbackState.stale ||
+      playbackFocus.stale);
   const activeTrackErrorVisible =
     hasActiveTrack && activeTrackStatusRaw === "error" && !activeTrackTransientGap;
 
@@ -262,6 +279,11 @@ export default function QueuePageClient() {
     activeQueueTrackIndex >= 0
       ? queue.items[activeQueueTrackIndex]?.queueId ?? null
       : activeQueueId;
+  const activeDisplayIndex = useMemo(() => {
+    if (activeQueueTrackIndex >= 0) return activeQueueTrackIndex;
+    if (!resolvedActiveQueueId) return -1;
+    return queue.items.findIndex((item) => item.queueId === resolvedActiveQueueId);
+  }, [activeQueueTrackIndex, queue.items, resolvedActiveQueueId]);
 
   const currentIndex = useMemo(() => {
     if (!resolvedActiveQueueId) return -1;
@@ -293,10 +315,10 @@ export default function QueuePageClient() {
   }, []);
 
   useEffect(() => {
-    if (activeQueueTrackIndex < 0) return;
+    if (activeDisplayIndex < 0) return;
     const container = queueRowsRef.current;
     if (!container) return;
-    const targetTop = activeQueueTrackIndex * TRACK_ROW_HEIGHT;
+    const targetTop = activeDisplayIndex * TRACK_ROW_HEIGHT;
     window.requestAnimationFrame(() => {
       animateScrollTop(container, targetTop, {
         minDurationMs: 360,
@@ -304,7 +326,7 @@ export default function QueuePageClient() {
         pxPerMs: 2.0,
       });
     });
-  }, [activeQueueTrackIndex]);
+  }, [activeDisplayIndex]);
 
   function handleDragStart(queueId: string, event: DragEvent<HTMLLIElement>) {
     setDraggingQueueId(queueId);
@@ -393,7 +415,8 @@ export default function QueuePageClient() {
           >
             {queue.items.map((item, index) => {
               const isStarting = playback.startingQueueId === item.queueId;
-              const isCurrent = index === activeQueueTrackIndex;
+              const isCurrent =
+                item.queueId === resolvedActiveQueueId || index === activeDisplayIndex;
               const trackStatus: PlaybackFocusStatus = isCurrent ? activeTrackStatus : "idle";
               const isPaused = trackStatus === "paused";
               const isLoading = trackStatus === "loading";

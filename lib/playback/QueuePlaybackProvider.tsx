@@ -30,6 +30,47 @@ type QueuePlaybackContextValue = {
 };
 
 const QueuePlaybackContext = createContext<QueuePlaybackContextValue | null>(null);
+const SPOTIFY_TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
+const QUEUE_PENDING_STALE_MS = 8_000;
+
+function normalizeTrackId(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (SPOTIFY_TRACK_ID_REGEX.test(raw)) return raw;
+  if (raw.startsWith("spotify:track:")) {
+    const segment = raw.split(":").pop() ?? "";
+    const id = segment.split("?")[0]?.trim() ?? "";
+    return SPOTIFY_TRACK_ID_REGEX.test(id) ? id : null;
+  }
+  const embedded = raw.match(/[A-Za-z0-9]{22}/);
+  return embedded?.[0] ?? null;
+}
+
+function collectQueueItemTrackIds(item: { trackId?: string | null; uri?: string | null }) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: string | null | undefined) => {
+    const normalized = normalizeTrackId(value);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  };
+  push(item.trackId);
+  push(item.uri);
+  return out;
+}
+
+function findQueueIndexByTrackIds(
+  items: Array<{ trackId?: string | null; uri?: string | null }>,
+  activeIds: Set<string>
+) {
+  if (!items.length || !activeIds.size) return -1;
+  for (let index = 0; index < items.length; index += 1) {
+    const matches = collectQueueItemTrackIds(items[index]);
+    if (matches.some((candidate) => activeIds.has(candidate))) return index;
+  }
+  return -1;
+}
 
 function mapPlaybackError(error: unknown) {
   const candidate = error as Partial<PlaybackApiError>;
@@ -63,6 +104,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
   const [activeQueueId, setActiveQueueId] = useState<string | null>(null);
   const [startingQueueId, setStartingQueueId] = useState<string | null>(null);
   const pendingQueueIdRef = useRef<string | null>(null);
+  const pendingQueueStartedAtRef = useRef(0);
 
   useEffect(() => {
     queueRef.current = queue;
@@ -108,6 +150,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     setActiveQueueId(null);
     setStartingQueueId(null);
     pendingQueueIdRef.current = null;
+    pendingQueueStartedAtRef.current = 0;
 
     const fallback = snapshot.fallbackContext;
     if (!fallback?.contextUri || !api) {
@@ -136,6 +179,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       const offsetIndex = Math.max(0, Math.min(targetIndex, uris.length - 1));
       const targetUri = uris[offsetIndex] ?? item.uri;
       pendingQueueIdRef.current = item.queueId;
+      pendingQueueStartedAtRef.current = Date.now();
       setStartingQueueId(item.queueId);
       setActiveQueueId(item.queueId);
       snapshot.setMode("queue");
@@ -160,11 +204,13 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
           setStartingQueueId(null);
           setActiveQueueId(null);
           pendingQueueIdRef.current = null;
+          pendingQueueStartedAtRef.current = 0;
           return;
         }
         await playQueueAtIndex(snapshot, targetIndex, true);
       }).catch((err) => {
         pendingQueueIdRef.current = null;
+        pendingQueueStartedAtRef.current = 0;
         setStartingQueueId(null);
         setActiveQueueId((prev) => (prev === queueId ? null : prev));
         setError(mapPlaybackError(err));
@@ -174,7 +220,17 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
   );
 
   const playNextFromQueue = useCallback(async () => {
-    if (startingQueueId || pendingQueueIdRef.current) return;
+    if (
+      (startingQueueId || pendingQueueIdRef.current) &&
+      Date.now() - pendingQueueStartedAtRef.current < QUEUE_PENDING_STALE_MS
+    ) {
+      return;
+    }
+    if (Date.now() - pendingQueueStartedAtRef.current >= QUEUE_PENDING_STALE_MS) {
+      pendingQueueIdRef.current = null;
+      pendingQueueStartedAtRef.current = 0;
+      setStartingQueueId(null);
+    }
     await runCommand(async () => {
       const snapshot = queueRef.current;
       if (!snapshot.items.length) {
@@ -184,15 +240,13 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       const currentIndexByQueueId = snapshot.currentQueueId
         ? snapshot.items.findIndex((entry) => entry.queueId === snapshot.currentQueueId)
         : -1;
-      const currentIndexByTrackId = currentTrackId
-        ? snapshot.items.findIndex((entry) => entry.trackId === currentTrackId)
-        : -1;
-      const matchTrackIds = new Set(
-        Array.isArray(playbackState.matchTrackIds) ? playbackState.matchTrackIds : []
-      );
-      const currentIndexByMatchIds = matchTrackIds.size
-        ? snapshot.items.findIndex((entry) => matchTrackIds.has(entry.trackId))
-        : -1;
+      const activeTrackIds = new Set<string>();
+      for (const value of [currentTrackId, ...(playbackState.matchTrackIds ?? [])]) {
+        const normalized = normalizeTrackId(value);
+        if (normalized) activeTrackIds.add(normalized);
+      }
+      const currentIndexByTrackId = findQueueIndexByTrackIds(snapshot.items, activeTrackIds);
+      const currentIndexByMatchIds = currentIndexByTrackId;
       const currentIndex =
         currentIndexByQueueId >= 0
           ? currentIndexByQueueId
@@ -208,6 +262,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       await playQueueAtIndex(snapshot, nextIndex);
     }).catch((err) => {
       pendingQueueIdRef.current = null;
+      pendingQueueStartedAtRef.current = 0;
       setStartingQueueId(null);
       setError(mapPlaybackError(err));
     });
@@ -221,22 +276,30 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
   ]);
 
   const playPreviousFromQueue = useCallback(async () => {
-    if (startingQueueId || pendingQueueIdRef.current) return;
+    if (
+      (startingQueueId || pendingQueueIdRef.current) &&
+      Date.now() - pendingQueueStartedAtRef.current < QUEUE_PENDING_STALE_MS
+    ) {
+      return;
+    }
+    if (Date.now() - pendingQueueStartedAtRef.current >= QUEUE_PENDING_STALE_MS) {
+      pendingQueueIdRef.current = null;
+      pendingQueueStartedAtRef.current = 0;
+      setStartingQueueId(null);
+    }
     await runCommand(async () => {
       const snapshot = queueRef.current;
       if (!snapshot.items.length) return;
       const currentIndexByQueueId = snapshot.currentQueueId
         ? snapshot.items.findIndex((entry) => entry.queueId === snapshot.currentQueueId)
         : -1;
-      const currentIndexByTrackId = currentTrackId
-        ? snapshot.items.findIndex((entry) => entry.trackId === currentTrackId)
-        : -1;
-      const matchTrackIds = new Set(
-        Array.isArray(playbackState.matchTrackIds) ? playbackState.matchTrackIds : []
-      );
-      const currentIndexByMatchIds = matchTrackIds.size
-        ? snapshot.items.findIndex((entry) => matchTrackIds.has(entry.trackId))
-        : -1;
+      const activeTrackIds = new Set<string>();
+      for (const value of [currentTrackId, ...(playbackState.matchTrackIds ?? [])]) {
+        const normalized = normalizeTrackId(value);
+        if (normalized) activeTrackIds.add(normalized);
+      }
+      const currentIndexByTrackId = findQueueIndexByTrackIds(snapshot.items, activeTrackIds);
+      const currentIndexByMatchIds = currentIndexByTrackId;
       const currentIndex =
         currentIndexByQueueId >= 0
           ? currentIndexByQueueId
@@ -249,6 +312,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       await playQueueAtIndex(snapshot, previousIndex);
     }).catch((err) => {
       pendingQueueIdRef.current = null;
+      pendingQueueStartedAtRef.current = 0;
       setStartingQueueId(null);
       setError(mapPlaybackError(err));
     });
@@ -259,6 +323,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       setActiveQueueId(null);
       setStartingQueueId(null);
       pendingQueueIdRef.current = null;
+      pendingQueueStartedAtRef.current = 0;
       return;
     }
 
@@ -267,18 +332,36 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       return;
     }
 
+    const pendingTooOld =
+      pendingQueueStartedAtRef.current > 0 &&
+      Date.now() - pendingQueueStartedAtRef.current >= QUEUE_PENDING_STALE_MS;
+    if (pendingTooOld) {
+      pendingQueueIdRef.current = null;
+      pendingQueueStartedAtRef.current = 0;
+      if (startingQueueId) {
+        setStartingQueueId(null);
+      }
+    }
     const preferredQueueId = pendingQueueIdRef.current ?? queue.currentQueueId ?? null;
     const preferredItem = preferredQueueId
       ? queue.items.find((item) => item.queueId === preferredQueueId)
       : null;
+    const currentTrackNormalized = normalizeTrackId(currentTrackId);
+    const matchIds = new Set<string>();
+    if (currentTrackNormalized) matchIds.add(currentTrackNormalized);
+    for (const value of playbackState.matchTrackIds ?? []) {
+      const normalized = normalizeTrackId(value);
+      if (normalized) matchIds.add(normalized);
+    }
+    const preferredMatches = preferredItem ? collectQueueItemTrackIds(preferredItem) : [];
+    const preferredMatchesCurrent = preferredMatches.some((id) => matchIds.has(id));
+    const resolvedByMatchIndex = findQueueIndexByTrackIds(queue.items, matchIds);
     const resolvedQueueId =
-      preferredItem?.trackId === currentTrackId
-        ? preferredItem.queueId
-        : queue.items.find((item) => item.trackId === currentTrackId)?.queueId ??
-          (Array.isArray(playbackState.matchTrackIds) && playbackState.matchTrackIds.length
-            ? queue.items.find((item) => playbackState.matchTrackIds.includes(item.trackId))
-                ?.queueId ?? null
-            : null);
+      preferredMatchesCurrent
+        ? preferredItem?.queueId ?? null
+        : resolvedByMatchIndex >= 0
+        ? queue.items[resolvedByMatchIndex]?.queueId ?? null
+        : null;
     if (!resolvedQueueId) return;
 
     if (queue.currentQueueId !== resolvedQueueId) {
@@ -290,6 +373,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       setStartingQueueId(null);
     }
     pendingQueueIdRef.current = null;
+    pendingQueueStartedAtRef.current = 0;
   }, [currentTrackId, playbackState.matchTrackIds, queue, startingQueueId]);
 
   useEffect(() => {

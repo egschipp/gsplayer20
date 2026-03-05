@@ -88,6 +88,7 @@ const NO_TRACK_HANDOFF_HARD_CLEAR_MIN_COUNT = 6;
 const NO_TRACK_HANDOFF_HARD_CLEAR_GRACE_MS = 12_000;
 const QUEUE_ACTIVE_ERROR_VISIBILITY_DELAY_LOCAL_MS = 3_000;
 const QUEUE_ACTIVE_ERROR_VISIBILITY_DELAY_REMOTE_MS = 8_000;
+const QUEUE_ACTIVE_FALLBACK_MAX_AGE_MS = 4_500;
 
 type PlayerPlaylistOption = {
   id: string;
@@ -798,6 +799,7 @@ export default function SpotifyPlayer({
   const pendingTrackIdRef = useRef<string | null>(null);
   const currentTrackIdRef = useRef<string | null>(null);
   const lastQueueActiveTrackIdRef = useRef<string | null>(null);
+  const lastQueueActiveTrackSeenAtRef = useRef(0);
   const lastQueueUiStatusRef = useRef<PlaybackFocusStatus>("idle");
   const lastQueueFocusIdRef = useRef<string | null>(null);
   const hasConfirmedLivePlaybackRef = useRef(false);
@@ -1625,6 +1627,12 @@ export default function SpotifyPlayer({
   const queueDisplayItems = useMemo(() => {
     if (!queueItems.length) return [];
     const fallbackActiveId = lastQueueActiveTrackIdRef.current;
+    const fallbackFresh =
+      Date.now() - lastQueueActiveTrackSeenAtRef.current <=
+      QUEUE_ACTIVE_FALLBACK_MAX_AGE_MS;
+    const hasKnownActiveTrack = activeTrackIdSet.size > 0;
+    const allowHistoricalFallback =
+      !hasKnownActiveTrack || activeQueueTrackTransientGap;
     const indexed = queueItems.map((item, index) => ({
       ...item,
       _index: index,
@@ -1635,12 +1643,17 @@ export default function SpotifyPlayer({
     }));
 
     let activeIndex = findBestQueueMatchIndex(indexed, activeTrackIdSet);
-    if (activeIndex < 0 && fallbackActiveId) {
+    if (
+      activeIndex < 0 &&
+      fallbackActiveId &&
+      fallbackFresh &&
+      allowHistoricalFallback
+    ) {
       activeIndex = indexed.findIndex(
         (item) => Boolean(item._normalizedId) && item._normalizedId === fallbackActiveId
       );
     }
-    if (activeIndex < 0) {
+    if (activeIndex < 0 && allowHistoricalFallback) {
       activeIndex = indexed.findIndex((item) => item.isCurrent);
     }
 
@@ -1648,7 +1661,11 @@ export default function SpotifyPlayer({
       const activeNormalizedId = indexed[activeIndex]?._normalizedId;
       if (activeNormalizedId) {
         lastQueueActiveTrackIdRef.current = activeNormalizedId;
+        lastQueueActiveTrackSeenAtRef.current = Date.now();
       }
+    } else if (hasKnownActiveTrack && !activeQueueTrackTransientGap) {
+      lastQueueActiveTrackIdRef.current = null;
+      lastQueueActiveTrackSeenAtRef.current = 0;
     }
 
     const marked = indexed.map((item, index) => ({
@@ -1656,7 +1673,7 @@ export default function SpotifyPlayer({
       isCurrent: activeIndex >= 0 && index === activeIndex,
     }));
     return marked;
-  }, [activeTrackIdSet, queueItems]);
+  }, [activeQueueTrackTransientGap, activeTrackIdSet, queueItems]);
   const activeQueueDisplayIndex = useMemo(
     () => queueDisplayItems.findIndex((item) => item.isCurrent),
     [queueDisplayItems]

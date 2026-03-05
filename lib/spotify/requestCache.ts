@@ -5,6 +5,7 @@ import { incCounter, observeHistogram } from "@/lib/observability/metrics";
 type CacheEntry<T> = {
   value: T;
   expiresAt: number;
+  staleUntil: number;
 };
 
 type InflightEntry<T> = {
@@ -20,6 +21,9 @@ const CLEANUP_INTERVAL_MS = 10_000;
 const WAIT_POLL_MS = 50;
 const CROSS_INSTANCE_WAIT_MAX_MS = 2_500;
 const USER_CACHE_VERSION_TTL_MS = 5_000;
+const DEFAULT_STALE_RETENTION_MS = Number(
+  process.env.SPOTIFY_CACHE_STALE_IF_ERROR_MS || "30000"
+);
 
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -47,7 +51,7 @@ function cleanup(now = Date.now()) {
   lastCleanupAt = now;
 
   for (const [key, entry] of cache.entries()) {
-    if (entry.expiresAt <= now) {
+    if (entry.staleUntil <= now) {
       cache.delete(key);
     }
   }
@@ -70,16 +74,47 @@ export function getCachedValue<T>(key: string, now = Date.now()): T | null {
   const entry = cache.get(key);
   if (!entry) return null;
   if (entry.expiresAt <= now) {
-    cache.delete(key);
     return null;
   }
   return entry.value as T;
 }
 
-export function setCachedValue<T>(key: string, value: T, ttlMs: number, now = Date.now()): void {
+export function getCachedStaleValue<T>(
+  key: string,
+  now = Date.now()
+): { value: T; staleByMs: number } | null {
+  cleanup(now);
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt > now) return null;
+  if (entry.staleUntil <= now) {
+    cache.delete(key);
+    return null;
+  }
+  return {
+    value: entry.value as T,
+    staleByMs: Math.max(0, now - entry.expiresAt),
+  };
+}
+
+export function setCachedValue<T>(
+  key: string,
+  value: T,
+  ttlMs: number,
+  now = Date.now(),
+  options?: {
+    staleTtlMs?: number;
+  }
+): void {
   cleanup(now);
   const normalizedTtl = Math.max(1, Math.floor(ttlMs));
-  cache.set(key, { value, expiresAt: now + normalizedTtl });
+  const staleTtlMsRaw =
+    typeof options?.staleTtlMs === "number"
+      ? Math.max(0, Math.floor(options.staleTtlMs))
+      : Math.max(0, Math.floor(DEFAULT_STALE_RETENTION_MS));
+  const expiresAt = now + normalizedTtl;
+  const staleUntil = expiresAt + staleTtlMsRaw;
+  cache.set(key, { value, expiresAt, staleUntil });
 }
 
 function getLocalUserCacheVersion(userKey: string, now = Date.now()): number | null {
@@ -97,9 +132,11 @@ function setLocalUserCacheVersion(
   version: number,
   ttlMs = USER_CACHE_VERSION_TTL_MS
 ): void {
+  const expiresAt = Date.now() + Math.max(1_000, Math.floor(ttlMs));
   userCacheVersion.set(userKey, {
     value: Math.max(0, Math.floor(version)),
-    expiresAt: Date.now() + Math.max(1_000, Math.floor(ttlMs)),
+    expiresAt,
+    staleUntil: expiresAt,
   });
 }
 

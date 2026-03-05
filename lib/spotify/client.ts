@@ -14,7 +14,7 @@ import {
   type SpotifyRequestPriority,
 } from "@/lib/spotify/requestPriority";
 
-const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000");
+const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_FETCH_TIMEOUT_MS || "8000");
 
 function mapToFetchError(error: unknown, fallbackCorrelationId: string): SpotifyFetchError {
   if (error instanceof SpotifyApiError) {

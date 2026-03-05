@@ -92,11 +92,14 @@ export async function GET() {
   let api4xx = 0;
   let api5xx = 0;
   const errorBreakdownMap = new Map<string, number>();
+  const errorPathBreakdownMap = new Map<string, number>();
   let count429 = 0;
 
   for (const row of requestCounters) {
     const statusClass = String(row.labels.status_class || "").toLowerCase();
     const endpoint = String(row.labels.endpoint || "unknown").trim() || "unknown";
+    const endpointPath =
+      String(row.labels.endpoint_path || endpoint).trim() || endpoint;
     const statusCode = String(row.labels.status_code || "").trim();
     const isExpectedPlayer404 =
       statusCode === "404" &&
@@ -113,11 +116,19 @@ export async function GET() {
     if (statusClass === "4xx") {
       api4xx += row.value;
       errorBreakdownMap.set(endpoint, (errorBreakdownMap.get(endpoint) || 0) + row.value);
+      errorPathBreakdownMap.set(
+        endpointPath,
+        (errorPathBreakdownMap.get(endpointPath) || 0) + row.value
+      );
       continue;
     }
     if (statusClass === "5xx") {
       api5xx += row.value;
       errorBreakdownMap.set(endpoint, (errorBreakdownMap.get(endpoint) || 0) + row.value);
+      errorPathBreakdownMap.set(
+        endpointPath,
+        (errorPathBreakdownMap.get(endpointPath) || 0) + row.value
+      );
     }
   }
   const restrictionViolatedCount = counterTotalWindow(
@@ -210,6 +221,26 @@ export async function GET() {
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 8);
+  const errorPathBreakdown = Array.from(errorPathBreakdownMap.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 8);
+  const staleFallbackCount = counterTotalWindow(
+    "spotify_cache_stale_served_total",
+    {},
+    metricsWindowMs,
+    now
+  );
+  const staleFallbackReasons = topCounterByLabelWindow(
+    "spotify_cache_stale_served_total",
+    "reason",
+    6,
+    metricsWindowMs,
+    now
+  ).map((row) => ({
+    reason: row.label,
+    count: row.value,
+  }));
 
   return jsonNoStore({
     generatedAt: now,
@@ -257,7 +288,10 @@ export async function GET() {
       restrictionViolatedCount,
       latencyMs: apiLatency,
       errorBreakdown,
+      errorPathBreakdown,
       upstream5xx: api5xx,
+      staleFallbackCount,
+      staleFallbackReasons,
     },
     rateLimits: {
       count429: count429 || 0,
@@ -296,6 +330,16 @@ export async function GET() {
           ),
         })
       ),
+      topEndpointPaths: topCounterByLabelWindow(
+        "spotify_api_requests_total",
+        "endpoint_path",
+        8,
+        metricsWindowMs,
+        now
+      ).map((row) => ({
+        endpointPath: row.label,
+        rpm: Number((row.value / Math.max(1, metricsWindowMs / 60000)).toFixed(1)),
+      })),
       activeUsers: null,
     },
     callbackHealth: {

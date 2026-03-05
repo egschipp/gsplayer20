@@ -5710,7 +5710,11 @@ export default function SpotifyPlayer({
         }
         if (enablePlaybackStream && streamFresh && playbackFresh) {
           const isPlaying = !playerStateRef.current?.paused;
-          scheduleNext(isPlaying, isPlaying ? 8500 : 13000);
+          if (remoteDeviceActive) {
+            scheduleNext(isPlaying, isPlaying ? 2200 : 3200);
+          } else {
+            scheduleNext(isPlaying, isPlaying ? 8500 : 13000);
+          }
           return;
         }
         const hidden =
@@ -5727,7 +5731,11 @@ export default function SpotifyPlayer({
           scheduleNext(isPlaying, isPlaying ? 5500 : 9500);
           return;
         }
-        const minRequestGapMs = remoteDeviceActive ? (streamFresh ? 4200 : 2600) : 1200;
+        const minRequestGapMs = remoteDeviceActive
+          ? streamFresh
+            ? 1400
+            : 1000
+          : 1200;
         if (now - lastRequestAtRef.current < minRequestGapMs) {
           scheduleNext();
           return;
@@ -5800,7 +5808,7 @@ export default function SpotifyPlayer({
         effectiveType === "3g";
       let baseDelay = isPlaying ? 3000 : 9000;
       if (remoteDeviceActive) {
-        baseDelay = streamFresh ? (isPlaying ? 4800 : 7600) : isPlaying ? 2600 : 4400;
+        baseDelay = streamFresh ? (isPlaying ? 2200 : 3200) : isPlaying ? 1200 : 1800;
       } else if (enablePlaybackStream && streamFresh) {
         baseDelay = isPlaying ? 6500 : 11000;
       }

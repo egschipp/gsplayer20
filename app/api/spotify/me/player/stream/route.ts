@@ -8,6 +8,15 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 const STREAM_MAX_PER_USER = 3;
 const STREAM_COUNTER_TTL_MS = 130_000;
+const STREAM_POLL_PLAYING_MS = Math.max(
+  700,
+  Number(process.env.SPOTIFY_PLAYER_STREAM_PLAYING_POLL_MS || "1400")
+);
+const STREAM_POLL_IDLE_MS = Math.max(
+  STREAM_POLL_PLAYING_MS,
+  Number(process.env.SPOTIFY_PLAYER_STREAM_IDLE_POLL_MS || "2200")
+);
+const STREAM_POLL_RATE_LIMIT_FALLBACK_MS = 2_500;
 
 type SpotifyPlayerResponse = {
   timestamp?: number;
@@ -101,9 +110,11 @@ export async function GET(req: Request) {
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      let pollTimer: ReturnType<typeof setInterval> | null = null;
+      let pollTimer: ReturnType<typeof setTimeout> | null = null;
       let pingTimer: ReturnType<typeof setInterval> | null = null;
       let hardTimeout: ReturnType<typeof setTimeout> | null = null;
+      let pollInFlight = false;
+      let lastIsPlaying = false;
       const writeEvent = (event: string, payload: Record<string, unknown>) => {
         controller.enqueue(
           encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`)
@@ -118,14 +129,14 @@ export async function GET(req: Request) {
         if (closed) return;
         closed = true;
         void ephemeralDecr(streamCounterKey);
-        if (pollTimer) clearInterval(pollTimer);
+        if (pollTimer) clearTimeout(pollTimer);
         if (pingTimer) clearInterval(pingTimer);
         if (hardTimeout) clearTimeout(hardTimeout);
         controller.close();
       };
 
-      const poll = async () => {
-        if (closed) return;
+      const poll = async (): Promise<number | null> => {
+        if (closed) return null;
         try {
           const data = await spotifyFetch<SpotifyPlayerResponse | undefined>({
             url: "https://api.spotify.com/v1/me/player",
@@ -135,7 +146,9 @@ export async function GET(req: Request) {
             cacheTtlMs: 0,
             dedupeWindowMs: 200,
           });
+          lastIsPlaying = Boolean(data?.is_playing);
           writeEvent("snapshot", normalizeSnapshot(data ?? null, userId));
+          return null;
         } catch (error) {
           if (error instanceof SpotifyFetchError) {
             writeEvent("error", {
@@ -155,16 +168,53 @@ export async function GET(req: Request) {
             if (error.status === 401 || error.status === 403) {
               close();
             }
-            return;
+            if (error.status === 429) {
+              return Math.max(
+                STREAM_POLL_RATE_LIMIT_FALLBACK_MS,
+                Math.min(15_000, Math.floor(error.retryAfterMs ?? 0))
+              );
+            }
+            return null;
           }
           writeEvent("error", { code: "STREAM_FAILED", at: Date.now() });
+          return null;
         }
       };
 
-      writeEvent("ready", { ok: true, at: Date.now() });
-      void poll();
+      const schedulePoll = (delayMs?: number) => {
+        if (closed) return;
+        const resolvedDelay =
+          typeof delayMs === "number" && Number.isFinite(delayMs)
+            ? Math.max(200, Math.floor(delayMs))
+            : lastIsPlaying
+            ? STREAM_POLL_PLAYING_MS
+            : STREAM_POLL_IDLE_MS;
+        if (pollTimer) clearTimeout(pollTimer);
+        pollTimer = setTimeout(async () => {
+          if (closed) return;
+          if (pollInFlight) {
+            schedulePoll(250);
+            return;
+          }
+          pollInFlight = true;
+          try {
+            const nextDelay = await poll();
+            if (!closed) {
+              schedulePoll(
+                typeof nextDelay === "number" && Number.isFinite(nextDelay)
+                  ? nextDelay
+                  : undefined
+              );
+            }
+          } finally {
+            pollInFlight = false;
+          }
+        }, resolvedDelay);
+      };
 
-      pollTimer = setInterval(poll, 3000);
+      writeEvent("ready", { ok: true, at: Date.now() });
+      schedulePoll(0);
+
       pingTimer = setInterval(writePing, 15000);
       hardTimeout = setTimeout(close, 120000);
 

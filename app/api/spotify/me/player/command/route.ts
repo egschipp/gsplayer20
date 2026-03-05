@@ -46,6 +46,33 @@ function parseSearch(input: unknown) {
   return trimmed.slice(0, 512);
 }
 
+function hasExplicitCommandDeviceTarget(
+  endpoint: string,
+  search: string,
+  payload: unknown
+): boolean {
+  if (endpoint === "") {
+    const body = payload as { device_ids?: unknown } | null | undefined;
+    if (
+      Array.isArray(body?.device_ids) &&
+      body.device_ids.some(
+        (value) => typeof value === "string" && value.trim().length > 0
+      )
+    ) {
+      return true;
+    }
+  }
+
+  if (!search) return false;
+  try {
+    const query = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+    const deviceId = query.get("device_id");
+    return Boolean(deviceId && deviceId.trim());
+  } catch {
+    return false;
+  }
+}
+
 function mapSpotifyError(error: unknown) {
   if (error instanceof SpotifyFetchError) {
     if (error.status === 401) return jsonNoStore({ error: "UNAUTHENTICATED" }, 401);
@@ -176,7 +203,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (isMutatingCommand && expectedDeviceId) {
+  const hasExplicitDeviceTarget = hasExplicitCommandDeviceTarget(
+    endpoint,
+    search,
+    payload
+  );
+
+  if (isMutatingCommand && expectedDeviceId && !hasExplicitDeviceTarget) {
     try {
       const current = await spotifyFetch<{ device?: { id?: string | null } | null } | undefined>({
         url: "https://api.spotify.com/v1/me/player",

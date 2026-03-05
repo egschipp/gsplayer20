@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
@@ -11,7 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
-import SpotifyPlayer, { type PlayerApi } from "../SpotifyPlayer";
+import type { PlayerApi } from "../SpotifyPlayer";
 import { QueueProvider } from "@/lib/queue/QueueProvider";
 import { QueuePlaybackProvider } from "@/lib/playback/QueuePlaybackProvider";
 import { useViewport } from "@/lib/responsive/useViewport";
@@ -35,6 +36,11 @@ import {
   derivePlaybackViewModel,
   type PlaybackViewModel,
 } from "@/lib/playback/viewModel";
+
+const SpotifyPlayer = dynamic(() => import("../SpotifyPlayer"), {
+  ssr: false,
+  loading: () => <div className="text-subtle">Player laden...</div>,
+});
 
 type PlayerController = {
   playbackStatus: PlayerPlaybackStatus;
@@ -448,6 +454,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   );
 
   useEffect(() => {
+    if (showPlayer) return;
+    setApi(null);
+    setControllerHandlers(null);
+  }, [setControllerHandlers, showPlayer]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
 
     const root = document.documentElement;
@@ -498,37 +510,38 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     <PlayerContext.Provider value={value}>
       <QueueProvider>
         <QueuePlaybackProvider>
-          <div
-            ref={playerShellRef}
-            className="shell player-shell-wrap"
-            data-visible={showPlayer ? "true" : "false"}
-            aria-hidden={!showPlayer}
-          >
-            <div className="library-sticky player-shell">
-              <Image
-                src="/georgies-spotify.png"
-                alt="Georgies Spotify logo"
-                width={240}
-                height={80}
-                className="library-logo"
-                priority
-              />
-              <SpotifyPlayer
-                onReady={setApi}
-                onPlaybackFocusChange={setPlaybackFocus}
-                controller={controller}
-                onControllerHandlersChange={setControllerHandlers}
-                onControllerRuntimeChange={setControllerRuntimeFromPlayer}
-              />
-              {showLibraryDock ? (
-                <div
-                  id="player-library-dock-slot"
-                  className="player-library-dock-slot"
-                  aria-label="MyMusic selectie"
+          {showPlayer ? (
+            <div
+              ref={playerShellRef}
+              className="shell player-shell-wrap"
+              data-visible="true"
+            >
+              <div className="library-sticky player-shell">
+                <Image
+                  src="/georgies-spotify.png"
+                  alt="Georgies Spotify logo"
+                  width={240}
+                  height={80}
+                  className="library-logo"
+                  priority
                 />
-              ) : null}
+                <SpotifyPlayer
+                  onReady={setApi}
+                  onPlaybackFocusChange={setPlaybackFocus}
+                  controller={controller}
+                  onControllerHandlersChange={setControllerHandlers}
+                  onControllerRuntimeChange={setControllerRuntimeFromPlayer}
+                />
+                {showLibraryDock ? (
+                  <div
+                    id="player-library-dock-slot"
+                    className="player-library-dock-slot"
+                    aria-label="MyMusic selectie"
+                  />
+                ) : null}
+              </div>
             </div>
-          </div>
+          ) : null}
           {children}
         </QueuePlaybackProvider>
       </QueueProvider>

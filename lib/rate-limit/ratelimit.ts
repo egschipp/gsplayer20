@@ -1,4 +1,4 @@
-import { Redis } from "@upstash/redis";
+import { getRedisClient } from "@/src/shared/cache/redis";
 
 type Bucket = {
   count: number;
@@ -8,16 +8,8 @@ type Bucket = {
 const buckets = new Map<string, Bucket>();
 let lastCleanupAt = 0;
 
-const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
-let redis: Redis | null = null;
-
 function getRedis() {
-  if (!UPSTASH_URL || !UPSTASH_TOKEN) return null;
-  if (!redis) {
-    redis = new Redis({ url: UPSTASH_URL, token: UPSTASH_TOKEN });
-  }
-  return redis;
+  return getRedisClient();
 }
 
 function cleanupExpired(now: number) {

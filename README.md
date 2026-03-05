@@ -46,3 +46,35 @@ Routes:
 - `/api/spotify/sync` (POST: tracks_initial | tracks_incremental | playlists)
 - `/api/spotify/sync-status`
 - `/api/spotify/worker-health`
+
+## Architecture (Feature Slices)
+
+Nieuwe server-side features staan onder `src/features/<feature>` met vaste lagen:
+
+- `actions`: boundary orchestration (input parsing, use-case calls, output DTOs)
+- `domain`: use-cases en policies
+- `data`: repository/adapters richting bestaande infrastructuur
+- `routes`: Next route adapters die contracten behouden
+- `tests`: unit/integration tests zonder Next runtime
+
+Shared infrastructuur staat onder `src/shared`:
+
+- `cache`: centrale Redis-client
+- `config`: env-validatie helpers
+- `errors`: typed error classes
+
+## How To Add A Feature
+
+1. Maak `src/features/<feature>/{actions,domain,data,types,tests}` aan.
+2. Definieer input/output types in `types`.
+3. Schrijf pure businesslogica in `domain` (zonder Next of fetch).
+4. Implementeer adapters in `data` voor DB/cache/externe services.
+5. Orkestreer boundary-validatie in `actions`.
+6. Maak route adapter in `routes` en exporteer die in `app/api/.../route.ts` als compat-wrapper.
+7. Voeg minimaal een unit test voor domain toe en, waar relevant, een integration test voor action-level.
+
+## Tests
+
+- `npm run test:unit`
+- `npm run test:integration`
+- `npm test`

@@ -10,7 +10,12 @@
     "worker": "node worker.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"No tests yet\""
+    "test:compile": "rm -rf .test-dist && tsc -p tsconfig.test.json",
+    "test:run:unit": "node --test .test-dist/src/features/auth-pin/tests/pin-login.use-case.test.js .test-dist/src/features/system/tests/health.use-case.test.js",
+    "test:run:integration": "node --test .test-dist/src/features/auth-pin/tests/pin-login.action.integration.test.js",
+    "test:unit": "npm run test:compile && npm run test:run:unit",
+    "test:integration": "npm run test:compile && npm run test:run:integration",
+    "test": "npm run test:compile && npm run test:run:unit && npm run test:run:integration"
   },
   "dependencies": {
     "@upstash/redis": "^1.34.4",

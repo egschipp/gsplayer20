@@ -1,4 +1,4 @@
-import { Redis } from "@upstash/redis";
+import { getRedisClient } from "@/src/shared/cache/redis";
 
 type LockState = {
   fails: number;
@@ -11,16 +11,8 @@ const BASE_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 60_000;
 const RESET_AFTER_MS = 10 * 60_000;
 
-const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
-let redis: Redis | null = null;
-
 function getRedis() {
-  if (!UPSTASH_URL || !UPSTASH_TOKEN) return null;
-  if (!redis) {
-    redis = new Redis({ url: UPSTASH_URL, token: UPSTASH_TOKEN });
-  }
-  return redis;
+  return getRedisClient();
 }
 
 function redisKey(key: string) {

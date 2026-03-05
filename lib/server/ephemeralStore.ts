@@ -1,8 +1,4 @@
-import { Redis } from "@upstash/redis";
-
-const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
-let redis: Redis | null = null;
+import { getRedisClient } from "@/src/shared/cache/redis";
 
 type MemoryEntry = {
   value: unknown;
@@ -13,9 +9,7 @@ const memoryStore = new Map<string, MemoryEntry>();
 let lastMemoryCleanupAt = 0;
 
 function getRedis() {
-  if (!UPSTASH_URL || !UPSTASH_TOKEN) return null;
-  if (!redis) redis = new Redis({ url: UPSTASH_URL, token: UPSTASH_TOKEN });
-  return redis;
+  return getRedisClient();
 }
 
 function cleanupMemory(now = Date.now()) {
@@ -142,4 +136,3 @@ export async function ephemeralDecr(key: string): Promise<number> {
   memoryStore.set(key, { ...entry, value: next });
   return next;
 }
-

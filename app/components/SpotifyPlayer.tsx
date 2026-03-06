@@ -71,6 +71,8 @@ const REMOTE_TAKEOVER_CONFIRM_MS = 1200;
 const REMOTE_TAKEOVER_MIN_SAMPLES = 2;
 const PLAYBACK_RESTRICTION_COOLDOWN_MS = 4_000;
 const PLAYER_TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
+const LEADING_EMOJI_PATTERN =
+  /^[\s\u200B-\u200D\u200E\u200F\u2060\uFEFF]*(?:\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)/u;
 const PLAYER_LIKED_PLAYLIST_ID = "liked";
 const CONNECT_DOCK_PIN_KEY = "gs_connect_dock_pinned_v1";
 const PLAYBACK_READY_TIMEOUT_MS = 9_000;
@@ -393,6 +395,10 @@ function createCommandId() {
     // fallback below
   }
   return `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function startsWithEmoji(value: string | null | undefined) {
+  return LEADING_EMOJI_PATTERN.test(String(value ?? ""));
 }
 
 function normalizeTrackIdCollection(values: Array<string | null | undefined>) {
@@ -3724,6 +3730,13 @@ export default function SpotifyPlayer({
     });
   }, [selectedPlaylistIdsForTrack, trackPlaylistOptions]);
   const currentTrackInAnyPlaylist = selectedPlaylistIdsForTrack.length > 0;
+  const trackPlaylistAddTargetOptions = useMemo(
+    () =>
+      trackPlaylistOptions.filter(
+        (option) => option.type === "liked" || startsWithEmoji(option.name)
+      ),
+    [trackPlaylistOptions]
+  );
 
   const handleLikeCurrentTrack = useCallback(async () => {
     if (!currentTrackIdState) return;
@@ -6672,10 +6685,10 @@ export default function SpotifyPlayer({
                 </div>
                 {trackPlaylistLoading ? (
                   <div className="combo-empty">Playlists laden...</div>
-                ) : trackPlaylistOptions.length === 0 ? (
+                ) : trackPlaylistAddTargetOptions.length === 0 ? (
                   <div className="combo-empty">Geen playlist-doelen.</div>
                 ) : (
-                  trackPlaylistOptions.map((option) => {
+                  trackPlaylistAddTargetOptions.map((option) => {
                     const opKey = `${currentTrackIdState}:${option.id}`;
                     const busy = trackPlaylistSaving || trackPlaylistActionKey === opKey;
                     const checked = trackPlaylistSelectedIds.has(option.id);

@@ -10,6 +10,7 @@ import {
 } from "@/lib/observability/metrics";
 import { getRecentErrors } from "@/lib/observability/logger";
 import { getSpotifyRateLimitSnapshot } from "@/lib/observability/rateLimit";
+import { getRateLimitActivitySummary } from "@/lib/observability/rateLimitActivities";
 import { getAppAccessToken, getAppTokenStatus } from "@/lib/spotify/tokens";
 
 export const runtime = "nodejs";
@@ -159,6 +160,11 @@ export async function GET() {
     now
   );
   const rateLimitSnapshot = getSpotifyRateLimitSnapshot(now);
+  const rateLimitActivitySummary = getRateLimitActivitySummary(
+    metricsWindowMs,
+    8,
+    now
+  );
   const hasActiveBackoff = (rateLimitSnapshot.backoffRemainingMs ?? 0) > 0;
 
   const expiresInSec =
@@ -307,6 +313,12 @@ export async function GET() {
       lastRetryAfterMs: rateLimitSnapshot.lastRetryAfterMs,
       lastTriggeredAt: rateLimitSnapshot.lastTriggeredAt,
       retryAfterObservationsSec: rateLimitSnapshot.retryAfterObservationsSec,
+      activityLog: {
+        total: rateLimitActivitySummary.total,
+        topActivities: rateLimitActivitySummary.byActivity,
+        topEndpointPaths: rateLimitActivitySummary.byEndpointPath,
+        bySource: rateLimitActivitySummary.bySource,
+      },
     },
     traffic: {
       requestsPerMin:

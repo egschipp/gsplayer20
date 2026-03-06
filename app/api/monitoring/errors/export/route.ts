@@ -1,6 +1,7 @@
 import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
 import { counterEntries } from "@/lib/observability/metrics";
 import { getRecentErrors } from "@/lib/observability/logger";
+import { getRecentRateLimitActivities } from "@/lib/observability/rateLimitActivities";
 import {
   createCorrelationId,
   readCorrelationId,
@@ -75,6 +76,7 @@ export async function GET(req: Request) {
     id: `${entry.ts}-${index}`,
     ...entry,
   }));
+  const recentRateLimitActivities = getRecentRateLimitActivities(500, 3_600_000);
 
   return jsonNoStore(
     {
@@ -90,6 +92,10 @@ export async function GET(req: Request) {
       recentErrors: {
         total: recentErrors.length,
         items: recentErrors,
+      },
+      recentRateLimitActivities: {
+        total: recentRateLimitActivities.length,
+        items: recentRateLimitActivities,
       },
     },
     200,

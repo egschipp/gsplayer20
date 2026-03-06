@@ -1821,6 +1821,10 @@ details[open] > .details-summary::after {
   cursor: default;
 }
 
+.track-playlist-membership-menu .combo-item.player-playlist-jump {
+  cursor: pointer;
+}
+
 .text-subtle {
   color: var(--text-subtle);
   font-size: 0.75rem;

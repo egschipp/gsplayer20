@@ -44,6 +44,7 @@ export async function GET(req: Request) {
     const data = await spotifyFetch({
       url: `https://api.spotify.com/v1/me/top/${type}?time_range=${timeRange}&limit=${limit}&offset=${offset}`,
       userLevel: true,
+      activity: `me_top_${type}`,
     });
 
     return jsonNoStore(data);

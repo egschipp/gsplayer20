@@ -20,6 +20,7 @@ export async function GET(req: Request) {
     const data = await spotifyFetch({
       url: `https://api.spotify.com/v1/tracks/${trackId}`,
       userLevel: true,
+      activity: "tracks_meta_lookup",
       priority: "background",
       cacheTtlMs: 20_000,
       dedupeWindowMs: 2_000,

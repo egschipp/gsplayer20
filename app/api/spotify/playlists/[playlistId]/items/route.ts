@@ -489,6 +489,7 @@ export async function POST(
       method: "POST",
       body: { uris: [`spotify:track:${trackId}`] },
       userLevel: true,
+      activity: "playlist_items_add_track",
     });
     try {
       const db = getDb();
@@ -570,6 +571,7 @@ export async function DELETE(
       method: "DELETE",
       body: { tracks: [{ uri: `spotify:track:${trackId}` }] },
       userLevel: true,
+      activity: "playlist_items_remove_track",
     });
     try {
       const db = getDb();

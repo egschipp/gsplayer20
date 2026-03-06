@@ -1,7 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { getSession, useSession } from "next-auth/react";
 import {
   SPOTIFY_PLAYBACK_SCOPES,
@@ -624,6 +631,9 @@ export default function SpotifyPlayer({
   const [trackPlaylistLoading, setTrackPlaylistLoading] = useState(false);
   const [trackPlaylistSaving, setTrackPlaylistSaving] = useState(false);
   const [trackPlaylistActionKey, setTrackPlaylistActionKey] = useState<string | null>(null);
+  const [trackPlaylistPopoverStyle, setTrackPlaylistPopoverStyle] = useState<
+    CSSProperties | undefined
+  >(undefined);
   const [shuffleOn, setShuffleOn] = useState(false);
   const [shufflePending, setShufflePending] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
@@ -694,6 +704,7 @@ export default function SpotifyPlayer({
   >(null);
   const [liveTrackUiGraceVisible, setLiveTrackUiGraceVisible] = useState(false);
   const playerRef = useRef<any>(null);
+  const playerCardRef = useRef<HTMLDivElement | null>(null);
   const deviceIdRef = useRef<string | null>(null);
   const accessTokenRef = useRef<string | undefined>(accessToken);
   const accessTokenExpiresAtRef = useRef<number | null>(
@@ -1753,6 +1764,96 @@ export default function SpotifyPlayer({
     connectDockHovered ||
     connectSelectorOpen ||
     deviceMenuOpen;
+
+  const clampTrackPlaylistPopoverToPlayer = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const anchorEl = trackPlaylistMenu.rootRef.current;
+    const cardEl = playerCardRef.current;
+    if (!anchorEl || !cardEl) {
+      setTrackPlaylistPopoverStyle(undefined);
+      return;
+    }
+
+    const anchorRect = anchorEl.getBoundingClientRect();
+    const cardRect = cardEl.getBoundingClientRect();
+    const viewportWidth = Math.max(0, window.innerWidth || 0);
+    if (viewportWidth <= 0 || cardRect.width <= 0 || anchorRect.width <= 0) {
+      setTrackPlaylistPopoverStyle(undefined);
+      return;
+    }
+
+    const viewportGutter = 8;
+    const cardGutter = 10;
+    const cardMaxWidth = Math.max(180, Math.floor(cardRect.width - cardGutter * 2));
+    const viewportMaxWidth = Math.max(
+      180,
+      Math.floor(viewportWidth - viewportGutter * 2)
+    );
+    const resolvedWidth = Math.max(
+      220,
+      Math.min(560, cardMaxWidth, viewportMaxWidth)
+    );
+
+    const minLeft = Math.max(viewportGutter, cardRect.left + cardGutter);
+    const maxLeft = Math.min(
+      viewportWidth - viewportGutter - resolvedWidth,
+      cardRect.right - cardGutter - resolvedWidth
+    );
+    const wantedLeft = anchorRect.left;
+    const clampedLeft =
+      maxLeft >= minLeft
+        ? Math.min(Math.max(wantedLeft, minLeft), maxLeft)
+        : minLeft;
+    const relativeLeft = Math.round(clampedLeft - anchorRect.left);
+
+    setTrackPlaylistPopoverStyle({
+      left: `${relativeLeft}px`,
+      right: "auto",
+      width: `${Math.round(resolvedWidth)}px`,
+      maxWidth: `${Math.round(resolvedWidth)}px`,
+    });
+  }, [trackPlaylistMenu.rootRef]);
+
+  useEffect(() => {
+    if (!trackPlaylistMenuOpen && !trackPlaylistMembershipOpen) {
+      setTrackPlaylistPopoverStyle(undefined);
+      return;
+    }
+    if (typeof window === "undefined") return;
+
+    const recalc = () => {
+      clampTrackPlaylistPopoverToPlayer();
+    };
+
+    const rafId = window.requestAnimationFrame(recalc);
+    window.addEventListener("resize", recalc, { passive: true });
+    window.addEventListener("orientationchange", recalc);
+    window.addEventListener("scroll", recalc, { passive: true });
+    window.visualViewport?.addEventListener("resize", recalc, { passive: true });
+    window.visualViewport?.addEventListener("scroll", recalc, { passive: true });
+
+    const observer =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(recalc) : null;
+    if (observer && playerCardRef.current) observer.observe(playerCardRef.current);
+    if (observer && trackPlaylistMenu.rootRef.current) {
+      observer.observe(trackPlaylistMenu.rootRef.current);
+    }
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener("resize", recalc);
+      window.removeEventListener("orientationchange", recalc);
+      window.removeEventListener("scroll", recalc);
+      window.visualViewport?.removeEventListener("resize", recalc);
+      window.visualViewport?.removeEventListener("scroll", recalc);
+      observer?.disconnect();
+    };
+  }, [
+    clampTrackPlaylistPopoverToPlayer,
+    trackPlaylistMembershipOpen,
+    trackPlaylistMenuOpen,
+    trackPlaylistMenu.rootRef,
+  ]);
 
   useEffect(() => {
     playerStateRef.current = playerState;
@@ -3721,6 +3822,20 @@ export default function SpotifyPlayer({
     () => Array.from(trackPlaylistSelectedIds).filter((id) => Boolean(id)),
     [trackPlaylistSelectedIds]
   );
+  const selectedPlaylistsForTrack = useMemo(() => {
+    if (!selectedPlaylistIdsForTrack.length) return [] as Array<{ id: string; name: string }>;
+    const optionById = new Map(trackPlaylistOptions.map((option) => [option.id, option]));
+    return selectedPlaylistIdsForTrack.map((id) => {
+      if (id === PLAYER_LIKED_PLAYLIST_ID) {
+        return { id, name: "Liked Songs" };
+      }
+      const option = optionById.get(id);
+      return {
+        id,
+        name: option?.name ?? id,
+      };
+    });
+  }, [selectedPlaylistIdsForTrack, trackPlaylistOptions]);
   const selectedPlaylistNamesForTrack = useMemo(() => {
     if (!selectedPlaylistIdsForTrack.length) return [] as string[];
     const optionById = new Map(trackPlaylistOptions.map((option) => [option.id, option.name]));
@@ -6528,7 +6643,7 @@ export default function SpotifyPlayer({
   const playerAlbumText = showLiveTrackInPlayer ? playerState?.album ?? "" : "";
 
   return (
-    <div className="player-card">
+    <div className="player-card" ref={playerCardRef}>
       <div className="player-main">
         <div className="player-cover">
           {showLiveTrackInPlayer && playerState?.coverUrl ? (
@@ -6646,7 +6761,7 @@ export default function SpotifyPlayer({
               <div
                 className="combo-list track-playlist-menu track-playlist-membership-menu"
                 role="status"
-                style={{ right: 0, left: "auto", width: "min(520px, calc(100vw - 32px))" }}
+                style={trackPlaylistPopoverStyle}
               >
                 <div className="track-playlist-membership-summary">
                   {trackPlaylistLoading ? (
@@ -6658,10 +6773,29 @@ export default function SpotifyPlayer({
                   )}
                 </div>
                 {!trackPlaylistLoading && currentTrackInAnyPlaylist ? (
-                  selectedPlaylistNamesForTrack.map((name) => (
-                    <div key={name} className="combo-item">
-                      {name}
-                    </div>
+                  selectedPlaylistsForTrack.map((playlist) => (
+                    <button
+                      key={playlist.id}
+                      type="button"
+                      className="combo-item player-playlist-jump"
+                      onClick={() => {
+                        if (typeof window !== "undefined") {
+                          window.dispatchEvent(
+                            new CustomEvent("gs-player-open-playlist", {
+                              detail: {
+                                playlistId: playlist.id,
+                                source: "player_track_membership",
+                                at: Date.now(),
+                              },
+                            })
+                          );
+                        }
+                        setTrackPlaylistMembershipOpen(false);
+                        setTrackPlaylistMenuOpen(false);
+                      }}
+                    >
+                      {playlist.name}
+                    </button>
                   ))
                 ) : null}
               </div>
@@ -6670,7 +6804,7 @@ export default function SpotifyPlayer({
               <div
                 className="combo-list track-playlist-menu"
                 role="menu"
-                style={{ right: 0, left: "auto", width: "min(560px, calc(100vw - 32px))" }}
+                style={trackPlaylistPopoverStyle}
               >
                 <div className="track-playlist-membership-summary">
                   {trackPlaylistLoading ? (
@@ -6702,6 +6836,7 @@ export default function SpotifyPlayer({
                           alignItems: "center",
                           gap: 10,
                           justifyContent: "flex-start",
+                          minWidth: 0,
                         }}
                       >
                         <input
@@ -6722,7 +6857,17 @@ export default function SpotifyPlayer({
                           }}
                           onClick={(event) => event.stopPropagation()}
                         />
-                        <span style={{ whiteSpace: "nowrap" }}>{option.name}</span>
+                        <span
+                          style={{
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            minWidth: 0,
+                            display: "block",
+                          }}
+                        >
+                          {option.name}
+                        </span>
                       </label>
                     );
                   })

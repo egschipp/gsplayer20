@@ -60,6 +60,7 @@ export async function GET(req: NextRequest) {
     const data = await spotifyFetch<SpotifyPlayerResponse | undefined>({
       url: "https://api.spotify.com/v1/me/player",
       userLevel: true,
+      activity: raw ? "me_player_get_raw_state" : "me_player_get_state",
       correlationId,
       priority: "foreground",
       cacheTtlMs: 0,
@@ -262,6 +263,7 @@ export async function PUT(req: NextRequest) {
       const current = await spotifyFetch<{ device?: { id?: string | null } | null } | undefined>({
         url: "https://api.spotify.com/v1/me/player",
         userLevel: true,
+        activity: "me_player_transfer_conflict_check",
         correlationId,
         priority: "foreground",
         cacheTtlMs: 0,
@@ -311,6 +313,7 @@ export async function PUT(req: NextRequest) {
       method: "PUT",
       body: { device_ids: deviceIds, play },
       userLevel: true,
+      activity: "me_player_transfer",
       correlationId,
       priority: "foreground",
       bypassCache: true,

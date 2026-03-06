@@ -192,6 +192,9 @@ export async function POST(req: NextRequest) {
 
   const url = `https://api.spotify.com/v1/me/player${endpoint}${search}`;
   const payload = body?.payload;
+  const commandActivity = `me_player_command_${method.toLowerCase()}_${
+    endpoint || "root"
+  }`.replace(/[^a-zA-Z0-9_]+/g, "_");
 
   const isMutatingCommand = method !== "GET";
   if (isMutatingCommand && commandId) {
@@ -214,6 +217,7 @@ export async function POST(req: NextRequest) {
       const current = await spotifyFetch<{ device?: { id?: string | null } | null } | undefined>({
         url: "https://api.spotify.com/v1/me/player",
         userLevel: true,
+        activity: "me_player_command_device_conflict_check",
         correlationId,
         priority: "foreground",
         cacheTtlMs: 0,
@@ -254,6 +258,7 @@ export async function POST(req: NextRequest) {
       method,
       body: method === "GET" ? undefined : payload,
       userLevel: true,
+      activity: commandActivity,
       correlationId,
       priority: method === "GET" ? "foreground" : "foreground",
       cacheTtlMs: method === "GET" ? 0 : 0,

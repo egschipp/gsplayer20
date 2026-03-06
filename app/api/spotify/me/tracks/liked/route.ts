@@ -33,6 +33,7 @@ async function getLikedState(trackId: string) {
   const data = await spotifyFetch<boolean[]>({
     url: `https://api.spotify.com/v1/me/tracks/contains?ids=${encodeURIComponent(trackId)}`,
     userLevel: true,
+    activity: "liked_contains_check",
   });
   return Array.isArray(data) ? Boolean(data[0]) : false;
 }
@@ -106,6 +107,7 @@ export async function POST(req: Request) {
       url: `https://api.spotify.com/v1/me/tracks?ids=${encodeURIComponent(trackId)}`,
       method: "PUT",
       userLevel: true,
+      activity: "liked_add_track",
     });
     try {
       const track = await spotifyFetch<{
@@ -121,6 +123,7 @@ export async function POST(req: Request) {
       }>({
         url: `https://api.spotify.com/v1/tracks/${encodeURIComponent(trackId)}`,
         userLevel: true,
+        activity: "liked_add_track_meta",
         priority: "default",
         cacheTtlMs: 20_000,
         dedupeWindowMs: 2_000,
@@ -187,6 +190,7 @@ export async function DELETE(req: Request) {
       url: `https://api.spotify.com/v1/me/tracks?ids=${encodeURIComponent(trackId)}`,
       method: "DELETE",
       userLevel: true,
+      activity: "liked_remove_track",
     });
     try {
       const db = getDb();

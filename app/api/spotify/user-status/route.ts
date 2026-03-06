@@ -48,6 +48,7 @@ export async function GET(req: Request) {
     const profile = await spotifyFetch({
       url: "https://api.spotify.com/v1/me",
       userLevel: true,
+      activity: "user_status_profile",
       correlationId,
     });
     return jsonNoStore({ status: "OK", profile, correlationId }, 200, {

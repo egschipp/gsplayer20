@@ -1952,6 +1952,33 @@ export default function PlaylistBrowser() {
     setOpen(false);
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onPlayerOpenPlaylist = (event: Event) => {
+      const detail =
+        event && "detail" in event
+          ? ((event as CustomEvent).detail as
+              | { playlistId?: string | null }
+              | null
+              | undefined)
+          : undefined;
+      const playlistId = String(detail?.playlistId ?? "").trim();
+      if (!playlistId) return;
+      selectPlaylistInMyMusic(playlistId);
+    };
+
+    window.addEventListener(
+      "gs-player-open-playlist",
+      onPlayerOpenPlaylist as EventListener
+    );
+    return () => {
+      window.removeEventListener(
+        "gs-player-open-playlist",
+        onPlayerOpenPlaylist as EventListener
+      );
+    };
+  }, [selectPlaylistInMyMusic]);
+
   const selectArtistInMyMusic = useCallback(
     async (
       track: TrackRow | TrackItem,

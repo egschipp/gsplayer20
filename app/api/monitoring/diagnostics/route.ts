@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
 import { getRecentErrors } from "@/lib/observability/logger";
 import { counterTotal, histogramQuantiles } from "@/lib/observability/metrics";
+import { getRecentRateLimitActivities } from "@/lib/observability/rateLimitActivities";
 import { getSpotifyRateLimiterSnapshot } from "@/lib/spotify/rateLimitManager";
 import {
   createCorrelationId,
@@ -60,6 +61,20 @@ export async function GET(req: Request) {
       latency: histogramQuantiles("spotify_api_latency_ms"),
     },
     rateLimiter: getSpotifyRateLimiterSnapshot(),
+    recentRateLimitActivities: getRecentRateLimitActivities(120, 3_600_000).map(
+      (entry) => ({
+        at: entry.at,
+        activity: entry.activity,
+        source: entry.source,
+        endpoint: entry.endpointGroup,
+        endpointPath: entry.endpointPath,
+        method: entry.method,
+        statusCode: entry.statusCode,
+        retryAfterMs: entry.retryAfterMs,
+        attempt: entry.attempt,
+        correlationId: entry.correlationId,
+      })
+    ),
     recentErrors: getRecentErrors(50).map((entry) => ({
       ts: entry.ts,
       level: entry.level,

@@ -1,6 +1,7 @@
 import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
 import { clearMetrics } from "@/lib/observability/metrics";
 import { clearRecentErrors } from "@/lib/observability/logger";
+import { clearRateLimitActivityLog } from "@/lib/observability/rateLimitActivities";
 import { clearAppTokenCache } from "@/lib/spotify/tokens";
 import {
   createCorrelationId,
@@ -17,16 +18,16 @@ export async function POST(req: Request) {
 
   clearMetrics();
   clearRecentErrors();
+  clearRateLimitActivityLog();
   clearAppTokenCache();
 
   return jsonNoStore(
     {
       ok: true,
-      cleared: ["metrics", "recentErrors", "appTokenCache"],
+      cleared: ["metrics", "recentErrors", "rateLimitActivityLog", "appTokenCache"],
       correlationId,
     },
     200,
     { "x-correlation-id": correlationId }
   );
 }
-

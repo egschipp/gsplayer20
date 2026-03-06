@@ -65,6 +65,7 @@ export async function spotifyFetch<T>(args: {
   method?: string;
   body?: unknown;
   userLevel?: boolean;
+  activity?: string;
   correlationId?: string;
   priority?: SpotifyRequestPriority;
   cacheTtlMs?: number;
@@ -76,6 +77,7 @@ export async function spotifyFetch<T>(args: {
     method = "GET",
     body,
     userLevel = false,
+    activity,
     correlationId = createCorrelationId(),
     priority,
     cacheTtlMs,
@@ -98,6 +100,7 @@ export async function spotifyFetch<T>(args: {
         accessToken: appToken,
         timeoutMs: FETCH_TIMEOUT_MS,
         correlationId,
+        activity,
         userKey: "app",
         priority: resolvedPriority,
         cacheTtlMs: cacheTtlMs ?? cachePolicy.cacheTtlMs,
@@ -147,6 +150,7 @@ export async function spotifyFetch<T>(args: {
         accessToken: tokenResult.accessToken,
         timeoutMs: FETCH_TIMEOUT_MS,
         correlationId,
+        activity,
         userKey: appUserId,
         priority: resolvedPriority,
         cacheTtlMs: cacheTtlMs ?? cachePolicy.cacheTtlMs,
@@ -177,6 +181,7 @@ export async function spotifyFetch<T>(args: {
           accessToken: forced.accessToken,
           timeoutMs: FETCH_TIMEOUT_MS,
           correlationId,
+          activity,
           userKey: appUserId,
           priority: resolvedPriority,
           cacheTtlMs: cacheTtlMs ?? cachePolicy.cacheTtlMs,

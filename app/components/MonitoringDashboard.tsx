@@ -55,6 +55,12 @@ type SummaryPayload = {
     lastRetryAfterMs?: number | null;
     lastTriggeredAt?: number | null;
     retryAfterObservationsSec?: number[];
+    activityLog?: {
+      total: number;
+      topActivities: Array<{ label: string; count: number }>;
+      topEndpointPaths: Array<{ label: string; count: number }>;
+      bySource: Array<{ label: string; count: number }>;
+    };
   };
   traffic: {
     requestsPerMin: number;
@@ -85,6 +91,23 @@ type SummaryPayload = {
     }>;
     runbookUrl: string;
   };
+};
+
+type RateLimitActivityEntry = {
+  at: number;
+  activity: string;
+  source: string;
+  endpoint?: string;
+  endpointPath?: string;
+  method: string;
+  statusCode: number;
+  retryAfterMs: number | null;
+  attempt: number | null;
+  correlationId: string;
+};
+
+type DiagnosticsPayload = {
+  recentRateLimitActivities?: RateLimitActivityEntry[];
 };
 
 type UserStatusPayload = {
@@ -215,6 +238,13 @@ function fmtAgoShort(seconds: number | null | undefined) {
   if (seconds < 60) return `${Math.max(1, Math.floor(seconds))}s`;
   if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m`;
   return `${Math.max(1, Math.floor(seconds / 3600))}u`;
+}
+
+function formatRateLimitSource(value: string) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "spotify_http_429") return "Spotify 429";
+  if (normalized === "spotify_local_limiter") return "Lokale limiter";
+  return value || "Onbekend";
 }
 
 function toneClass(tone: Tone) {
@@ -526,6 +556,13 @@ export default function MonitoringDashboard() {
   const [tokenRefreshCooldownUntil, setTokenRefreshCooldownUntil] = useState(0);
   const [selectedErrorEndpoint, setSelectedErrorEndpoint] = useState<string | null>(null);
   const [clockNowMs, setClockNowMs] = useState(() => Date.now());
+  const [rateLimitLogOpen, setRateLimitLogOpen] = useState(false);
+  const [rateLimitLogLoading, setRateLimitLogLoading] = useState(false);
+  const [rateLimitLogError, setRateLimitLogError] = useState<string | null>(null);
+  const [rateLimitLogEntries, setRateLimitLogEntries] = useState<RateLimitActivityEntry[]>(
+    []
+  );
+  const [rateLimitLogFetchedAt, setRateLimitLogFetchedAt] = useState<number | null>(null);
 
   const preferenceKey = useMemo(
     () => `gs_settings_page_preferences:v2:${summary?.authStatus.appUserId ?? "anon"}`,
@@ -814,6 +851,44 @@ export default function MonitoringDashboard() {
     downloadJson("gsplayer-diagnostics", payload);
   }, [runAction]);
 
+  const loadRateLimitActivityLog = useCallback(async () => {
+    setRateLimitLogLoading(true);
+    setRateLimitLogError(null);
+    try {
+      const res = await clientFetch("/api/monitoring/diagnostics");
+      if (!res.ok) {
+        throw new Error(`rate_limit_log_http_${res.status}`);
+      }
+      const payload = (await res.json()) as DiagnosticsPayload;
+      const rows = Array.isArray(payload?.recentRateLimitActivities)
+        ? payload.recentRateLimitActivities
+        : [];
+      setRateLimitLogEntries(rows.slice(0, 120));
+      setRateLimitLogFetchedAt(Date.now());
+      pushActionHistory({
+        name: "Rate-limit log",
+        outcome: "success",
+        message: rows.length
+          ? `${rows.length} activiteiten geladen`
+          : "Geen rate-limit activiteiten in log",
+        correlationId: null,
+        at: Date.now(),
+      });
+    } catch (error) {
+      const message = String(error);
+      setRateLimitLogError(message);
+      pushActionHistory({
+        name: "Rate-limit log",
+        outcome: "error",
+        message,
+        correlationId: null,
+        at: Date.now(),
+      });
+    } finally {
+      setRateLimitLogLoading(false);
+    }
+  }, [pushActionHistory]);
+
   const summaryAvailable = Boolean(summary);
 
   const authStatus = summary?.authStatus.status ?? "CHECKING";
@@ -877,6 +952,7 @@ export default function MonitoringDashboard() {
   const rateBackoffRemainingSec = Math.ceil(rateBackoffRemainingMs / 1000);
   const hasActiveRateBackoff = rateBackoffRemainingSec > 0;
   const rateLimitCount = summary?.rateLimits.count429 ?? 0;
+  const rateLimitActivityTotal = summary?.rateLimits.activityLog?.total ?? 0;
   const hasRecentRateLimitEvents = rateLimitCount > 0;
   const lastRateTriggeredAgoSec = summary?.rateLimits.lastTriggeredAt
     ? Math.max(0, Math.floor((clockNowMs - summary.rateLimits.lastTriggeredAt) / 1000))
@@ -1310,6 +1386,22 @@ export default function MonitoringDashboard() {
 
                   <button
                     type="button"
+                    className="btn btn-secondary"
+                    disabled={rateLimitLogLoading}
+                    onClick={async () => {
+                      setRateLimitLogOpen(true);
+                      await loadRateLimitActivityLog();
+                    }}
+                  >
+                    {rateLimitLogLoading
+                      ? "Log laden..."
+                      : rateLimitLogOpen
+                      ? "Rate-limit log verversen"
+                      : `Rate-limit log (${fmtCount(rateLimitActivityTotal)})`}
+                  </button>
+
+                  <button
+                    type="button"
                     className="btn btn-ghost"
                     disabled={actionBusy !== null}
                     onClick={async () => {
@@ -1536,6 +1628,94 @@ export default function MonitoringDashboard() {
                   </div>
                 )}
               </article>
+
+              {rateLimitLogOpen ? (
+                <article className="panel ops-panel span-12">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">Rate-limit activiteitenlog</h3>
+                    <HelpTip
+                      label="Rate-limit activiteitenlog"
+                      text="Toont welke acties/endpoints 429 of lokale limiter-events veroorzaken, inclusief retry-after en correlatie-id."
+                    />
+                  </div>
+                  <div className="ops-recent-filter">
+                    <span className="text-subtle">
+                      {rateLimitLogFetchedAt
+                        ? `Laatste fetch ${fmtCompactTime(rateLimitLogFetchedAt)} · ${fmtCount(
+                            rateLimitLogEntries.length
+                          )} regels`
+                        : "Nog niet geladen"}
+                    </span>
+                    <div style={{ display: "inline-flex", gap: 8 }}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => void loadRateLimitActivityLog()}
+                        disabled={rateLimitLogLoading}
+                      >
+                        {rateLimitLogLoading ? "Laden..." : "Verversen"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => setRateLimitLogOpen(false)}
+                      >
+                        Sluiten
+                      </button>
+                    </div>
+                  </div>
+                  {rateLimitLogError ? (
+                    <div className="text-subtle">
+                      Activiteitenlog laden mislukte: {rateLimitLogError}
+                    </div>
+                  ) : null}
+                  {rateLimitLogLoading && !rateLimitLogEntries.length ? (
+                    <div className="text-subtle">Activiteitenlog laden...</div>
+                  ) : null}
+                  {!rateLimitLogLoading &&
+                  !rateLimitLogError &&
+                  rateLimitLogEntries.length === 0 ? (
+                    <div className="text-subtle">
+                      Geen rate-limit activiteiten in het huidige venster.
+                    </div>
+                  ) : null}
+                  {rateLimitLogEntries.length > 0 ? (
+                    <div className="ops-recent-list" role="status" aria-live="polite">
+                      {rateLimitLogEntries.map((item, index) => (
+                        <div
+                          key={`${item.at}:${item.correlationId}:${index}`}
+                          className="ops-recent-row"
+                        >
+                          <div className="ops-recent-top">
+                            <span className="ops-recent-time">{fmtCompactTime(item.at)}</span>
+                            <span className="ops-recent-code ops-recent-code-warn">
+                              {formatRateLimitSource(item.source)}
+                            </span>
+                          </div>
+                          <strong>{item.activity}</strong>
+                          <div className="text-subtle">
+                            {item.method.toUpperCase()} {item.endpointPath || "onbekend pad"} ·{" "}
+                            {item.endpoint || "onbekend endpoint"}
+                          </div>
+                          <div className="ops-recent-extra">
+                            status {item.statusCode}
+                            {item.retryAfterMs != null
+                              ? ` · retry-after ${Math.max(
+                                  1,
+                                  Math.ceil(item.retryAfterMs / 1000)
+                                )}s`
+                              : ""}
+                            {item.attempt != null ? ` · poging ${item.attempt}` : ""}
+                            {item.correlationId
+                              ? ` · corr ${String(item.correlationId).slice(0, 12)}`
+                              : ""}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </article>
+              ) : null}
 
               <article className="panel ops-panel span-4">
                 <div className="ops-section-head">

@@ -2,6 +2,7 @@ import { incCounter, observeHistogram } from "@/lib/observability/metrics";
 import { logEvent } from "@/lib/observability/logger";
 import { createCorrelationId } from "@/lib/observability/correlation";
 import { recordSpotifyRateLimitBackoff } from "@/lib/observability/rateLimit";
+import { recordRateLimitActivity } from "@/lib/observability/rateLimitActivities";
 import {
   registerSpotifyRateLimit,
   registerSpotifyRequestFailure,
@@ -459,6 +460,7 @@ export async function spotifyApiRequest<T>(params: {
   url: string;
   accessToken: string;
   correlationId?: string;
+  activity?: string;
   method?: string;
   body?: unknown;
   timeoutMs?: number;
@@ -479,6 +481,10 @@ export async function spotifyApiRequest<T>(params: {
   );
   const group = endpointGroup(params.url);
   const path = endpointPath(params.url);
+  const activity =
+    typeof params.activity === "string" && params.activity.trim()
+      ? params.activity.trim().replace(/\s+/g, "_").slice(0, 96)
+      : `${method.toLowerCase()}:${group}`;
   const userKey = params.userKey || "anonymous";
   const upstreamCircuitKey = circuitKey({
     userKey,
@@ -667,6 +673,7 @@ export async function spotifyApiRequest<T>(params: {
               errorCode: code,
               errorMessage: text.slice(0, 256),
               data: {
+                activity,
                 attempt,
                 retryAfterMs,
                 endpointPath: path,
@@ -687,6 +694,24 @@ export async function spotifyApiRequest<T>(params: {
 
             if (result.status === 429) {
               const waitMs = retryAfterMs ?? retryWaitMs;
+              recordRateLimitActivity({
+                activity,
+                source: "spotify_http_429",
+                endpointGroup: group,
+                endpointPath: path,
+                method,
+                statusCode: 429,
+                retryAfterMs: waitMs,
+                correlationId,
+                attempt,
+              });
+              incCounter("spotify_rate_limit_activity_total", {
+                activity,
+                source: "spotify_http_429",
+                endpoint: group,
+                endpoint_path: path,
+                method,
+              });
               recordSpotifyRateLimitBackoff(waitMs);
               await registerSpotifyRateLimit(userKey, waitMs, group);
             } else if (result.status >= 500) {
@@ -721,6 +746,24 @@ export async function spotifyApiRequest<T>(params: {
             }
 
             if (error instanceof SpotifyRateLimitError) {
+              recordRateLimitActivity({
+                activity,
+                source: "spotify_local_limiter",
+                endpointGroup: group,
+                endpointPath: path,
+                method,
+                statusCode: 429,
+                retryAfterMs: error.retryAfterMs,
+                correlationId,
+                attempt,
+              });
+              incCounter("spotify_rate_limit_activity_total", {
+                activity,
+                source: "spotify_local_limiter",
+                endpoint: group,
+                endpoint_path: path,
+                method,
+              });
               registerUpstreamCircuitFailure({
                 key: upstreamCircuitKey,
                 endpointGroup: group,

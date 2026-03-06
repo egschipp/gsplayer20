@@ -6464,14 +6464,17 @@ export default function SpotifyPlayer({
     );
   }
 
-  if (!canUseSdk) {
+  if (!playbackSessionReady || !playbackAllowed || premiumRequired) {
     return (
       <div className="player-card">
         <div className="player-meta">
           <div className="player-title">Spotify Player</div>
           <div className="text-body">
-            Verbind Spotify om in de browser af te spelen.
+            Verbind Spotify om afspelen te bedienen.
           </div>
+          {!playbackSessionReady ? (
+            <div className="text-subtle">Log in met Spotify om door te gaan.</div>
+          ) : null}
           {!playbackAllowed && accessToken ? (
             <div className="text-subtle">
               Je mist rechten voor afspelen. Koppel opnieuw om door te gaan.
@@ -6480,12 +6483,9 @@ export default function SpotifyPlayer({
               ) : null}
             </div>
           ) : null}
-          {playbackAllowed && !sdkSupported && sdkSupport.reason ? (
-            <div className="text-subtle">{sdkSupport.reason}</div>
-          ) : null}
           {premiumRequired ? (
             <div className="text-subtle">
-              Spotify Premium is vereist voor Web Playback.
+              Spotify Premium is vereist voor playback controls.
             </div>
           ) : null}
         </div>
@@ -7189,9 +7189,10 @@ export default function SpotifyPlayer({
             {formatPlaybackBootStateLabel(playbackBootState)}.
           </div>
         ) : null}
-        {!sdkSupported ? (
+        {!sdkSupported && !activeDeviceId && !deviceId ? (
           <div className="text-subtle" style={{ marginTop: 6 }}>
-            {sdkSupport.reason}
+            Lokale webplayer is niet beschikbaar in deze browser. Gebruik Spotify Connect
+            via de Spotify app om afspelen te bedienen.
           </div>
         ) : null}
         {selectableDevicesCount === 0 ? (

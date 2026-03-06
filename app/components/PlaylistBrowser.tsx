@@ -1463,6 +1463,9 @@ export default function PlaylistBrowser() {
     if (typeof window === "undefined") return;
     const onLikedUpdate = () => {
       setLikedRefreshNonce((prev) => prev + 1);
+      if (mode === "playlists" && selectedPlaylistId === ALL_MY_MUSIC_OPTION.id) {
+        setTracksRefreshToken((prev) => prev + 1);
+      }
     };
     const onStorage = (event: StorageEvent) => {
       if (event.key === "gs_liked_tracks_updated_at") {
@@ -1478,7 +1481,7 @@ export default function PlaylistBrowser() {
       );
       window.removeEventListener("storage", onStorage);
     };
-  }, []);
+  }, [mode, selectedPlaylistId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -3690,12 +3693,18 @@ export default function PlaylistBrowser() {
           : undefined;
       const playlistId = String(detail?.playlistId ?? "").trim();
       if (!playlistId) return;
+      if (mode === "playlists" && selectedPlaylist?.type === "all_music") {
+        setTracksRefreshToken((prev) => prev + 1);
+      }
       triggerSelectedPlaylistLiveRefresh(playlistId);
       void requestPlaylistItemsSync(playlistId);
     };
 
     const onStorage = (storageEvent: StorageEvent) => {
       if (storageEvent.key !== "gs_playlist_items_updated_at") return;
+      if (mode === "playlists" && selectedPlaylist?.type === "all_music") {
+        setTracksRefreshToken((prev) => prev + 1);
+      }
       if (
         mode === "playlists" &&
         selectedPlaylist?.type === "playlist" &&

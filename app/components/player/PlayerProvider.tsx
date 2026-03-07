@@ -169,7 +169,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const viewport = useViewport();
   const pathname = usePathname();
   const path = pathname ?? "/";
-  const showPlayer = path !== "/login";
+  const showPlayer = path !== "/login" && !path.startsWith("/status");
   const showLibraryDock = path === "/" || path.startsWith("/gsplayer");
 
   const setControllerHandlers = useCallback((handlers: PlayerCommandHandlers | null) => {

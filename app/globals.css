@@ -4002,7 +4002,7 @@ details[open] > .details-summary::after {
 
 .ops-title {
   margin: 0;
-  font-size: clamp(1.35rem, 2vw, 1.75rem);
+  font-size: clamp(0.95rem, 1vw, 1rem);
   font-weight: 600;
   line-height: 1.2;
   font-family: var(--font-display), system-ui, sans-serif;

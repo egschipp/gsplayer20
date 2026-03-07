@@ -318,6 +318,10 @@ export async function GET() {
         topActivities: rateLimitActivitySummary.byActivity,
         topEndpointPaths: rateLimitActivitySummary.byEndpointPath,
         bySource: rateLimitActivitySummary.bySource,
+        negativeReliabilityActivities:
+          rateLimitActivitySummary.negativeReliabilityActivities,
+        negativeResponsivenessActivities:
+          rateLimitActivitySummary.negativeResponsivenessActivities,
       },
     },
     traffic: {

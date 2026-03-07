@@ -60,6 +60,8 @@ type SummaryPayload = {
       topActivities: Array<{ label: string; count: number }>;
       topEndpointPaths: Array<{ label: string; count: number }>;
       bySource: Array<{ label: string; count: number }>;
+      negativeReliabilityActivities: Array<{ label: string; count: number }>;
+      negativeResponsivenessActivities: Array<{ label: string; count: number }>;
     };
   };
   traffic: {
@@ -100,10 +102,16 @@ type RateLimitActivityEntry = {
   endpoint?: string;
   endpointPath?: string;
   method: string;
+  priority?: "foreground" | "default" | "background";
   statusCode: number;
   retryAfterMs: number | null;
   attempt: number | null;
   correlationId: string;
+  impact?: {
+    reliability: "low" | "medium" | "high";
+    responsiveness: "low" | "medium" | "high";
+    reasons: string[];
+  };
 };
 
 type DiagnosticsPayload = {
@@ -245,6 +253,32 @@ function formatRateLimitSource(value: string) {
   if (normalized === "spotify_http_429") return "Spotify 429";
   if (normalized === "spotify_local_limiter") return "Lokale limiter";
   return value || "Onbekend";
+}
+
+function formatImpactLevel(value: "low" | "medium" | "high" | null | undefined) {
+  if (value === "high") return "hoog";
+  if (value === "medium") return "middel";
+  return "laag";
+}
+
+async function copyTextToClipboard(value: string) {
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.top = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  } catch {
+    // keep trying async API below
+  }
+
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+  }
 }
 
 function toneClass(tone: Tone) {
@@ -563,6 +597,7 @@ export default function MonitoringDashboard() {
     []
   );
   const [rateLimitLogFetchedAt, setRateLimitLogFetchedAt] = useState<number | null>(null);
+  const [rateLimitLogCopyBusy, setRateLimitLogCopyBusy] = useState(false);
 
   const preferenceKey = useMemo(
     () => `gs_settings_page_preferences:v2:${summary?.authStatus.appUserId ?? "anon"}`,
@@ -889,6 +924,36 @@ export default function MonitoringDashboard() {
     }
   }, [pushActionHistory]);
 
+  const copyRateLimitActivityLog = useCallback(async () => {
+    const payload = {
+      exportedAt: Date.now(),
+      fetchedAt: rateLimitLogFetchedAt,
+      total: rateLimitLogEntries.length,
+      entries: rateLimitLogEntries,
+    };
+    setRateLimitLogCopyBusy(true);
+    try {
+      await copyTextToClipboard(JSON.stringify(payload, null, 2));
+      pushActionHistory({
+        name: "Rate-limit log kopieren",
+        outcome: "success",
+        message: `${rateLimitLogEntries.length} regels gekopieerd`,
+        correlationId: null,
+        at: Date.now(),
+      });
+    } catch (error) {
+      pushActionHistory({
+        name: "Rate-limit log kopieren",
+        outcome: "error",
+        message: String(error),
+        correlationId: null,
+        at: Date.now(),
+      });
+    } finally {
+      setRateLimitLogCopyBusy(false);
+    }
+  }, [pushActionHistory, rateLimitLogEntries, rateLimitLogFetchedAt]);
+
   const summaryAvailable = Boolean(summary);
 
   const authStatus = summary?.authStatus.status ?? "CHECKING";
@@ -953,6 +1018,10 @@ export default function MonitoringDashboard() {
   const hasActiveRateBackoff = rateBackoffRemainingSec > 0;
   const rateLimitCount = summary?.rateLimits.count429 ?? 0;
   const rateLimitActivityTotal = summary?.rateLimits.activityLog?.total ?? 0;
+  const topReliabilityImpactActivities =
+    summary?.rateLimits.activityLog?.negativeReliabilityActivities ?? [];
+  const topResponsivenessImpactActivities =
+    summary?.rateLimits.activityLog?.negativeResponsivenessActivities ?? [];
   const hasRecentRateLimitEvents = rateLimitCount > 0;
   const lastRateTriggeredAgoSec = summary?.rateLimits.lastTriggeredAt
     ? Math.max(0, Math.floor((clockNowMs - summary.rateLimits.lastTriggeredAt) / 1000))
@@ -1658,6 +1727,14 @@ export default function MonitoringDashboard() {
                       <button
                         type="button"
                         className="btn btn-ghost"
+                        onClick={() => void copyRateLimitActivityLog()}
+                        disabled={rateLimitLogCopyBusy || rateLimitLogEntries.length === 0}
+                      >
+                        {rateLimitLogCopyBusy ? "Kopieren..." : "Kopieer log"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
                         onClick={() => setRateLimitLogOpen(false)}
                       >
                         Sluiten
@@ -1669,6 +1746,31 @@ export default function MonitoringDashboard() {
                       Activiteitenlog laden mislukte: {rateLimitLogError}
                     </div>
                   ) : null}
+                  {(topReliabilityImpactActivities.length > 0 ||
+                    topResponsivenessImpactActivities.length > 0) && (
+                    <div className="ops-keyvalue-list" style={{ marginBottom: 12 }}>
+                      <div className="ops-keyvalue-row">
+                        <span className="text-subtle">Negatief voor betrouwbaarheid</span>
+                        <strong>
+                          {topReliabilityImpactActivities.length
+                            ? topReliabilityImpactActivities
+                                .map((row) => `${row.label} (${row.count})`)
+                                .join(", ")
+                            : "geen"}
+                        </strong>
+                      </div>
+                      <div className="ops-keyvalue-row">
+                        <span className="text-subtle">Negatief voor reactiesnelheid</span>
+                        <strong>
+                          {topResponsivenessImpactActivities.length
+                            ? topResponsivenessImpactActivities
+                                .map((row) => `${row.label} (${row.count})`)
+                                .join(", ")
+                            : "geen"}
+                        </strong>
+                      </div>
+                    </div>
+                  )}
                   {rateLimitLogLoading && !rateLimitLogEntries.length ? (
                     <div className="text-subtle">Activiteitenlog laden...</div>
                   ) : null}
@@ -1698,6 +1800,9 @@ export default function MonitoringDashboard() {
                             {item.endpoint || "onbekend endpoint"}
                           </div>
                           <div className="ops-recent-extra">
+                            betrouwbaarheid {formatImpactLevel(item.impact?.reliability)} ·
+                            snelheid {formatImpactLevel(item.impact?.responsiveness)} ·
+                            prioriteit {item.priority ?? "default"} ·
                             status {item.statusCode}
                             {item.retryAfterMs != null
                               ? ` · retry-after ${Math.max(
@@ -1710,6 +1815,11 @@ export default function MonitoringDashboard() {
                               ? ` · corr ${String(item.correlationId).slice(0, 12)}`
                               : ""}
                           </div>
+                          {item.impact?.reasons?.length ? (
+                            <div className="text-subtle">
+                              impact: {item.impact.reasons.join(", ")}
+                            </div>
+                          ) : null}
                         </div>
                       ))}
                     </div>

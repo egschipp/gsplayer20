@@ -69,10 +69,12 @@ export async function GET(req: Request) {
         endpoint: entry.endpointGroup,
         endpointPath: entry.endpointPath,
         method: entry.method,
+        priority: entry.priority,
         statusCode: entry.statusCode,
         retryAfterMs: entry.retryAfterMs,
         attempt: entry.attempt,
         correlationId: entry.correlationId,
+        impact: entry.impact,
       })
     ),
     recentErrors: getRecentErrors(50).map((entry) => ({

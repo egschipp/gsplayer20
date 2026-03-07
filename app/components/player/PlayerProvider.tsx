@@ -169,7 +169,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const viewport = useViewport();
   const pathname = usePathname();
   const path = pathname ?? "/";
-  const showPlayer = path === "/" || path.startsWith("/gsplayer") || path.startsWith("/queue");
+  const showPlayer = path !== "/login";
   const showLibraryDock = path === "/" || path.startsWith("/gsplayer");
 
   const setControllerHandlers = useCallback((handlers: PlayerCommandHandlers | null) => {
@@ -452,12 +452,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     () => ({ api, currentTrackId, playbackFocus, playbackState, playbackView, controller }),
     [api, currentTrackId, playbackFocus, playbackState, playbackView, controller]
   );
-
-  useEffect(() => {
-    if (showPlayer) return;
-    setApi(null);
-    setControllerHandlers(null);
-  }, [setControllerHandlers, showPlayer]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

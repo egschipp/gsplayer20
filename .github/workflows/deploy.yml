@@ -128,7 +128,7 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, ARM64]
     timeout-minutes: 12
     steps:
       - name: Checkout
@@ -209,8 +209,7 @@ jobs:
             sys.exit(1)
           PY
 
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Deploy on self-hosted runner
         env:
           APP_ENCRYPTION_KEY: ${{ secrets.APP_ENCRYPTION_KEY }}
           IMAGE_NAME: ${{ secrets.DOCKER_REGISTRY }}/${{ secrets.DOCKER_IMAGE }}
@@ -227,100 +226,95 @@ jobs:
           NEXTAUTH_SECRET: ${{ secrets.AUTH_SECRET }}
           NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL || secrets.AUTH_URL }}
           TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
           DB_PATH: /data/gsplayer.sqlite
           APP_RELEASE_VERSION: ${{ steps.app_version.outputs.value }}
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: ${{ secrets.DEPLOY_PORT }}
-          envs: APP_ENCRYPTION_KEY,IMAGE_NAME,IMAGE_TAG,DOCKER_REGISTRY,DOCKER_USERNAME,DOCKER_PASSWORD,SPOTIFY_CLIENT_ID,SPOTIFY_CLIENT_SECRET,SPOTIFY_REDIRECT_URI,AUTH_SECRET,APP_PIN,AUTH_URL,NEXTAUTH_SECRET,NEXTAUTH_URL,TOKEN_ENCRYPTION_KEY,DB_PATH,APP_RELEASE_VERSION
-          script: |
-            set -euo pipefail
-            cd "${{ secrets.DEPLOY_DIR }}"
-            if [ -n "${DOCKER_PASSWORD:-}" ]; then
-              echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
-            fi
-            if [ -z "${IMAGE_NAME:-}" ] || [ -z "${IMAGE_TAG:-}" ]; then
-              echo "IMAGE_NAME/IMAGE_TAG ontbreekt" >&2
-              exit 1
-            fi
-            if ! command -v flock >/dev/null 2>&1; then
-              echo "flock ontbreekt op target host" >&2
-              exit 1
-            fi
-            exec 9>.deploy.lock
-            flock -n 9 || { echo "Deploy al bezig"; exit 1; }
-            tmp_env="$(mktemp .env.tmp.XXXXXX)"
-            cat > "$tmp_env" <<EOF
-            APP_ENV=production
-            APP_ENCRYPTION_KEY=$APP_ENCRYPTION_KEY
-            IMAGE_NAME=$IMAGE_NAME
-            IMAGE_TAG=$IMAGE_TAG
-            SPOTIFY_CLIENT_ID=$SPOTIFY_CLIENT_ID
-            SPOTIFY_CLIENT_SECRET=$SPOTIFY_CLIENT_SECRET
-            SPOTIFY_REDIRECT_URI=$SPOTIFY_REDIRECT_URI
-            AUTH_SECRET=$AUTH_SECRET
-            APP_PIN=$APP_PIN
-            AUTH_URL=$AUTH_URL
-            NEXTAUTH_SECRET=$NEXTAUTH_SECRET
-            NEXTAUTH_URL=$NEXTAUTH_URL
-            TOKEN_ENCRYPTION_KEY=$TOKEN_ENCRYPTION_KEY
-            DB_PATH=$DB_PATH
-            APP_RELEASE_VERSION=$APP_RELEASE_VERSION
-            EOF
-            chmod 600 "$tmp_env"
-            mv "$tmp_env" .env
-            if ! docker compose version >/dev/null 2>&1; then
-              echo "docker compose v2 not available" >&2
-              exit 1
-            fi
-            COMPOSE_FILE_PATH="docker-compose.ci.yml"
-            cat > "${COMPOSE_FILE_PATH}" <<'YAML'
-            services:
-              web:
-                image: ${IMAGE_NAME}:${IMAGE_TAG}
-                container_name: gsplayer20
-                env_file:
-                  - .env
-                volumes:
-                  - ./data:/data
-                logging:
-                  driver: json-file
-                  options:
-                    max-size: "10m"
-                    max-file: "3"
-                restart: unless-stopped
-                networks:
-                  - web
+        run: |
+          set -euo pipefail
+          cd "${DEPLOY_DIR}"
+          if [ -n "${DOCKER_PASSWORD:-}" ]; then
+            echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
+          fi
+          if [ -z "${IMAGE_NAME:-}" ] || [ -z "${IMAGE_TAG:-}" ]; then
+            echo "IMAGE_NAME/IMAGE_TAG ontbreekt" >&2
+            exit 1
+          fi
+          if ! command -v flock >/dev/null 2>&1; then
+            echo "flock ontbreekt op target host" >&2
+            exit 1
+          fi
+          exec 9>.deploy.lock
+          flock -n 9 || { echo "Deploy al bezig"; exit 1; }
+          tmp_env="$(mktemp .env.tmp.XXXXXX)"
+          cat > "$tmp_env" <<EOF
+          APP_ENV=production
+          APP_ENCRYPTION_KEY=$APP_ENCRYPTION_KEY
+          IMAGE_NAME=$IMAGE_NAME
+          IMAGE_TAG=$IMAGE_TAG
+          SPOTIFY_CLIENT_ID=$SPOTIFY_CLIENT_ID
+          SPOTIFY_CLIENT_SECRET=$SPOTIFY_CLIENT_SECRET
+          SPOTIFY_REDIRECT_URI=$SPOTIFY_REDIRECT_URI
+          AUTH_SECRET=$AUTH_SECRET
+          APP_PIN=$APP_PIN
+          AUTH_URL=$AUTH_URL
+          NEXTAUTH_SECRET=$NEXTAUTH_SECRET
+          NEXTAUTH_URL=$NEXTAUTH_URL
+          TOKEN_ENCRYPTION_KEY=$TOKEN_ENCRYPTION_KEY
+          DB_PATH=$DB_PATH
+          APP_RELEASE_VERSION=$APP_RELEASE_VERSION
+          EOF
+          chmod 600 "$tmp_env"
+          mv "$tmp_env" .env
+          if ! docker compose version >/dev/null 2>&1; then
+            echo "docker compose v2 not available" >&2
+            exit 1
+          fi
+          COMPOSE_FILE_PATH="docker-compose.ci.yml"
+          cat > "${COMPOSE_FILE_PATH}" <<'YAML'
+          services:
+            web:
+              image: ${IMAGE_NAME}:${IMAGE_TAG}
+              container_name: gsplayer20
+              env_file:
+                - .env
+              volumes:
+                - ./data:/data
+              logging:
+                driver: json-file
+                options:
+                  max-size: "10m"
+                  max-file: "3"
+              restart: unless-stopped
+              networks:
+                - web
 
-              worker:
-                image: ${IMAGE_NAME}:${IMAGE_TAG}
-                container_name: gsplayer20-worker
-                command: ["node", "worker.js"]
-                env_file:
-                  - .env
-                volumes:
-                  - ./data:/data
-                logging:
-                  driver: json-file
-                  options:
-                    max-size: "10m"
-                    max-file: "3"
-                restart: unless-stopped
-                networks:
-                  - web
+            worker:
+              image: ${IMAGE_NAME}:${IMAGE_TAG}
+              container_name: gsplayer20-worker
+              command: ["node", "worker.js"]
+              env_file:
+                - .env
+              volumes:
+                - ./data:/data
+              logging:
+                driver: json-file
+                options:
+                  max-size: "10m"
+                  max-file: "3"
+              restart: unless-stopped
+              networks:
+                - web
 
-            networks:
-              web:
-                external: true
-            YAML
-            docker network inspect web >/dev/null 2>&1 || docker network create web
-            echo "Compose file: ${COMPOSE_FILE_PATH}"
-            docker compose -f "${COMPOSE_FILE_PATH}" config | grep -E "image:" || true
-            docker compose -f "${COMPOSE_FILE_PATH}" pull web worker
-            if ! docker compose -f "${COMPOSE_FILE_PATH}" up -d --remove-orphans; then
-              docker compose -f "${COMPOSE_FILE_PATH}" ps
-              docker compose -f "${COMPOSE_FILE_PATH}" logs --no-color --tail=160 web worker || true
-              exit 1
-            fi
+          networks:
+            web:
+              external: true
+          YAML
+          docker network inspect web >/dev/null 2>&1 || docker network create web
+          echo "Compose file: ${COMPOSE_FILE_PATH}"
+          docker compose -f "${COMPOSE_FILE_PATH}" config | grep -E "image:" || true
+          docker compose -f "${COMPOSE_FILE_PATH}" pull web worker
+          if ! docker compose -f "${COMPOSE_FILE_PATH}" up -d --remove-orphans; then
+            docker compose -f "${COMPOSE_FILE_PATH}" ps
+            docker compose -f "${COMPOSE_FILE_PATH}" logs --no-color --tail=160 web worker || true
+            exit 1
+          fi

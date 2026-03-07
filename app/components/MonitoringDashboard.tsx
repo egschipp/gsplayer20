@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import StatusBox from "./StatusBox";
+import PromptSettingsPanel from "./PromptSettingsPanel";
 import { clientFetch } from "@/lib/http/clientFetch";
+import { PLAYBACK_FEATURE_FLAGS } from "@/lib/playback/featureFlags";
 
 type SummaryPayload = {
   generatedAt: number;
@@ -127,6 +128,33 @@ type RateLimitActivityEntry = {
 
 type DiagnosticsPayload = {
   recentRateLimitActivities?: RateLimitActivityEntry[];
+  recentSlowActivities?: Array<{
+    at: number;
+    activity: string;
+    endpoint: string;
+    endpointPath: string;
+    method: string;
+    priority: "foreground" | "default" | "background";
+    statusCode: number;
+    durationMs: number;
+    correlationId: string;
+    impact?: {
+      reliability: "low" | "medium" | "high";
+      responsiveness: "low" | "medium" | "high";
+      reasons: string[];
+    };
+  }>;
+  app?: {
+    nodeEnv?: string;
+    hasUpstash?: boolean;
+    trustProxy?: boolean;
+    authLogEnabled?: boolean;
+  };
+  rateLimiter?: {
+    globalInFlight?: number;
+    queueDepth?: number;
+    globalConcurrency?: number;
+  };
 };
 
 type UserStatusPayload = {
@@ -143,6 +171,30 @@ type UserStatusPayload = {
 
 type DbStatusPayload = {
   counts?: Record<string, number>;
+  sync?: {
+    running?: boolean;
+    staleRunning?: number;
+    lastSuccessfulAt?: number | null;
+    resources?: Array<{
+      resource: string;
+      status: string;
+      cursorOffset?: number | null;
+      cursorLimit?: number | null;
+      lastSuccessfulAt?: number | null;
+      retryAfterAt?: number | null;
+      failureCount?: number;
+      lastErrorCode?: string | null;
+      updatedAt?: number | null;
+    }>;
+  };
+  asOf?: number;
+};
+
+type WorkerHealthPayload = {
+  status: string;
+  lastHeartbeat: number | null;
+  staleAfterMs: number;
+  now: number;
 };
 
 type LibraryCounts = {
@@ -168,6 +220,14 @@ type Insight = {
   title: string;
   text: string;
 };
+
+type StatusSectionId =
+  | "overview"
+  | "health"
+  | "data"
+  | "diagnostics"
+  | "actions"
+  | "ai";
 
 const ENDPOINT_LABEL_MAP: Record<string, { label: string; description: string }> = {
   me_player: {
@@ -606,11 +666,17 @@ export default function MonitoringDashboard() {
   const [summaryReceivedAtMs, setSummaryReceivedAtMs] = useState(0);
   const [userStatus, setUserStatus] = useState<UserStatusPayload | null>(null);
   const [libraryCounts, setLibraryCounts] = useState<LibraryCounts | null>(null);
+  const [dbStatus, setDbStatus] = useState<DbStatusPayload | null>(null);
+  const [workerHealth, setWorkerHealth] = useState<WorkerHealthPayload | null>(null);
+  const [diagnosticsSnapshot, setDiagnosticsSnapshot] = useState<DiagnosticsPayload | null>(
+    null
+  );
   const [loading, setLoading] = useState(true);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<null | string>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshIntervalSec, setRefreshIntervalSec] = useState(15);
+  const [activeSection, setActiveSection] = useState<StatusSectionId>("overview");
   const [actionHistory, setActionHistory] = useState<ActionHistoryItem[]>([]);
   const [tokenRefreshCooldownUntil, setTokenRefreshCooldownUntil] = useState(0);
   const [selectedErrorEndpoint, setSelectedErrorEndpoint] = useState<string | null>(null);
@@ -649,11 +715,12 @@ export default function MonitoringDashboard() {
     setUserStatus(data);
   }, []);
 
-  const refreshLibraryCounts = useCallback(async () => {
+  const refreshDbStatus = useCallback(async () => {
     try {
       const res = await clientFetch("/api/spotify/db-status");
       if (!res.ok) return;
       const data = (await res.json()) as DbStatusPayload;
+      setDbStatus(data);
       const counts = data?.counts ?? {};
       const next: LibraryCounts = {
         playlists:
@@ -675,16 +742,48 @@ export default function MonitoringDashboard() {
     }
   }, []);
 
+  const refreshWorkerHealth = useCallback(async () => {
+    try {
+      const res = await clientFetch("/api/spotify/worker-health");
+      if (!res.ok) return;
+      setWorkerHealth((await res.json()) as WorkerHealthPayload);
+    } catch {
+      // keep current worker health on transient failure
+    }
+  }, []);
+
+  const refreshDiagnosticsSnapshot = useCallback(async () => {
+    try {
+      const res = await clientFetch("/api/monitoring/diagnostics");
+      if (!res.ok) return;
+      setDiagnosticsSnapshot((await res.json()) as DiagnosticsPayload);
+    } catch {
+      // diagnostics is optional for the overview shell
+    }
+  }, []);
+
   const refreshAll = useCallback(async () => {
     try {
-      await Promise.all([refreshSummary(), refreshUserStatus(), refreshLibraryCounts()]);
+      await Promise.all([
+        refreshSummary(),
+        refreshUserStatus(),
+        refreshDbStatus(),
+        refreshWorkerHealth(),
+        refreshDiagnosticsSnapshot(),
+      ]);
       setRefreshError(null);
     } catch (err) {
       setRefreshError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [refreshLibraryCounts, refreshSummary, refreshUserStatus]);
+  }, [
+    refreshDbStatus,
+    refreshDiagnosticsSnapshot,
+    refreshSummary,
+    refreshUserStatus,
+    refreshWorkerHealth,
+  ]);
 
   useEffect(() => {
     void refreshAll();
@@ -1257,6 +1356,101 @@ export default function MonitoringDashboard() {
     userTokenExpirySec == null ? userTokenStatusLabel : `${userTokenStatusLabel} · ${userTokenExpirySec}s`;
   const appTokenSummary =
     appTokenExpirySec == null ? appTokenStatusLabel : `${appTokenStatusLabel} · ${appTokenExpirySec}s`;
+  const overallTone: Tone =
+    primaryInsight?.tone ??
+    (activeIncidentCount > 0 ? "error" : apiTone === "error" || authStatusTone === "error" ? "error" : "ok");
+  const overallStatusLabel =
+    overallTone === "ok"
+      ? "Gezond"
+      : overallTone === "warn"
+      ? "Aandacht nodig"
+      : "Actie vereist";
+  const workerTone: Tone =
+    workerHealth?.status === "OK"
+      ? "ok"
+      : workerHealth?.status === "STALE"
+      ? "warn"
+      : workerHealth?.status
+      ? "error"
+      : "warn";
+  const dbTone: Tone = dbStatus?.counts ? "ok" : "warn";
+  const syncRunning = Boolean(dbStatus?.sync?.running);
+  const staleRunningCount =
+    typeof dbStatus?.sync?.staleRunning === "number" ? dbStatus.sync.staleRunning : 0;
+  const syncTone: Tone = staleRunningCount > 0 ? "warn" : syncRunning ? "warn" : "ok";
+  const runtimeFlags = diagnosticsSnapshot?.app;
+  const sectionTabs: Array<{ id: StatusSectionId; label: string; meta: string }> = [
+    { id: "overview", label: "Overzicht", meta: "wat vraagt nu aandacht" },
+    { id: "health", label: "Health", meta: "tokens, api, rate limits" },
+    { id: "data", label: "Data & sync", meta: "worker, jobs, counts" },
+    { id: "diagnostics", label: "Diagnostiek", meta: "errors en logs" },
+    { id: "actions", label: "Acties", meta: "interventie en configuratie" },
+    { id: "ai", label: "AI prompt", meta: "bestaande ChatGPT-flow" },
+  ];
+  const serviceCards = [
+    {
+      title: "Spotify koppeling",
+      value: authStatusLabel,
+      meta: summary?.authStatus.userId ?? "geen gebruiker",
+      tone: authStatusTone,
+    },
+    {
+      title: "User token",
+      value: userTokenStatusLabel,
+      meta: userTokenExpirySec == null ? "geen expiry bekend" : `${userTokenExpirySec}s geldig`,
+      tone: userTokenTone,
+    },
+    {
+      title: "App token",
+      value: appTokenStatusLabel,
+      meta: appTokenExpirySec == null ? "geen expiry bekend" : `${appTokenExpirySec}s geldig`,
+      tone: appTokenTone,
+    },
+    {
+      title: "Worker",
+      value: workerHealth?.status ?? "CHECKING",
+      meta: workerHealth?.lastHeartbeat
+        ? `heartbeat ${fmtCompactTime(workerHealth.lastHeartbeat)}`
+        : "geen heartbeat",
+      tone: workerTone,
+    },
+    {
+      title: "Database",
+      value: dbStatus?.counts ? "Beschikbaar" : "Controleren",
+      meta: dbStatus?.asOf ? `snapshot ${fmtCompactTime(dbStatus.asOf)}` : "geen snapshot",
+      tone: dbTone,
+    },
+    {
+      title: "Sync pipeline",
+      value: syncRunning ? "Bezig" : "Idle",
+      meta:
+        staleRunningCount > 0
+          ? `${staleRunningCount} stale taken`
+          : dbStatus?.sync?.lastSuccessfulAt
+          ? `laatste sync ${fmtCompactTime(dbStatus.sync.lastSuccessfulAt)}`
+          : "nog geen succesvolle sync",
+      tone: syncTone,
+    },
+  ];
+  const syncResources = Array.isArray(dbStatus?.sync?.resources)
+    ? [...(dbStatus?.sync?.resources ?? [])]
+        .sort((a, b) => {
+          const failureDiff = (b.failureCount ?? 0) - (a.failureCount ?? 0);
+          if (failureDiff !== 0) return failureDiff;
+          return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+        })
+        .slice(0, 12)
+    : [];
+  const dataInventory = [
+    { label: "Playlists", value: fmtCount(dbStatus?.counts?.playlists ?? libraryCounts?.playlists ?? 0) },
+    { label: "Tracks", value: fmtCount(dbStatus?.counts?.tracks ?? libraryCounts?.tracks ?? 0) },
+    { label: "Artiesten", value: fmtCount(dbStatus?.counts?.artists ?? libraryCounts?.artists ?? 0) },
+    { label: "Playlist items", value: fmtCount(dbStatus?.counts?.playlist_items ?? 0) },
+    { label: "Cover images", value: fmtCount(dbStatus?.counts?.cover_images ?? 0) },
+    { label: "Track-artiest links", value: fmtCount(dbStatus?.counts?.track_artists ?? 0) },
+  ];
+  const featureFlags = Object.entries(PLAYBACK_FEATURE_FLAGS);
+  const recentSlowActivities = diagnosticsSnapshot?.recentSlowActivities?.slice(0, 8) ?? [];
 
   return (
     <main className="page settings-page ops-page">
@@ -1264,18 +1458,18 @@ export default function MonitoringDashboard() {
         className="card ops-shell"
         style={{ marginTop: "calc(var(--app-content-offset-top, 0px) + 24px)" }}
       >
-        <header className="ops-header ops-header-compact">
+        <header className="ops-control-header">
           <div className="ops-header-copy">
-            <span className="ops-kicker">Control room</span>
-            <h1 className="ops-title">Settings & Monitoring</h1>
+            <span className="ops-kicker">System control</span>
+            <h1 className="ops-title">Settings & System Status</h1>
             <p className="ops-subtitle">
-              Beheer koppeling, herstelacties en Spotify-performance vanuit een pagina die
-              prioriteit geeft aan wat nu aandacht vraagt.
+              Een centrale controlekamer voor Spotify-koppeling, systeemgezondheid,
+              diagnostiek, onderhoud en de bestaande ChatGPT prompt-workflow.
             </p>
           </div>
 
-          <div className="ops-header-controls">
-            <span className={pillClass(authStatusTone)}>Koppeling: {authStatusLabel}</span>
+          <div className="ops-control-summary">
+            <span className={pillClass(overallTone)}>Status: {overallStatusLabel}</span>
             <span className="ops-meta-item">
               Omgeving <strong>{environmentLabel}</strong>
             </span>
@@ -1303,17 +1497,33 @@ export default function MonitoringDashboard() {
 
         {summaryAvailable ? (
           <>
-            <section className="ops-hero" aria-label="Systeemsamenvatting">
-              <article className="ops-hero-primary">
-                <div className="ops-hero-copy">
-                  <span className="ops-kicker">Actieve operator</span>
-                  <h2 className="ops-hero-title">{profileLabel}</h2>
-                  <p className="ops-hero-text">
-                    {primaryInsight?.text ??
-                      "De settings-page toont live de gezondheid van koppeling, tokens en Spotify API-verkeer."}
-                  </p>
-                </div>
+            <nav className="ops-control-nav" aria-label="Settings secties">
+              {sectionTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`ops-control-nav-btn${activeSection === tab.id ? " active" : ""}`}
+                  onClick={() => setActiveSection(tab.id)}
+                >
+                  <strong>{tab.label}</strong>
+                  <span>{tab.meta}</span>
+                </button>
+              ))}
+            </nav>
 
+            <section className="ops-control-hero" aria-label="Systeemsamenvatting">
+              <article className={`ops-control-focus ${toneClass(primaryInsight?.tone ?? "ok")}`}>
+                <div className="ops-section-head">
+                  <div className="ops-stack-tight">
+                    <span className="ops-kicker">Focus nu</span>
+                    <h2 className="ops-hero-title">{primaryInsight?.title ?? "Systeem stabiel"}</h2>
+                  </div>
+                  <span className={pillClass(overallTone)}>{overallStatusLabel}</span>
+                </div>
+                <p className="ops-hero-text">
+                  {primaryInsight?.text ??
+                    "De control room toont live de gezondheid van koppeling, tokens, worker en Spotify API-verkeer."}
+                </p>
                 <div className="ops-hero-chip-row">
                   <span className={`ops-hero-chip ${toneClass(authStatusTone)}`}>
                     Koppeling {authStatusLabel}
@@ -1324,89 +1534,22 @@ export default function MonitoringDashboard() {
                   <span className={`ops-hero-chip ${toneClass(appTokenTone)}`}>
                     App token {appTokenSummary}
                   </span>
-                  <span className={`ops-hero-chip ${toneClass(rateTone)}`}>
-                    Rate limit {summary?.rateLimits.count429 ?? 0}
+                  <span className={`ops-hero-chip ${toneClass(syncTone)}`}>
+                    Sync {syncRunning ? "bezig" : "idle"}
                   </span>
-                </div>
-
-                <div className="ops-hero-actions">
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => {
-                      window.location.href = "/api/auth/login";
-                    }}
-                    disabled={actionBusy !== null}
-                  >
-                    Spotify koppelen
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={actionBusy !== null || tokenRefreshCooldownLeftSec > 0}
-                    onClick={async () => {
-                      const payload = await runAction(
-                        "Token vernieuwen",
-                        "/api/monitoring/token/refresh",
-                        "POST",
-                        () => "Token vernieuwd"
-                      );
-                      if (payload) {
-                        setTokenRefreshCooldownUntil(Date.now() + 10_000);
-                      }
-                    }}
-                  >
-                    {tokenRefreshCooldownLeftSec > 0
-                      ? `Wacht ${tokenRefreshCooldownLeftSec}s`
-                      : actionBusy === "Token vernieuwen"
-                      ? "Bezig..."
-                      : "Token vernieuwen"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={actionBusy !== null}
-                    onClick={async () => {
-                      const ok = window.confirm(
-                        "Bibliotheek bijwerken kan kort extra belasting geven. Nu starten?"
-                      );
-                      if (!ok) return;
-                      await runBulkSync();
-                    }}
-                  >
-                    {actionBusy === "Bibliotheek bijwerken" ? "Bezig..." : "Bibliotheek sync"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    disabled={rateLimitLogLoading}
-                    onClick={async () => {
-                      setRateLimitLogOpen(true);
-                      await loadRateLimitActivityLog();
-                    }}
-                  >
-                    {rateLimitLogLoading
-                      ? "Log laden..."
-                      : rateLimitLogOpen
-                      ? "Rate-limit log verversen"
-                      : `Rate-limit log (${fmtCount(rateLimitActivityTotal)})`}
-                  </button>
                 </div>
               </article>
 
-              <div className="ops-hero-secondary">
+              <div className="ops-control-metrics">
                 <article className={`ops-mini-stat ${toneClass(primaryInsight?.tone ?? "ok")}`}>
                   <span className="ops-mini-stat-label">Focus nu</span>
-                  <strong className="ops-mini-stat-value">
-                    {primaryInsight?.title ?? "Systeem stabiel"}
-                  </strong>
+                  <strong className="ops-mini-stat-value">{primaryInsight?.title ?? "Stabiel"}</strong>
                   <span className="ops-mini-stat-meta">
                     {activeIncidentCount > 0
                       ? `${activeIncidentCount} actieve incidenten`
                       : `${metricsWindowLabel} meetvenster`}
                   </span>
                 </article>
-
                 <article className="ops-mini-stat ops-tone-ok">
                   <span className="ops-mini-stat-label">Bibliotheek</span>
                   <strong className="ops-mini-stat-value">{fmtCount(totalLibraryItems)}</strong>
@@ -1414,17 +1557,15 @@ export default function MonitoringDashboard() {
                     {fmtCount(libraryCounts?.playlists)} playlists · {fmtCount(libraryCounts?.tracks)} tracks
                   </span>
                 </article>
-
                 <article className={`ops-mini-stat ${toneClass(apiTone)}`}>
-                  <span className="ops-mini-stat-label">Verkeer</span>
+                  <span className="ops-mini-stat-label">API health</span>
                   <strong className="ops-mini-stat-value">
-                    {summary?.traffic.requestsPerMin ?? 0}/min
+                    {fmtPercent(summary?.apiHealth.successRate ?? 0)}
                   </strong>
                   <span className="ops-mini-stat-meta">
-                    {apiSampleCount} requests in {metricsWindowLabel}
+                    {apiSampleCount} requests · {summary?.apiHealth.upstream5xx ?? 0} serverfouten
                   </span>
                 </article>
-
                 <article className={`ops-mini-stat ${toneClass(latencyTone)}`}>
                   <span className="ops-mini-stat-label">P95 latency</span>
                   <strong className="ops-mini-stat-value">{foregroundLatencyP95} ms</strong>
@@ -1435,517 +1576,381 @@ export default function MonitoringDashboard() {
               </div>
             </section>
 
-            <section className="ops-priority-grid" aria-label="Wat vraagt aandacht">
-              {primaryInsight ? (
-                <article className={`ops-priority-lead ${toneClass(primaryInsight.tone)}`}>
-                  <div className="ops-priority-head">
-                    <span className={pillClass(primaryInsight.tone)}>
-                      {primaryInsight.tone === "ok"
-                        ? "Stabiel"
-                        : primaryInsight.tone === "warn"
-                        ? "Let op"
-                        : "Direct actie"}
-                    </span>
+            {activeSection === "overview" ? (
+              <section className="ops-dashboard-grid" aria-label="Overzicht">
+                <article className="panel ops-panel ops-span-8">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">Operator overview</h3>
                     <HelpTip
-                      label="Focus nu"
-                      text="Dit is de belangrijkste operationele boodschap op basis van tokens, rate limits, success rate en incidenten."
+                      label="Operator overview"
+                      text="De kernstatus van de app, direct vertaald naar wat nu aandacht vraagt."
                     />
                   </div>
-                  <strong className="ops-priority-title">{primaryInsight.title}</strong>
-                  <p className="ops-priority-text">{primaryInsight.text}</p>
-                </article>
-              ) : null}
-
-              <div className="ops-priority-stack">
-                {supportingInsights.length ? (
-                  supportingInsights.map((item) => <AlertCard key={item.id} item={item} />)
-                ) : (
-                  <article className="ops-alert-card ops-tone-ok">
-                    <span className="pill pill-success">Alles ok</span>
-                    <strong>Geen extra aandachtspunten</strong>
-                    <p className="text-subtle">
-                      Tokens, API en synchronisatie ogen op dit moment stabiel.
-                    </p>
-                  </article>
-                )}
-              </div>
-            </section>
-
-            <section className="ops-kpi-grid" aria-label="Gezondheidsmetingen">
-              <KpiCard
-                title="Koppeling"
-                value={authStatusLabel}
-                subtitle={summary?.authStatus.userId ?? "geen gebruiker"}
-                tone={authStatusTone}
-                meter={authStatusTone === "ok" ? 1 : authStatusTone === "warn" ? 0.55 : 0.2}
-                hint="Geeft aan of Spotify-auth direct bruikbaar is voor playback en device-acties."
-              />
-
-              <KpiCard
-                title="API betrouwbaarheid"
-                value={fmtPercent(summary?.apiHealth.successRate ?? 0)}
-                subtitle={`${apiSampleCount} req in ${metricsWindowLabel} · ${summary?.apiHealth.upstream5xx ?? 0} serverfouten · ${restrictionViolatedCount} restricties`}
-                tone={apiTone}
-                meter={summary?.apiHealth.successRate ?? 0}
-                hint="Percentage succesvolle Spotify-requests in een recent tijdvenster. Verwachte 'geen actieve player' 404 telt niet als fout."
-              />
-
-              <KpiCard
-                title="Reactiesnelheid"
-                value={`${foregroundLatencyP95} ms`}
-                subtitle={
-                  topSlowActivity
-                    ? `Traagste activiteit: ${topSlowActivity.label} (${topSlowActivity.count})`
-                    : "Foreground en background worden apart gemeten"
-                }
-                tone={latencyTone}
-                meter={
-                  1 -
-                  clamp01(foregroundLatencyP95 / 1800)
-                }
-                details={[
-                  { label: "Foreground p95", value: `${foregroundLatencyP95} ms` },
-                  { label: "Background p95", value: `${backgroundLatencyP95} ms` },
-                ]}
-                hint="Toont foreground request-latency voor UX, met background latency als context."
-                featured
-              />
-
-              <KpiCard
-                title="Rate limit"
-                value={`${summary?.rateLimits.count429 ?? 0}`}
-                subtitle={rateBackoffSubtitleWithWindow}
-                tone={rateTone}
-                meter={1 - clamp01((summary?.rateLimits.count429 ?? 0) / 20)}
-                hint="Aantal 429 responses in het recente meetvenster. Bij actief backoff telt deze kaart live af naar 0s."
-              />
-
-              <KpiCard
-                title="User token"
-                value={
-                  userTokenExpirySec == null
-                    ? `${userTokenStatusLabel} · n/a`
-                    : `${userTokenStatusLabel} · ${userTokenExpirySec}s`
-                }
-                subtitle={`Refresh ok ${fmtCount(summary?.tokenHealth.refreshSuccessCount ?? 0)}`}
-                tone={userTokenTone}
-                meter={
-                  userTokenExpirySec == null
-                    ? 0.4
-                    : userTokenExpirySec / 3600
-                }
-                hint="Toont resterende tokenduur en hoe stabiel automatische refresh werkt."
-              />
-
-              <KpiCard
-                title="App token"
-                value={
-                  appTokenExpirySec == null
-                    ? `${appTokenStatusLabel} · n/a`
-                    : `${appTokenStatusLabel} · ${appTokenExpirySec}s`
-                }
-                subtitle={`Refresh ok ${fmtCount(summary?.appTokenHealth.refreshSuccessCount ?? 0)}`}
-                tone={appTokenTone}
-                meter={appTokenExpirySec == null ? 0.4 : appTokenExpirySec / 3600}
-                hint="Client-credentials token voor app-level Spotify calls."
-              />
-            </section>
-
-            <section className="ops-main-grid ops-settings-grid" aria-label="Settings en acties">
-              <article className="panel ops-panel ops-settings-panel ops-settings-panel-actions">
-                <div className="ops-section-head">
-                  <h3 className="ops-section-title">Herstellen & bedienen</h3>
-                  <HelpTip
-                    label="Snelle acties"
-                    text="Dagelijkse acties om koppeling, tokens en sync te herstellen zonder handmatige shell-werkzaamheden."
-                  />
-                </div>
-                <div className="ops-action-grid">
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={actionBusy !== null}
-                    onClick={() => void runAction("API test", "/api/monitoring/test-api", "POST")}
-                  >
-                    {actionBusy === "API test" ? "Bezig..." : "API-test"}
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={actionBusy !== null}
-                    onClick={() => void runDiagnosticsExport()}
-                  >
-                    {actionBusy === "Diagnostics export" ? "Bezig..." : "Diagnose"}
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    disabled={actionBusy !== null}
-                    onClick={async () => {
-                      const ok = window.confirm("Uitloggen sluit de app sessie. Doorgaan?");
-                      if (!ok) return;
-                      setActionBusy("App uitloggen");
-                      try {
-                        await clientFetch("/api/pin-logout", { method: "POST" });
-                      } finally {
-                        window.location.href = "/login";
-                      }
-                    }}
-                  >
-                    App uitloggen
-                  </button>
-                </div>
-              </article>
-
-              <article className="panel ops-panel ops-settings-panel ops-settings-panel-account">
-                <div className="ops-section-head">
-                  <h3 className="ops-section-title">Koppeling & tokens</h3>
-                  <HelpTip
-                    label="Koppeling details"
-                    text="Kerninformatie over de actieve Spotify gebruiker en de gezondheid van user/app tokens."
-                  />
-                </div>
-                <div className="ops-keyvalue-list">
-                  <div className="ops-keyvalue-row">
-                    <span className="text-subtle">Status</span>
-                    <span className={pillClass(authStatusTone)}>{authStatusLabel}</span>
-                  </div>
-                  <div className="ops-keyvalue-row">
-                    <span className="text-subtle">Spotify gebruiker</span>
-                    <strong>{summary?.authStatus.userId ?? "n/a"}</strong>
-                  </div>
-                  <div className="ops-keyvalue-row">
-                    <span className="text-subtle">Profiel</span>
-                    <strong>
-                      {userStatus?.profile?.display_name ??
-                        userStatus?.profile?.id ??
-                        userStatus?.status ??
-                        "n/a"}
-                    </strong>
-                  </div>
-                  <div className="ops-keyvalue-row">
-                    <span className="text-subtle">Laatst geauthenticeerd</span>
-                    <strong>{fmtDateTime(summary?.authStatus.lastAuthAt ?? null)}</strong>
-                  </div>
-                  <div className="ops-keyvalue-row">
-                    <span className="text-subtle">Actieve scopes</span>
-                    <strong>{summary?.authStatus.scopes.length ?? 0}</strong>
-                  </div>
-                  <div className="ops-keyvalue-row">
-                    <span className="text-subtle">User token status</span>
-                    <span className={pillClass(userTokenTone)}>{userTokenStatusLabel}</span>
-                  </div>
-                  <div className="ops-keyvalue-row">
-                    <span className="text-subtle">User token geldig</span>
-                    <strong>
-                      {userTokenExpirySec == null ? "n/a" : `${userTokenExpirySec}s`}
-                    </strong>
-                  </div>
-                  <div className="ops-keyvalue-row">
-                    <span className="text-subtle">User refresh ok</span>
-                    <strong>{fmtCount(summary?.tokenHealth.refreshSuccessCount)}</strong>
-                  </div>
-                  <div className="ops-keyvalue-row">
-                    <span className="text-subtle">App token status</span>
-                    <span className={pillClass(appTokenTone)}>{appTokenStatusLabel}</span>
-                  </div>
-                  <div className="ops-keyvalue-row">
-                    <span className="text-subtle">App token geldig</span>
-                    <strong>{appTokenExpirySec == null ? "n/a" : `${appTokenExpirySec}s`}</strong>
-                  </div>
-                  {summary?.appTokenHealth.lastError ? (
-                    <div className="ops-keyvalue-row">
-                      <span className="text-subtle">App token fout</span>
-                      <strong>{summary.appTokenHealth.lastError}</strong>
+                  <div className="ops-priority-grid">
+                    <article className={`ops-priority-lead ${toneClass(primaryInsight?.tone ?? "ok")}`}>
+                      <div className="ops-priority-head">
+                        <span className={pillClass(primaryInsight?.tone ?? "ok")}>{overallStatusLabel}</span>
+                        <span className="text-subtle">{profileLabel}</span>
+                      </div>
+                      <strong className="ops-priority-title">{primaryInsight?.title}</strong>
+                      <p className="ops-priority-text">{primaryInsight?.text}</p>
+                    </article>
+                    <div className="ops-priority-stack">
+                      {supportingInsights.length ? (
+                        supportingInsights.map((item) => <AlertCard key={item.id} item={item} />)
+                      ) : (
+                        <article className="ops-alert-card ops-tone-ok">
+                          <span className="pill pill-success">Alles ok</span>
+                          <strong>Geen extra aandachtspunten</strong>
+                          <p className="text-subtle">
+                            Tokens, API en synchronisatie ogen op dit moment stabiel.
+                          </p>
+                        </article>
+                      )}
                     </div>
-                  ) : null}
-                  <div className="ops-keyvalue-row">
-                    <span className="text-subtle">App refresh ok</span>
-                    <strong>{fmtCount(summary?.appTokenHealth.refreshSuccessCount)}</strong>
                   </div>
-                  <div className="ops-keyvalue-row">
-                    <span className="text-subtle">Verkeer/min</span>
-                    <strong>{summary?.traffic.requestsPerMin ?? 0}</strong>
-                  </div>
-                </div>
-              </article>
+                </article>
 
-              <article className="panel ops-panel ops-settings-panel ops-settings-panel-preferences">
-                <div className="ops-section-head">
-                  <h3 className="ops-section-title">Weergave & updates</h3>
-                  <HelpTip
-                    label="Weergave"
-                    text="Bepaalt hoe agressief deze control room zichzelf ververst en hoe vaak je terugkoppeling ziet."
-                  />
-                </div>
-
-                <div className="ops-settings-list">
-                  <label className="ops-settings-control ops-switch-row">
-                    <span className="ops-settings-control-copy">
-                      <strong>Automatisch verversen</strong>
-                      <small>Houdt de control room live zonder handmatig te verversen.</small>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={autoRefresh}
-                      onChange={(event) => setAutoRefresh(event.target.checked)}
+                <article className="panel ops-panel ops-span-4">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">Aanbevolen acties</h3>
+                    <HelpTip
+                      label="Aanbevolen acties"
+                      text="De meest nuttige directe ingrepen voor operator en developer."
                     />
-                  </label>
-
-                  <label className="ops-settings-control ops-input-row">
-                    <span className="ops-settings-control-copy">
-                      <strong>Refresh interval</strong>
-                      <small>Kies hoe vaak nieuwe status- en foutdata wordt opgehaald.</small>
-                    </span>
-                    <select
-                      className="input"
-                      value={String(refreshIntervalSec)}
-                      disabled={!autoRefresh}
-                      onChange={(event) => {
-                        const value = Number(event.target.value);
-                        if (Number.isFinite(value)) {
-                          setRefreshIntervalSec(Math.max(5, Math.min(60, Math.floor(value))));
+                  </div>
+                  <div className="ops-action-grid">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => {
+                        window.location.href = "/api/auth/login";
+                      }}
+                      disabled={actionBusy !== null}
+                    >
+                      Spotify koppelen
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={actionBusy !== null || tokenRefreshCooldownLeftSec > 0}
+                      onClick={async () => {
+                        const payload = await runAction(
+                          "Token vernieuwen",
+                          "/api/monitoring/token/refresh",
+                          "POST",
+                          () => "Token vernieuwd"
+                        );
+                        if (payload) {
+                          setTokenRefreshCooldownUntil(Date.now() + 10_000);
                         }
                       }}
                     >
-                      <option value="5">5 seconden</option>
-                      <option value="10">10 seconden</option>
-                      <option value="15">15 seconden</option>
-                      <option value="30">30 seconden</option>
-                      <option value="60">60 seconden</option>
-                    </select>
-                  </label>
-                </div>
-              </article>
-
-              <article className="panel ops-panel span-8 ops-history-panel">
-                <div className="ops-section-head">
-                  <h3 className="ops-section-title">Actiehistorie</h3>
-                  <HelpTip
-                    label="Actiehistorie"
-                    text="Laatste uitgevoerde herstelacties en hun resultaat in deze sessie."
-                  />
-                </div>
-
-                {actionHistory.length ? (
-                  <div className="ops-history-list">
-                    {actionHistory.map((entry) => (
-                      <div key={entry.id} className="ops-history-row">
-                        <div className="ops-history-top">
-                          <span className={entry.outcome === "success" ? "pill pill-success" : "pill pill-error"}>
-                            {entry.outcome === "success" ? "Gelukt" : "Mislukt"}
-                          </span>
-                          <span className="ops-recent-time">{fmtCompactTime(entry.at)}</span>
-                        </div>
-                        <strong>{entry.name}</strong>
-                        <div className="text-subtle">{entry.message}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-subtle">Nog geen acties uitgevoerd in deze sessie.</div>
-                )}
-              </article>
-
-              <article className="panel ops-panel span-6">
-                <div className="ops-section-head">
-                  <h3 className="ops-section-title">Foutmix per endpoint</h3>
-                  <HelpTip
-                    label="Foutmix"
-                    text="Endpointcategorieen die in het huidige meetvenster de meeste fouten produceren. Klik om recente fouten te filteren."
-                  />
-                </div>
-                {topErrors.length ? (
-                  <div className="ops-mix-list">
-                    {topErrors.map((row) => {
-                      const endpointMeta = describeEndpoint(row.label);
-                      const endpointKey = normalizeEndpointKey(row.label);
-                      const isActive =
-                        normalizeEndpointKey(selectedErrorEndpoint) === endpointKey;
-                      return (
-                        <button
-                          key={row.label}
-                          type="button"
-                          className={`ops-mix-row ops-mix-row-btn${isActive ? " is-active" : ""}`}
-                          title={endpointMeta.title}
-                          onClick={() => {
-                            setSelectedErrorEndpoint((prev) =>
-                              normalizeEndpointKey(prev) === endpointKey ? null : row.label
-                            );
-                          }}
-                        >
-                          <div className="ops-mix-label">
-                            <span className="ops-mix-main">{endpointMeta.label}</span>
-                            <span className="ops-mix-raw">{endpointMeta.raw}</span>
-                          </div>
-                          <div className="ops-mix-meter" aria-hidden="true">
-                            <span style={{ width: `${Math.max(4, (row.value / maxErrorCount) * 100)}%` }} />
-                          </div>
-                          <div className="ops-mix-value">{row.value}</div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="text-subtle">Geen fouten in de huidige meting.</div>
-                )}
-              </article>
-
-              <article className="panel ops-panel span-6">
-                <div className="ops-section-head">
-                  <h3 className="ops-section-title">
-                    {selectedErrorEndpointMeta
-                      ? `Recente fouten · ${selectedErrorEndpointMeta.label}`
-                      : "Recente fouten & context"}
-                  </h3>
-                  <HelpTip
-                    label="Recente fouten"
-                    text="De meest recente foutmeldingen met een vertaalslag naar een bruikbare operator-uitleg."
-                  />
-                </div>
-                {selectedErrorEndpointMeta ? (
-                  <div className="ops-recent-filter">
-                    <span className="text-subtle">
-                      Filter actief op <strong>{selectedErrorEndpointMeta.label}</strong>
-                    </span>
+                      {tokenRefreshCooldownLeftSec > 0
+                        ? `Wacht ${tokenRefreshCooldownLeftSec}s`
+                        : actionBusy === "Token vernieuwen"
+                        ? "Bezig..."
+                        : "Token vernieuwen"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={actionBusy !== null}
+                      onClick={async () => {
+                        const ok = window.confirm(
+                          "Bibliotheek bijwerken kan kort extra belasting geven. Nu starten?"
+                        );
+                        if (!ok) return;
+                        await runBulkSync();
+                      }}
+                    >
+                      {actionBusy === "Bibliotheek bijwerken" ? "Bezig..." : "Bibliotheek sync"}
+                    </button>
                     <button
                       type="button"
                       className="btn btn-ghost"
-                      onClick={() => setSelectedErrorEndpoint(null)}
+                      disabled={rateLimitLogLoading}
+                      onClick={async () => {
+                        setActiveSection("diagnostics");
+                        setRateLimitLogOpen(true);
+                        await loadRateLimitActivityLog();
+                      }}
                     >
-                      Toon alles
+                      {rateLimitLogLoading ? "Log laden..." : `Rate-limit log (${fmtCount(rateLimitActivityTotal)})`}
                     </button>
                   </div>
-                ) : null}
-                {visibleRecentErrors.length ? (
-                  <div className="ops-recent-list" role="status" aria-live="polite">
-                    {visibleRecentErrors.map((item) => {
-                      const endpoint = describeEndpoint(item.endpoint ?? "onbekend");
-                      const codeMeta = describeErrorCode(item.code);
-                      const message = describeRecentErrorMessage({
-                        code: item.code,
-                        endpointRaw: endpoint.raw.toLowerCase(),
-                        message: item.message,
-                      });
-                      return (
-                        <div key={item.id} className="ops-recent-row">
-                          <div className="ops-recent-top">
-                            <span className="ops-recent-time">{fmtCompactTime(item.at)}</span>
-                            <span
-                              className={`ops-recent-code ops-recent-code-${codeMeta.tone}`}
-                              title={item.code}
-                            >
-                              {codeMeta.label}
-                            </span>
-                          </div>
-                          <strong>{endpoint.label}</strong>
-                          <div className="text-subtle">{message}</div>
-                          <div className="ops-recent-extra">{codeMeta.help}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="text-subtle">
-                    {selectedErrorEndpointMeta
-                      ? `Geen recente fouten voor ${selectedErrorEndpointMeta.label}.`
-                      : "Geen recente fouten."}
-                  </div>
-                )}
-              </article>
+                </article>
 
-              {rateLimitLogOpen ? (
-                <article className="panel ops-panel span-12">
+                <article className="panel ops-panel ops-span-12">
                   <div className="ops-section-head">
-                    <h3 className="ops-section-title">Rate-limit activiteitenlog</h3>
+                    <h3 className="ops-section-title">Service status</h3>
                     <HelpTip
-                      label="Rate-limit activiteitenlog"
-                      text="Toont welke acties/endpoints 429 of lokale limiter-events veroorzaken, inclusief retry-after en correlatie-id."
+                      label="Service status"
+                      text="Compacte statuskaarten voor de belangrijkste subsysteem-statussen."
                     />
                   </div>
-                  <div className="ops-recent-filter">
-                    <span className="text-subtle">
-                      {rateLimitLogFetchedAt
-                        ? `Laatste fetch ${fmtCompactTime(rateLimitLogFetchedAt)} · ${fmtCount(
-                            rateLimitLogEntries.length
-                          )} regels`
-                        : "Nog niet geladen"}
-                    </span>
-                    <div style={{ display: "inline-flex", gap: 8 }}>
+                  <div className="ops-service-grid">
+                    {serviceCards.map((card) => (
+                      <article key={card.title} className={`ops-service-card ${toneClass(card.tone)}`}>
+                        <span className="ops-mini-stat-label">{card.title}</span>
+                        <strong className="ops-service-value">{card.value}</strong>
+                        <span className="ops-mini-stat-meta">{card.meta}</span>
+                      </article>
+                    ))}
+                  </div>
+                </article>
+              </section>
+            ) : null}
+
+            {activeSection === "health" ? (
+              <section className="ops-dashboard-grid" aria-label="Health">
+                <article className="panel ops-panel ops-span-12">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">App health</h3>
+                    <HelpTip
+                      label="App health"
+                      text="Observeer auth, tokens, API stabiliteit, latency en rate limiting vanuit een centraal overzicht."
+                    />
+                  </div>
+                  <section className="ops-kpi-grid" aria-label="Gezondheidsmetingen">
+                    <KpiCard
+                      title="Koppeling"
+                      value={authStatusLabel}
+                      subtitle={summary?.authStatus.userId ?? "geen gebruiker"}
+                      tone={authStatusTone}
+                      meter={authStatusTone === "ok" ? 1 : authStatusTone === "warn" ? 0.55 : 0.2}
+                      hint="Geeft aan of Spotify-auth direct bruikbaar is voor playback en device-acties."
+                    />
+                    <KpiCard
+                      title="API betrouwbaarheid"
+                      value={fmtPercent(summary?.apiHealth.successRate ?? 0)}
+                      subtitle={`${apiSampleCount} req in ${metricsWindowLabel} · ${summary?.apiHealth.upstream5xx ?? 0} serverfouten · ${restrictionViolatedCount} restricties`}
+                      tone={apiTone}
+                      meter={summary?.apiHealth.successRate ?? 0}
+                      hint="Percentage succesvolle Spotify-requests in een recent tijdvenster. Verwachte 'geen actieve player' 404 telt niet als fout."
+                    />
+                    <KpiCard
+                      title="Reactiesnelheid"
+                      value={`${foregroundLatencyP95} ms`}
+                      subtitle={
+                        topSlowActivity
+                          ? `Traagste activiteit: ${topSlowActivity.label} (${topSlowActivity.count})`
+                          : "Foreground en background worden apart gemeten"
+                      }
+                      tone={latencyTone}
+                      meter={1 - clamp01(foregroundLatencyP95 / 1800)}
+                      details={[
+                        { label: "Foreground p95", value: `${foregroundLatencyP95} ms` },
+                        { label: "Background p95", value: `${backgroundLatencyP95} ms` },
+                      ]}
+                      hint="Toont foreground request-latency voor UX, met background latency als context."
+                      featured
+                    />
+                    <KpiCard
+                      title="Rate limit"
+                      value={`${summary?.rateLimits.count429 ?? 0}`}
+                      subtitle={rateBackoffSubtitleWithWindow}
+                      tone={rateTone}
+                      meter={1 - clamp01((summary?.rateLimits.count429 ?? 0) / 20)}
+                      hint="Aantal 429 responses in het recente meetvenster. Bij actief backoff telt deze kaart live af naar 0s."
+                    />
+                    <KpiCard
+                      title="User token"
+                      value={userTokenSummary}
+                      subtitle={`Refresh ok ${fmtCount(summary?.tokenHealth.refreshSuccessCount ?? 0)}`}
+                      tone={userTokenTone}
+                      meter={userTokenExpirySec == null ? 0.4 : userTokenExpirySec / 3600}
+                      hint="Toont resterende tokenduur en hoe stabiel automatische refresh werkt."
+                    />
+                    <KpiCard
+                      title="App token"
+                      value={appTokenSummary}
+                      subtitle={`Refresh ok ${fmtCount(summary?.appTokenHealth.refreshSuccessCount ?? 0)}`}
+                      tone={appTokenTone}
+                      meter={appTokenExpirySec == null ? 0.4 : appTokenExpirySec / 3600}
+                      hint="Client-credentials token voor app-level Spotify calls."
+                    />
+                  </section>
+                </article>
+
+                <article className="panel ops-panel ops-span-12">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">Services & runtime</h3>
+                  </div>
+                  <div className="ops-service-grid">
+                    {serviceCards.map((card) => (
+                      <article key={card.title} className={`ops-service-card ${toneClass(card.tone)}`}>
+                        <span className="ops-mini-stat-label">{card.title}</span>
+                        <strong className="ops-service-value">{card.value}</strong>
+                        <span className="ops-mini-stat-meta">{card.meta}</span>
+                      </article>
+                    ))}
+                  </div>
+                </article>
+              </section>
+            ) : null}
+
+            {activeSection === "data" ? (
+              <section className="ops-dashboard-grid" aria-label="Data en sync">
+                <article className="panel ops-panel ops-span-12">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">Data inventory</h3>
+                    <HelpTip
+                      label="Data inventory"
+                      text="Toont wat er lokaal in de database aanwezig is en hoe de sync-pipeline ervoor staat."
+                    />
+                  </div>
+                  <div className="ops-service-grid">
+                    {dataInventory.map((item) => (
+                      <article key={item.label} className="ops-service-card ops-tone-ok">
+                        <span className="ops-mini-stat-label">{item.label}</span>
+                        <strong className="ops-service-value">{item.value}</strong>
+                      </article>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="panel ops-panel ops-span-12">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">Sync resources</h3>
+                    <HelpTip
+                      label="Sync resources"
+                      text="Per resource zie je status, laatste success, failures en retry-informatie."
+                    />
+                  </div>
+                  {syncResources.length ? (
+                    <div className="ops-sync-table">
+                      <div className="ops-sync-table-head">
+                        <span>Resource</span>
+                        <span>Status</span>
+                        <span>Laatste succes</span>
+                        <span>Failures</span>
+                        <span>Laatste update</span>
+                      </div>
+                      {syncResources.map((row) => (
+                        <div key={row.resource} className="ops-sync-table-row">
+                          <strong>{row.resource}</strong>
+                          <span>{row.status}</span>
+                          <span>{fmtDateTime(row.lastSuccessfulAt ?? null)}</span>
+                          <span>{fmtCount(row.failureCount ?? 0)}</span>
+                          <span>{fmtDateTime(row.updatedAt ?? null)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-subtle">Nog geen sync resources beschikbaar.</div>
+                  )}
+                </article>
+              </section>
+            ) : null}
+
+            {activeSection === "diagnostics" ? (
+              <section className="ops-dashboard-grid" aria-label="Diagnostiek">
+                <article className="panel ops-panel ops-span-6">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">Foutmix per endpoint</h3>
+                    <HelpTip
+                      label="Foutmix"
+                      text="Endpointcategorieen die in het huidige meetvenster de meeste fouten produceren. Klik om recente fouten te filteren."
+                    />
+                  </div>
+                  {topErrors.length ? (
+                    <div className="ops-mix-list">
+                      {topErrors.map((row) => {
+                        const endpointMeta = describeEndpoint(row.label);
+                        const endpointKey = normalizeEndpointKey(row.label);
+                        const isActive = normalizeEndpointKey(selectedErrorEndpoint) === endpointKey;
+                        return (
+                          <button
+                            key={row.label}
+                            type="button"
+                            className={`ops-mix-row ops-mix-row-btn${isActive ? " is-active" : ""}`}
+                            title={endpointMeta.title}
+                            onClick={() => {
+                              setSelectedErrorEndpoint((prev) =>
+                                normalizeEndpointKey(prev) === endpointKey ? null : row.label
+                              );
+                            }}
+                          >
+                            <div className="ops-mix-label">
+                              <span className="ops-mix-main">{endpointMeta.label}</span>
+                              <span className="ops-mix-raw">{endpointMeta.raw}</span>
+                            </div>
+                            <div className="ops-mix-meter" aria-hidden="true">
+                              <span style={{ width: `${Math.max(4, (row.value / maxErrorCount) * 100)}%` }} />
+                            </div>
+                            <div className="ops-mix-value">{row.value}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-subtle">Geen fouten in de huidige meting.</div>
+                  )}
+                </article>
+
+                <article className="panel ops-panel ops-span-6">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">
+                      {selectedErrorEndpointMeta
+                        ? `Recente fouten · ${selectedErrorEndpointMeta.label}`
+                        : "Recente fouten & context"}
+                    </h3>
+                  </div>
+                  {visibleRecentErrors.length ? (
+                    <div className="ops-recent-list" role="status" aria-live="polite">
+                      {visibleRecentErrors.map((item) => {
+                        const endpoint = describeEndpoint(item.endpoint ?? "onbekend");
+                        const codeMeta = describeErrorCode(item.code);
+                        const message = describeRecentErrorMessage({
+                          code: item.code,
+                          endpointRaw: endpoint.raw.toLowerCase(),
+                          message: item.message,
+                        });
+                        return (
+                          <div key={item.id} className="ops-recent-row">
+                            <div className="ops-recent-top">
+                              <span className="ops-recent-time">{fmtCompactTime(item.at)}</span>
+                              <span className={`ops-recent-code ops-recent-code-${codeMeta.tone}`}>
+                                {codeMeta.label}
+                              </span>
+                            </div>
+                            <strong>{endpoint.label}</strong>
+                            <div className="text-subtle">{message}</div>
+                            <div className="ops-recent-extra">{codeMeta.help}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-subtle">Geen recente fouten.</div>
+                  )}
+                </article>
+
+                <article className="panel ops-panel ops-span-12">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">Rate-limit activiteiten</h3>
+                    <div className="ops-inline-actions">
                       <button
                         type="button"
                         className="btn btn-ghost"
-                        onClick={() => void loadRateLimitActivityLog()}
+                        onClick={() => {
+                          setRateLimitLogOpen(true);
+                          void loadRateLimitActivityLog();
+                        }}
                         disabled={rateLimitLogLoading}
                       >
-                        {rateLimitLogLoading ? "Laden..." : "Verversen"}
+                        {rateLimitLogLoading ? "Laden..." : "Activiteitenlog laden"}
                       </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={() => void copyRateLimitActivityLog()}
-                        disabled={rateLimitLogCopyBusy || rateLimitLogEntries.length === 0}
-                      >
-                        {rateLimitLogCopyBusy ? "Kopieren..." : "Kopieer log"}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={() => setRateLimitLogOpen(false)}
-                      >
-                        Sluiten
+                      <button type="button" className="btn btn-secondary" onClick={() => void runDiagnosticsExport()}>
+                        Diagnose export
                       </button>
                     </div>
                   </div>
-                  {rateLimitLogError ? (
-                    <div className="text-subtle">
-                      Activiteitenlog laden mislukte: {rateLimitLogError}
-                    </div>
-                  ) : null}
-                  {(topReliabilityImpactActivities.length > 0 ||
-                    topResponsivenessImpactActivities.length > 0) && (
-                    <div className="ops-keyvalue-list" style={{ marginBottom: 12 }}>
-                      <div className="ops-keyvalue-row">
-                        <span className="text-subtle">Negatief voor betrouwbaarheid</span>
-                        <strong>
-                          {topReliabilityImpactActivities.length
-                            ? topReliabilityImpactActivities
-                                .map((row) => `${row.label} (${row.count})`)
-                                .join(", ")
-                            : "geen"}
-                        </strong>
-                      </div>
-                      <div className="ops-keyvalue-row">
-                        <span className="text-subtle">Negatief voor reactiesnelheid</span>
-                        <strong>
-                          {topResponsivenessImpactActivities.length
-                            ? topResponsivenessImpactActivities
-                                .map((row) => `${row.label} (${row.count})`)
-                                .join(", ")
-                            : "geen"}
-                        </strong>
-                      </div>
-                    </div>
-                  )}
-                  {rateLimitLogLoading && !rateLimitLogEntries.length ? (
-                    <div className="text-subtle">Activiteitenlog laden...</div>
-                  ) : null}
-                  {!rateLimitLogLoading &&
-                  !rateLimitLogError &&
-                  rateLimitLogEntries.length === 0 ? (
-                    <div className="text-subtle">
-                      Geen rate-limit activiteiten in het huidige venster.
-                    </div>
-                  ) : null}
-                  {rateLimitLogEntries.length > 0 ? (
-                    <div className="ops-recent-list" role="status" aria-live="polite">
-                      {rateLimitLogEntries.map((item, index) => (
-                        <div
-                          key={`${item.at}:${item.correlationId}:${index}`}
-                          className="ops-recent-row"
-                        >
+                  {rateLimitLogOpen && rateLimitLogEntries.length > 0 ? (
+                    <div className="ops-recent-list">
+                      {rateLimitLogEntries.slice(0, 12).map((item, index) => (
+                        <div key={`${item.at}:${item.correlationId}:${index}`} className="ops-recent-row">
                           <div className="ops-recent-top">
                             <span className="ops-recent-time">{fmtCompactTime(item.at)}</span>
                             <span className="ops-recent-code ops-recent-code-warn">
@@ -1958,46 +1963,229 @@ export default function MonitoringDashboard() {
                             {item.endpoint || "onbekend endpoint"}
                           </div>
                           <div className="ops-recent-extra">
-                            betrouwbaarheid {formatImpactLevel(item.impact?.reliability)} ·
-                            snelheid {formatImpactLevel(item.impact?.responsiveness)} ·
-                            prioriteit {item.priority ?? "default"} ·
-                            status {item.statusCode}
-                            {item.retryAfterMs != null
-                              ? ` · retry-after ${Math.max(
-                                  1,
-                                  Math.ceil(item.retryAfterMs / 1000)
-                                )}s`
-                              : ""}
-                            {item.attempt != null ? ` · poging ${item.attempt}` : ""}
-                            {item.correlationId
-                              ? ` · corr ${String(item.correlationId).slice(0, 12)}`
-                              : ""}
+                            betrouwbaarheid {formatImpactLevel(item.impact?.reliability)} · snelheid{" "}
+                            {formatImpactLevel(item.impact?.responsiveness)} · status {item.statusCode}
                           </div>
-                          {item.impact?.reasons?.length ? (
-                            <div className="text-subtle">
-                              impact: {item.impact.reasons.join(", ")}
-                            </div>
-                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-subtle">
+                      {rateLimitLogOpen
+                        ? "Geen rate-limit activiteiten beschikbaar."
+                        : "Laad de activiteitenlog voor live details over 429 en lokale limiter-events."}
+                    </div>
+                  )}
+
+                  {recentSlowActivities.length ? (
+                    <div className="ops-diagnostics-inline-list">
+                      {recentSlowActivities.slice(0, 6).map((item) => (
+                        <div key={`${item.at}-${item.correlationId}`} className="ops-diagnostics-inline-item">
+                          <strong>{item.activity}</strong>
+                          <span className="text-subtle">
+                            {item.durationMs} ms · {item.endpointPath}
+                          </span>
                         </div>
                       ))}
                     </div>
                   ) : null}
                 </article>
-              ) : null}
+              </section>
+            ) : null}
 
-              <article className="panel ops-panel span-12">
-                <div className="ops-section-head">
-                  <h3 className="ops-section-title">Bibliotheek & prompt-instellingen</h3>
-                  <HelpTip
-                    label="Bibliotheek & prompt"
-                    text="Lagere prioriteit dan herstel en diagnose, maar wel direct bruikbaar voor bibliotheekoverzicht en promptconfiguratie."
-                  />
-                </div>
-                <div className="ops-statusbox-basic">
-                  <StatusBox embedded mode="basic-core" showOverviewCounts={false} />
-                </div>
-              </article>
-            </section>
+            {activeSection === "actions" ? (
+              <section className="ops-dashboard-grid" aria-label="Acties en configuratie">
+                <article className="panel ops-panel ops-span-6">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">Interventies</h3>
+                    <HelpTip
+                      label="Interventies"
+                      text="Veilige herstelacties en onderhoudsacties zonder shell-werk."
+                    />
+                  </div>
+                  <div className="ops-action-grid">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => {
+                        window.location.href = "/api/auth/login";
+                      }}
+                      disabled={actionBusy !== null}
+                    >
+                      Spotify koppelen
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={actionBusy !== null}
+                      onClick={() => void runAction("API test", "/api/monitoring/test-api", "POST")}
+                    >
+                      {actionBusy === "API test" ? "Bezig..." : "API-test"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={actionBusy !== null}
+                      onClick={async () => {
+                        const payload = await runAction(
+                          "Token vernieuwen",
+                          "/api/monitoring/token/refresh",
+                          "POST",
+                          () => "Token vernieuwd"
+                        );
+                        if (payload) setTokenRefreshCooldownUntil(Date.now() + 10_000);
+                      }}
+                    >
+                      Token vernieuwen
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={actionBusy !== null}
+                      onClick={async () => {
+                        const ok = window.confirm(
+                          "Bibliotheek bijwerken kan kort extra belasting geven. Nu starten?"
+                        );
+                        if (!ok) return;
+                        await runBulkSync();
+                      }}
+                    >
+                      Bibliotheek sync
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={actionBusy !== null}
+                      onClick={() => void runAction("Cache reset", "/api/monitoring/cache/clear", "POST", () => "Caches en metrics gewist")}
+                    >
+                      Cache reset
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={actionBusy !== null}
+                      onClick={async () => {
+                        const ok = window.confirm("Uitloggen sluit de app sessie. Doorgaan?");
+                        if (!ok) return;
+                        setActionBusy("App uitloggen");
+                        try {
+                          await clientFetch("/api/pin-logout", { method: "POST" });
+                        } finally {
+                          window.location.href = "/login";
+                        }
+                      }}
+                    >
+                      App uitloggen
+                    </button>
+                  </div>
+                </article>
+
+                <article className="panel ops-panel ops-span-6">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">Configuratie & gedrag</h3>
+                  </div>
+                  <div className="ops-settings-list">
+                    <label className="ops-settings-control ops-switch-row">
+                      <span className="ops-settings-control-copy">
+                        <strong>Automatisch verversen</strong>
+                        <small>Houdt de control room live zonder handmatig te verversen.</small>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={autoRefresh}
+                        onChange={(event) => setAutoRefresh(event.target.checked)}
+                      />
+                    </label>
+                    <label className="ops-settings-control ops-input-row">
+                      <span className="ops-settings-control-copy">
+                        <strong>Refresh interval</strong>
+                        <small>Kies hoe vaak nieuwe status- en foutdata wordt opgehaald.</small>
+                      </span>
+                      <select
+                        className="input"
+                        value={String(refreshIntervalSec)}
+                        disabled={!autoRefresh}
+                        onChange={(event) => {
+                          const value = Number(event.target.value);
+                          if (Number.isFinite(value)) {
+                            setRefreshIntervalSec(Math.max(5, Math.min(60, Math.floor(value))));
+                          }
+                        }}
+                      >
+                        <option value="5">5 seconden</option>
+                        <option value="10">10 seconden</option>
+                        <option value="15">15 seconden</option>
+                        <option value="30">30 seconden</option>
+                        <option value="60">60 seconden</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="ops-keyvalue-list">
+                    <div className="ops-keyvalue-row">
+                      <span className="text-subtle">Redis / Upstash</span>
+                      <strong>{runtimeFlags?.hasUpstash ? "Actief" : "Niet geconfigureerd"}</strong>
+                    </div>
+                    <div className="ops-keyvalue-row">
+                      <span className="text-subtle">Trust proxy</span>
+                      <strong>{runtimeFlags?.trustProxy ? "Ja" : "Nee"}</strong>
+                    </div>
+                    <div className="ops-keyvalue-row">
+                      <span className="text-subtle">Auth log</span>
+                      <strong>{runtimeFlags?.authLogEnabled ? "Ingeschakeld" : "Uit"}</strong>
+                    </div>
+                  </div>
+                </article>
+
+                <article className="panel ops-panel ops-span-12 ops-history-panel">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">Actiehistorie</h3>
+                  </div>
+                  {actionHistory.length ? (
+                    <div className="ops-history-list">
+                      {actionHistory.map((entry) => (
+                        <div key={entry.id} className="ops-history-row">
+                          <div className="ops-history-top">
+                            <span className={entry.outcome === "success" ? "pill pill-success" : "pill pill-error"}>
+                              {entry.outcome === "success" ? "Gelukt" : "Mislukt"}
+                            </span>
+                            <span className="ops-recent-time">{fmtCompactTime(entry.at)}</span>
+                          </div>
+                          <strong>{entry.name}</strong>
+                          <div className="text-subtle">{entry.message}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-subtle">Nog geen acties uitgevoerd in deze sessie.</div>
+                  )}
+                </article>
+
+                <article className="panel ops-panel ops-span-12">
+                  <div className="ops-section-head">
+                    <h3 className="ops-section-title">Playback feature flags</h3>
+                  </div>
+                  <div className="ops-flag-grid">
+                    {featureFlags.map(([key, enabled]) => (
+                      <div key={key} className="ops-flag-item">
+                        <strong>{key}</strong>
+                        <span className={enabled ? "pill pill-success" : "pill pill-warn"}>
+                          {enabled ? "aan" : "uit"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </section>
+            ) : null}
+
+            {activeSection === "ai" ? (
+              <section className="ops-dashboard-grid" aria-label="AI prompt">
+                <article className="panel ops-panel ops-span-12">
+                  <PromptSettingsPanel />
+                </article>
+              </section>
+            ) : null}
           </>
         ) : null}
       </section>

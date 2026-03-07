@@ -125,7 +125,10 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
     const initial = window.setTimeout(() => {
       void refreshStatus();
     }, 0);
-    const interval = window.setInterval(refreshStatus, 15000);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void refreshStatus();
+    }, 15000);
     const handleResume = () => {
       void refreshStatus();
     };

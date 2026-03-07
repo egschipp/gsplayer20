@@ -45,6 +45,13 @@ type SummaryPayload = {
     latencyMs: { p50: number; p95: number; p99: number };
     errorBreakdown: Array<{ label: string; value: number }>;
     upstream5xx: number;
+    slowActivities?: {
+      total: number;
+      topActivities: Array<{ label: string; count: number }>;
+      topEndpointPaths: Array<{ label: string; count: number }>;
+      negativeReliabilityActivities: Array<{ label: string; count: number }>;
+      negativeResponsivenessActivities: Array<{ label: string; count: number }>;
+    };
   };
   rateLimits: {
     count429: number;
@@ -678,6 +685,7 @@ export default function MonitoringDashboard() {
     if (!autoRefresh) return;
     const intervalMs = Math.max(5, refreshIntervalSec) * 1000;
     const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void refreshAll();
     }, intervalMs);
     return () => {
@@ -1022,6 +1030,7 @@ export default function MonitoringDashboard() {
     summary?.rateLimits.activityLog?.negativeReliabilityActivities ?? [];
   const topResponsivenessImpactActivities =
     summary?.rateLimits.activityLog?.negativeResponsivenessActivities ?? [];
+  const topSlowActivity = summary?.apiHealth.slowActivities?.topActivities?.[0] ?? null;
   const hasRecentRateLimitEvents = rateLimitCount > 0;
   const lastRateTriggeredAgoSec = summary?.rateLimits.lastTriggeredAt
     ? Math.max(0, Math.floor((clockNowMs - summary.rateLimits.lastTriggeredAt) / 1000))
@@ -1315,7 +1324,11 @@ export default function MonitoringDashboard() {
               <KpiCard
                 title="Reactiesnelheid"
                 value={`${summary?.apiHealth.latencyMs.p95 ?? 0} ms`}
-                subtitle={`p99 ${summary?.apiHealth.latencyMs.p99 ?? 0} ms`}
+                subtitle={
+                  topSlowActivity
+                    ? `p99 ${summary?.apiHealth.latencyMs.p99 ?? 0} ms · traag: ${topSlowActivity.label} (${topSlowActivity.count})`
+                    : `p99 ${summary?.apiHealth.latencyMs.p99 ?? 0} ms`
+                }
                 tone={latencyTone}
                 meter={1 - clamp01((summary?.apiHealth.latencyMs.p95 ?? 0) / 1800)}
                 hint="Snelheid van trage requests; hoge waarde kan hikken in de UX geven."

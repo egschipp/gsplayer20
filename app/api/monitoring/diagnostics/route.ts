@@ -3,6 +3,7 @@ import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
 import { getRecentErrors } from "@/lib/observability/logger";
 import { counterTotal, histogramQuantiles } from "@/lib/observability/metrics";
 import { getRecentRateLimitActivities } from "@/lib/observability/rateLimitActivities";
+import { getRecentSlowActivities } from "@/lib/observability/slowActivities";
 import { getSpotifyRateLimiterSnapshot } from "@/lib/spotify/rateLimitManager";
 import {
   createCorrelationId,
@@ -77,6 +78,18 @@ export async function GET(req: Request) {
         impact: entry.impact,
       })
     ),
+    recentSlowActivities: getRecentSlowActivities(120, 3_600_000).map((entry) => ({
+      at: entry.at,
+      activity: entry.activity,
+      endpoint: entry.endpointGroup,
+      endpointPath: entry.endpointPath,
+      method: entry.method,
+      priority: entry.priority,
+      statusCode: entry.statusCode,
+      durationMs: entry.durationMs,
+      correlationId: entry.correlationId,
+      impact: entry.impact,
+    })),
     recentErrors: getRecentErrors(50).map((entry) => ({
       ts: entry.ts,
       level: entry.level,

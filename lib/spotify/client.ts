@@ -41,11 +41,17 @@ function resolveCachePolicy(args: {
 
   try {
     const path = new URL(args.url).pathname;
+    if (path.startsWith("/v1/me/player/devices")) {
+      return { cacheTtlMs: 2000, dedupeWindowMs: 900 };
+    }
+    if (path.startsWith("/v1/me/player/queue")) {
+      return { cacheTtlMs: 1500, dedupeWindowMs: 900 };
+    }
+    if (path.startsWith("/v1/me/player/currently-playing")) {
+      return { cacheTtlMs: 800, dedupeWindowMs: 700 };
+    }
     if (path.startsWith("/v1/me/player")) {
       return { cacheTtlMs: 0, dedupeWindowMs: 200 };
-    }
-    if (path.startsWith("/v1/me/player/devices")) {
-      return { cacheTtlMs: 1500, dedupeWindowMs: 500 };
     }
     if (path.startsWith("/v1/me/tracks") || path.startsWith("/v1/me/playlists")) {
       return { cacheTtlMs: 6000, dedupeWindowMs: 1200 };

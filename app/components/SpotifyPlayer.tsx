@@ -4180,7 +4180,9 @@ export default function SpotifyPlayer({
       await refreshClientAccessToken(force);
     }
     const now = Date.now();
-    const minRefreshGapMs = force ? 1500 : 3000;
+    const hidden =
+      typeof document !== "undefined" && document.visibilityState === "hidden";
+    const minRefreshGapMs = force ? 2000 : hidden ? 6000 : 3500;
     if (now - lastDevicesRefreshRef.current < minRefreshGapMs) return;
     lastDevicesRefreshRef.current = now;
     if (!force && now < rateLimitRef.current.until) return;
@@ -4206,7 +4208,7 @@ export default function SpotifyPlayer({
     }
     const shouldFetchPlaybackForDeviceMerge =
       force &&
-      now - lastDevicesPlaybackFetchRef.current >= 12_000 &&
+      now - lastDevicesPlaybackFetchRef.current >= 20_000 &&
       !Array.isArray(data?.devices);
     if (shouldFetchPlaybackForDeviceMerge) {
       try {
@@ -4422,7 +4424,9 @@ export default function SpotifyPlayer({
 
   useEffect(() => {
     if (sessionStatus !== "authenticated") return;
-    const intervalMs = connectDockOpen ? 8_000 : 12_000;
+    const hidden =
+      typeof document !== "undefined" && document.visibilityState === "hidden";
+    const intervalMs = hidden ? 20_000 : connectDockOpen ? 10_000 : 16_000;
     const interval = window.setInterval(() => {
       void refreshDevices(false);
     }, intervalMs);
@@ -5961,7 +5965,7 @@ export default function SpotifyPlayer({
         baseDelay = Math.min(baseDelay, isPlaying ? 900 : 1500);
       }
       if (hidden && !hasPendingSeek) {
-        baseDelay = 20000;
+        baseDelay = remoteDeviceActive ? 22000 : 30000;
       }
       if (hasPendingSeek) {
         baseDelay = 1500;

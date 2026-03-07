@@ -3,6 +3,7 @@ import { logEvent } from "@/lib/observability/logger";
 import { createCorrelationId } from "@/lib/observability/correlation";
 import { recordSpotifyRateLimitBackoff } from "@/lib/observability/rateLimit";
 import { recordRateLimitActivity } from "@/lib/observability/rateLimitActivities";
+import { recordSlowActivity } from "@/lib/observability/slowActivities";
 import {
   registerSpotifyRateLimit,
   registerSpotifyRequestFailure,
@@ -396,8 +397,10 @@ function defaultCacheTtlMs(method: string, url: string): number {
   if (method !== "GET") return 0;
   try {
     const path = new URL(url).pathname;
-    if (path.startsWith("/v1/me/player")) return 0;
     if (path.startsWith("/v1/me/player/devices")) return 2_000;
+    if (path.startsWith("/v1/me/player/queue")) return 1_500;
+    if (path.startsWith("/v1/me/player/currently-playing")) return 800;
+    if (path.startsWith("/v1/me/player")) return 0;
     if (path.startsWith("/v1/me/tracks")) return 8_000;
     if (path.startsWith("/v1/me/playlists")) return 10_000;
     if (path.startsWith("/v1/me/top")) return 20_000;
@@ -412,6 +415,9 @@ function defaultStaleTtlMs(method: string, url: string): number {
   if (method !== "GET") return 0;
   try {
     const path = new URL(url).pathname;
+    if (path.startsWith("/v1/me/player/devices")) return 12_000;
+    if (path.startsWith("/v1/me/player/queue")) return 8_000;
+    if (path.startsWith("/v1/me/player/currently-playing")) return 2_500;
     if (path.startsWith("/v1/me/player")) return 0;
     if (path.startsWith("/v1/me/tracks")) return 30_000;
     if (path.startsWith("/v1/me/playlists")) return 30_000;
@@ -429,6 +435,9 @@ function defaultDedupeWindowMs(method: string, url: string): number {
   if (method !== "GET") return 300;
   try {
     const path = new URL(url).pathname;
+    if (path.startsWith("/v1/me/player/devices")) return 900;
+    if (path.startsWith("/v1/me/player/queue")) return 900;
+    if (path.startsWith("/v1/me/player/currently-playing")) return 700;
     if (path.startsWith("/v1/me/player")) return 250;
     return 1_200;
   } catch {
@@ -610,6 +619,16 @@ export async function spotifyApiRequest<T>(params: {
               endpoint_path: path,
               method,
             });
+            recordSlowActivity({
+              activity,
+              endpointGroup: group,
+              endpointPath: path,
+              method,
+              priority,
+              statusCode: result.status,
+              durationMs,
+              correlationId,
+            });
             incCounter("spotify_api_requests_total", {
               endpoint: group,
               endpoint_path: path,
@@ -785,6 +804,16 @@ export async function spotifyApiRequest<T>(params: {
             }
 
             const durationMs = Date.now() - started;
+            recordSlowActivity({
+              activity,
+              endpointGroup: group,
+              endpointPath: path,
+              method,
+              priority,
+              statusCode: 0,
+              durationMs,
+              correlationId,
+            });
             const isAbort = error instanceof DOMException && error.name === "AbortError";
             const message = String((error as Error)?.message ?? error);
             const retryable =

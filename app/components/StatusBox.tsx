@@ -307,8 +307,14 @@ export default function StatusBox({
   useEffect(() => {
     refresh();
     refreshAuthStatus();
-    const fast = setInterval(refresh, 5000);
-    const slow = setInterval(refreshAuthStatus, 15000);
+    const fast = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      refresh();
+    }, 5000);
+    const slow = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      refreshAuthStatus();
+    }, 15000);
     return () => {
       clearInterval(fast);
       clearInterval(slow);

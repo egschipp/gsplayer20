@@ -618,6 +618,7 @@ export async function spotifyApiRequest<T>(params: {
               endpoint: group,
               endpoint_path: path,
               method,
+              priority,
             });
             recordSlowActivity({
               activity,
@@ -633,6 +634,7 @@ export async function spotifyApiRequest<T>(params: {
               endpoint: group,
               endpoint_path: path,
               method,
+              priority,
               status_class: `${Math.floor(result.status / 100)}xx`,
               status_code: String(result.status),
             });

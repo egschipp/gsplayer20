@@ -43,6 +43,10 @@ type SummaryPayload = {
     sampleCount: number;
     restrictionViolatedCount?: number;
     latencyMs: { p50: number; p95: number; p99: number };
+    latencyByPriority?: {
+      foreground: { p50: number; p95: number; p99: number };
+      background: { p50: number; p95: number; p99: number };
+    };
     errorBreakdown: Array<{ label: string; value: number }>;
     upstream5xx: number;
     slowActivities?: {
@@ -1323,15 +1327,28 @@ export default function MonitoringDashboard() {
 
               <KpiCard
                 title="Reactiesnelheid"
-                value={`${summary?.apiHealth.latencyMs.p95 ?? 0} ms`}
+                value={`${
+                  summary?.apiHealth.latencyByPriority?.foreground.p95 ??
+                  summary?.apiHealth.latencyMs.p95 ??
+                  0
+                } ms`}
                 subtitle={
                   topSlowActivity
-                    ? `p99 ${summary?.apiHealth.latencyMs.p99 ?? 0} ms · traag: ${topSlowActivity.label} (${topSlowActivity.count})`
-                    : `p99 ${summary?.apiHealth.latencyMs.p99 ?? 0} ms`
+                    ? `bg p95 ${summary?.apiHealth.latencyByPriority?.background.p95 ?? 0} ms · traag: ${topSlowActivity.label} (${topSlowActivity.count})`
+                    : `bg p95 ${summary?.apiHealth.latencyByPriority?.background.p95 ?? 0} ms`
                 }
                 tone={latencyTone}
-                meter={1 - clamp01((summary?.apiHealth.latencyMs.p95 ?? 0) / 1800)}
-                hint="Snelheid van trage requests; hoge waarde kan hikken in de UX geven."
+                meter={
+                  1 -
+                  clamp01(
+                    (
+                      summary?.apiHealth.latencyByPriority?.foreground.p95 ??
+                      summary?.apiHealth.latencyMs.p95 ??
+                      0
+                    ) / 1800
+                  )
+                }
+                hint="Toont foreground request-latency voor UX, met background latency als context."
               />
 
               <KpiCard

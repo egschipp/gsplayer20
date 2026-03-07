@@ -154,6 +154,18 @@ export async function GET() {
     metricsWindowMs,
     now
   );
+  const apiLatencyForeground = histogramQuantilesWindow(
+    "spotify_api_latency_ms",
+    { priority: "foreground" },
+    metricsWindowMs,
+    now
+  );
+  const apiLatencyBackground = histogramQuantilesWindow(
+    "spotify_api_latency_ms",
+    { priority: "background" },
+    metricsWindowMs,
+    now
+  );
   const refreshLockLatency = histogramQuantilesWindow(
     "spotify_refresh_lock_wait_ms",
     {},
@@ -300,6 +312,10 @@ export async function GET() {
       upstream5xx: api5xx,
       staleFallbackCount,
       staleFallbackReasons,
+      latencyByPriority: {
+        foreground: apiLatencyForeground,
+        background: apiLatencyBackground,
+      },
       slowActivities: {
         total: slowActivitySummary.total,
         topActivities: slowActivitySummary.byActivity,

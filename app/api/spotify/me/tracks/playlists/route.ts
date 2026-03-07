@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { playlistItems, userPlaylists, userSavedTracks } from "@/lib/db/schema";
+import { getCachedUserQuery } from "@/lib/cache/userQueryCache";
 import { jsonError, jsonNoStore, rateLimitResponse, requireAppUser } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
@@ -41,43 +42,52 @@ export async function GET(req: Request) {
   const trackId = normalizeTrackId(searchParams.get("trackId"));
   if (!trackId) return jsonError("INVALID_TRACK_ID", 400);
 
-  const db = getDb();
+  const cached = await getCachedUserQuery({
+    userId: session.appUserId as string,
+    scope: "track-playlists-membership",
+    keyParts: { trackId },
+    ttlMs: 10_000,
+    dedupeWindowMs: 800,
+    load: async () => {
+      const db = getDb();
+      const [playlistRows, savedRows] = await Promise.all([
+        db
+          .select({ playlistId: playlistItems.playlistId })
+          .from(playlistItems)
+          .innerJoin(
+            userPlaylists,
+            and(
+              eq(userPlaylists.playlistId, playlistItems.playlistId),
+              eq(userPlaylists.userId, session.appUserId as string)
+            )
+          )
+          .where(eq(playlistItems.trackId, trackId))
+          .groupBy(playlistItems.playlistId),
+        db
+          .select({ trackId: userSavedTracks.trackId })
+          .from(userSavedTracks)
+          .where(
+            and(
+              eq(userSavedTracks.userId, session.appUserId as string),
+              eq(userSavedTracks.trackId, trackId)
+            )
+          )
+          .limit(1),
+      ]);
 
-  const [playlistRows, savedRows] = await Promise.all([
-    db
-      .select({ playlistId: playlistItems.playlistId })
-      .from(playlistItems)
-      .innerJoin(
-        userPlaylists,
-        and(
-          eq(userPlaylists.playlistId, playlistItems.playlistId),
-          eq(userPlaylists.userId, session.appUserId as string)
-        )
-      )
-      .where(eq(playlistItems.trackId, trackId))
-      .groupBy(playlistItems.playlistId),
-    db
-      .select({ trackId: userSavedTracks.trackId })
-      .from(userSavedTracks)
-      .where(
-        and(
-          eq(userSavedTracks.userId, session.appUserId as string),
-          eq(userSavedTracks.trackId, trackId)
-        )
-      )
-      .limit(1),
-  ]);
-
-  const playlistIds = playlistRows
-    .map((row) => String(row.playlistId ?? "").trim())
-    .filter(Boolean);
-  const liked = savedRows.length > 0;
+      return {
+        playlistIds: playlistRows
+          .map((row) => String(row.playlistId ?? "").trim())
+          .filter(Boolean),
+        liked: savedRows.length > 0,
+      };
+    },
+  });
 
   return jsonNoStore({
     trackId,
-    playlistIds,
-    liked,
+    playlistIds: cached.playlistIds,
+    liked: cached.liked,
     asOf: Date.now(),
   });
 }
-

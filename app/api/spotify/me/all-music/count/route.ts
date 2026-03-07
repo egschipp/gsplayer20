@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db/client";
 import { playlistItems, playlists, userPlaylists } from "@/lib/db/schema";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { getCachedUserQuery } from "@/lib/cache/userQueryCache";
 import {
   jsonPrivateCache,
   rateLimitResponse,
@@ -27,44 +28,51 @@ export async function GET() {
   });
   if (rl) return rl;
 
-  const db = getDb();
-  const playlistRows = await db
-    .select({
-      playlistId: playlists.playlistId,
-      name: playlists.name,
-    })
-    .from(userPlaylists)
-    .innerJoin(playlists, eq(playlists.playlistId, userPlaylists.playlistId))
-    .where(eq(userPlaylists.userId, session.appUserId as string));
+  const { totalCount } = await getCachedUserQuery({
+    userId: session.appUserId as string,
+    scope: "all-music-count",
+    ttlMs: 20_000,
+    dedupeWindowMs: 1000,
+    load: async () => {
+      const db = getDb();
+      const playlistRows = await db
+        .select({
+          playlistId: playlists.playlistId,
+          name: playlists.name,
+        })
+        .from(userPlaylists)
+        .innerJoin(playlists, eq(playlists.playlistId, userPlaylists.playlistId))
+        .where(eq(userPlaylists.userId, session.appUserId as string));
 
-  const emojiPlaylistIds = playlistRows
-    .filter((row) => startsWithEmoji(row.name))
-    .map((row) => row.playlistId);
+      const emojiPlaylistIds = playlistRows
+        .filter((row) => startsWithEmoji(row.name))
+        .map((row) => row.playlistId);
 
-  if (!emojiPlaylistIds.length) {
-    return jsonPrivateCache({
-      totalCount: 0,
-      asOf: Date.now(),
-    });
-  }
+      if (!emojiPlaylistIds.length) {
+        return { totalCount: 0 };
+      }
 
-  const totalRow = await db
-    .select({
-      count: sql<number>`count(distinct ${playlistItems.trackId})`,
-    })
-    .from(playlistItems)
-    .where(
-      and(
-        inArray(playlistItems.playlistId, emojiPlaylistIds),
-        isNotNull(playlistItems.trackId)
-      )
-    )
-    .get();
+      const totalRow = await db
+        .select({
+          count: sql<number>`count(distinct ${playlistItems.trackId})`,
+        })
+        .from(playlistItems)
+        .where(
+          and(
+            inArray(playlistItems.playlistId, emojiPlaylistIds),
+            isNotNull(playlistItems.trackId)
+          )
+        )
+        .get();
 
-  const totalCount =
-    typeof totalRow?.count === "number" && Number.isFinite(totalRow.count)
-      ? Math.max(0, Math.floor(totalRow.count))
-      : 0;
+      return {
+        totalCount:
+          typeof totalRow?.count === "number" && Number.isFinite(totalRow.count)
+            ? Math.max(0, Math.floor(totalRow.count))
+            : 0,
+      };
+    },
+  });
 
   return jsonPrivateCache({
     totalCount,

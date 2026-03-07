@@ -162,6 +162,11 @@ export const userPlaylists = sqliteTable(
   (table) => ({
     pk: primaryKey({ columns: [table.userId, table.playlistId] }),
     playlistIdx: index("user_playlists_playlist_idx").on(table.playlistId),
+    userSeenIdx: index("user_playlists_user_seen_idx").on(
+      table.userId,
+      table.lastSeenAt,
+      table.playlistId
+    ),
   })
 );
 
@@ -190,6 +195,14 @@ export const playlistItems = sqliteTable(
       table.addedAt
     ),
     trackIdx: index("playlist_items_track_idx").on(table.trackId),
+    trackPlaylistIdx: index("playlist_items_track_playlist_idx").on(
+      table.trackId,
+      table.playlistId
+    ),
+    playlistTrackIdx: index("playlist_items_playlist_track_idx").on(
+      table.playlistId,
+      table.trackId
+    ),
   })
 );
 

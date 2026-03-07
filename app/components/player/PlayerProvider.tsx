@@ -170,7 +170,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const path = pathname ?? "/";
   const showPlayer = path !== "/login";
-  const showPlayerShell = showPlayer && !path.startsWith("/status");
+  const hidePlayerShell = path.startsWith("/status") || path.startsWith("/about");
+  const showPlayerShell = showPlayer && !hidePlayerShell;
   const showLibraryDock = path === "/" || path.startsWith("/gsplayer");
 
   const setControllerHandlers = useCallback((handlers: PlayerCommandHandlers | null) => {

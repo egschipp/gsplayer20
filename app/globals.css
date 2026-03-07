@@ -3986,15 +3986,33 @@ details[open] > .details-summary::after {
   gap: 4px;
 }
 
+.ops-header-compact {
+  gap: 18px;
+}
+
+.ops-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: rgba(255, 255, 255, 0.52);
+}
+
 .ops-title {
   margin: 0;
-  font-size: 1.5rem;
-  line-height: 1.2;
+  font-size: clamp(1.9rem, 4vw, 3rem);
+  line-height: 0.95;
   font-family: var(--font-display), system-ui, sans-serif;
+  letter-spacing: -0.05em;
 }
 
 .ops-subtitle {
   max-width: 64ch;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.5;
 }
 
 .ops-header-controls {
@@ -4024,6 +4042,159 @@ details[open] > .details-summary::after {
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.9);
   font-size: 0.83rem;
+}
+
+.ops-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.95fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.ops-hero-primary,
+.ops-hero-secondary {
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  min-width: 0;
+}
+
+.ops-hero-primary {
+  display: grid;
+  gap: 18px;
+  padding: 26px;
+  background:
+    radial-gradient(circle at top left, rgba(30, 215, 96, 0.16), transparent 36%),
+    linear-gradient(150deg, rgba(18, 28, 24, 0.96), rgba(8, 12, 10, 0.92));
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.28);
+}
+
+.ops-hero-copy {
+  display: grid;
+  gap: 10px;
+}
+
+.ops-hero-title {
+  margin: 0;
+  font-size: clamp(2rem, 4.2vw, 3.5rem);
+  line-height: 0.94;
+  letter-spacing: -0.06em;
+  font-family: var(--font-display), system-ui, sans-serif;
+}
+
+.ops-hero-text {
+  margin: 0;
+  max-width: 50ch;
+  color: rgba(255, 255, 255, 0.76);
+  line-height: 1.6;
+}
+
+.ops-hero-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ops-hero-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.ops-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ops-hero-actions .btn {
+  min-width: 168px;
+  min-height: 42px;
+  border-radius: 14px;
+  justify-content: center;
+}
+
+.ops-hero-secondary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px;
+  background: rgba(11, 16, 14, 0.72);
+}
+
+.ops-mini-stat {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.ops-mini-stat-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.56);
+}
+
+.ops-mini-stat-value {
+  min-width: 0;
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
+  line-height: 1.02;
+  letter-spacing: -0.04em;
+  color: #fff;
+}
+
+.ops-mini-stat-meta {
+  min-width: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.68);
+  overflow-wrap: anywhere;
+}
+
+.ops-priority-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(300px, 0.9fr);
+  gap: 14px;
+}
+
+.ops-priority-lead {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 18px;
+}
+
+.ops-priority-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ops-priority-title {
+  font-size: 1.15rem;
+  line-height: 1.2;
+}
+
+.ops-priority-text {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.76);
+  line-height: 1.55;
+}
+
+.ops-priority-stack {
+  display: grid;
+  gap: 10px;
 }
 
 .ops-kpi-grid {
@@ -4655,6 +4826,15 @@ details[open] > .details-summary::after {
 }
 
 @media (max-width: 980px) {
+  .ops-hero,
+  .ops-priority-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ops-hero-secondary {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .ops-library-grid {
     grid-template-columns: 1fr;
   }
@@ -4710,6 +4890,25 @@ details[open] > .details-summary::after {
 }
 
 @media (max-width: 720px) {
+  .ops-hero-primary,
+  .ops-hero-secondary {
+    padding: 16px;
+  }
+
+  .ops-hero-secondary {
+    grid-template-columns: 1fr;
+  }
+
+  .ops-hero-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .ops-hero-actions .btn {
+    width: 100%;
+    min-width: 0;
+  }
+
   .ops-library-grid {
     grid-template-columns: 1fr;
   }

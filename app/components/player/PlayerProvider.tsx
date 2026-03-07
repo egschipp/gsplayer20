@@ -465,13 +465,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         headerEl instanceof HTMLElement
           ? Math.max(0, Math.round(headerEl.getBoundingClientRect().bottom))
           : 0;
+      const playerHeight =
+        showPlayer && playerShellRef.current
+          ? Math.max(0, Math.round(playerShellRef.current.getBoundingClientRect().height))
+          : 0;
       const playerBottom =
         showPlayer && playerShellRef.current
           ? Math.max(0, Math.round(playerShellRef.current.getBoundingClientRect().bottom))
           : 0;
       const reservedBottom = Math.max(headerBottom, playerBottom);
+      const contentOffsetTop = showPlayer
+        ? Math.max(0, reservedBottom - playerHeight)
+        : headerBottom;
       const next = Math.max(220, Math.floor(viewportHeight - reservedBottom - 10));
       root.style.setProperty("--app-content-max-height", `${next}px`);
+      root.style.setProperty("--app-content-offset-top", `${contentOffsetTop}px`);
     }
 
     applyContentHeight();

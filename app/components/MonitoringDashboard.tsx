@@ -1243,12 +1243,35 @@ export default function MonitoringDashboard() {
     summary,
   ]);
 
+  const primaryInsight = insights[0] ?? null;
+  const supportingInsights = insights.slice(1, 4);
+  const activeIncidentCount = summary?.incidents.active.length ?? 0;
+  const profileLabel =
+    userStatus?.profile?.display_name ??
+    userStatus?.profile?.id ??
+    summary?.authStatus.userId ??
+    "Geen Spotify gebruiker";
+  const totalLibraryItems =
+    (libraryCounts?.playlists ?? 0) + (libraryCounts?.tracks ?? 0) + (libraryCounts?.artists ?? 0);
+  const userTokenSummary =
+    userTokenExpirySec == null ? userTokenStatusLabel : `${userTokenStatusLabel} · ${userTokenExpirySec}s`;
+  const appTokenSummary =
+    appTokenExpirySec == null ? appTokenStatusLabel : `${appTokenStatusLabel} · ${appTokenExpirySec}s`;
+
   return (
     <main className="page settings-page ops-page">
-      <section className="card ops-shell" style={{ marginTop: 24 }}>
-        <header className="ops-header">
+      <section
+        className="card ops-shell"
+        style={{ marginTop: "calc(var(--app-content-offset-top, 0px) + 24px)" }}
+      >
+        <header className="ops-header ops-header-compact">
           <div className="ops-header-copy">
+            <span className="ops-kicker">Control room</span>
             <h1 className="ops-title">Settings & Monitoring</h1>
+            <p className="ops-subtitle">
+              Beheer koppeling, herstelacties en Spotify-performance vanuit een pagina die
+              prioriteit geeft aan wat nu aandacht vraagt.
+            </p>
           </div>
 
           <div className="ops-header-controls">
@@ -1280,51 +1303,175 @@ export default function MonitoringDashboard() {
 
         {summaryAvailable ? (
           <>
-            <section className="ops-library-grid" aria-label="Bibliotheekoverzicht">
-              <article className="ops-kpi ops-tone-ok ops-library-kpi">
-                <div className="ops-library-kpi-head">
-                  <span className="ops-library-kpi-icon" aria-hidden="true">
-                    📂
-                  </span>
-                  <span className="ops-library-kpi-label">Playlists</span>
+            <section className="ops-hero" aria-label="Systeemsamenvatting">
+              <article className="ops-hero-primary">
+                <div className="ops-hero-copy">
+                  <span className="ops-kicker">Actieve operator</span>
+                  <h2 className="ops-hero-title">{profileLabel}</h2>
+                  <p className="ops-hero-text">
+                    {primaryInsight?.text ??
+                      "De settings-page toont live de gezondheid van koppeling, tokens en Spotify API-verkeer."}
+                  </p>
                 </div>
-                <div className="ops-library-kpi-value">{fmtCount(libraryCounts?.playlists)}</div>
-                <div className="ops-library-kpi-subtitle">In bibliotheek</div>
-                <div className="ops-kpi-meter" aria-hidden="true">
-                  <span style={{ width: "100%" }} />
+
+                <div className="ops-hero-chip-row">
+                  <span className={`ops-hero-chip ${toneClass(authStatusTone)}`}>
+                    Koppeling {authStatusLabel}
+                  </span>
+                  <span className={`ops-hero-chip ${toneClass(userTokenTone)}`}>
+                    User token {userTokenSummary}
+                  </span>
+                  <span className={`ops-hero-chip ${toneClass(appTokenTone)}`}>
+                    App token {appTokenSummary}
+                  </span>
+                  <span className={`ops-hero-chip ${toneClass(rateTone)}`}>
+                    Rate limit {summary?.rateLimits.count429 ?? 0}
+                  </span>
+                </div>
+
+                <div className="ops-hero-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      window.location.href = "/api/auth/login";
+                    }}
+                    disabled={actionBusy !== null}
+                  >
+                    Spotify koppelen
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={actionBusy !== null || tokenRefreshCooldownLeftSec > 0}
+                    onClick={async () => {
+                      const payload = await runAction(
+                        "Token vernieuwen",
+                        "/api/monitoring/token/refresh",
+                        "POST",
+                        () => "Token vernieuwd"
+                      );
+                      if (payload) {
+                        setTokenRefreshCooldownUntil(Date.now() + 10_000);
+                      }
+                    }}
+                  >
+                    {tokenRefreshCooldownLeftSec > 0
+                      ? `Wacht ${tokenRefreshCooldownLeftSec}s`
+                      : actionBusy === "Token vernieuwen"
+                      ? "Bezig..."
+                      : "Token vernieuwen"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={actionBusy !== null}
+                    onClick={async () => {
+                      const ok = window.confirm(
+                        "Bibliotheek bijwerken kan kort extra belasting geven. Nu starten?"
+                      );
+                      if (!ok) return;
+                      await runBulkSync();
+                    }}
+                  >
+                    {actionBusy === "Bibliotheek bijwerken" ? "Bezig..." : "Bibliotheek sync"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={rateLimitLogLoading}
+                    onClick={async () => {
+                      setRateLimitLogOpen(true);
+                      await loadRateLimitActivityLog();
+                    }}
+                  >
+                    {rateLimitLogLoading
+                      ? "Log laden..."
+                      : rateLimitLogOpen
+                      ? "Rate-limit log verversen"
+                      : `Rate-limit log (${fmtCount(rateLimitActivityTotal)})`}
+                  </button>
                 </div>
               </article>
 
-              <article className="ops-kpi ops-tone-ok ops-library-kpi">
-                <div className="ops-library-kpi-head">
-                  <span className="ops-library-kpi-icon" aria-hidden="true">
-                    🎵
+              <div className="ops-hero-secondary">
+                <article className={`ops-mini-stat ${toneClass(primaryInsight?.tone ?? "ok")}`}>
+                  <span className="ops-mini-stat-label">Focus nu</span>
+                  <strong className="ops-mini-stat-value">
+                    {primaryInsight?.title ?? "Systeem stabiel"}
+                  </strong>
+                  <span className="ops-mini-stat-meta">
+                    {activeIncidentCount > 0
+                      ? `${activeIncidentCount} actieve incidenten`
+                      : `${metricsWindowLabel} meetvenster`}
                   </span>
-                  <span className="ops-library-kpi-label">Tracks</span>
-                </div>
-                <div className="ops-library-kpi-value">{fmtCount(libraryCounts?.tracks)}</div>
-                <div className="ops-library-kpi-subtitle">In bibliotheek</div>
-                <div className="ops-kpi-meter" aria-hidden="true">
-                  <span style={{ width: "100%" }} />
-                </div>
-              </article>
+                </article>
 
-              <article className="ops-kpi ops-tone-ok ops-library-kpi">
-                <div className="ops-library-kpi-head">
-                  <span className="ops-library-kpi-icon" aria-hidden="true">
-                    👤
+                <article className="ops-mini-stat ops-tone-ok">
+                  <span className="ops-mini-stat-label">Bibliotheek</span>
+                  <strong className="ops-mini-stat-value">{fmtCount(totalLibraryItems)}</strong>
+                  <span className="ops-mini-stat-meta">
+                    {fmtCount(libraryCounts?.playlists)} playlists · {fmtCount(libraryCounts?.tracks)} tracks
                   </span>
-                  <span className="ops-library-kpi-label">Artiesten</span>
-                </div>
-                <div className="ops-library-kpi-value">{fmtCount(libraryCounts?.artists)}</div>
-                <div className="ops-library-kpi-subtitle">In bibliotheek</div>
-                <div className="ops-kpi-meter" aria-hidden="true">
-                  <span style={{ width: "100%" }} />
-                </div>
-              </article>
+                </article>
+
+                <article className={`ops-mini-stat ${toneClass(apiTone)}`}>
+                  <span className="ops-mini-stat-label">Verkeer</span>
+                  <strong className="ops-mini-stat-value">
+                    {summary?.traffic.requestsPerMin ?? 0}/min
+                  </strong>
+                  <span className="ops-mini-stat-meta">
+                    {apiSampleCount} requests in {metricsWindowLabel}
+                  </span>
+                </article>
+
+                <article className={`ops-mini-stat ${toneClass(latencyTone)}`}>
+                  <span className="ops-mini-stat-label">P95 latency</span>
+                  <strong className="ops-mini-stat-value">{foregroundLatencyP95} ms</strong>
+                  <span className="ops-mini-stat-meta">
+                    bg {backgroundLatencyP95} ms · {topSlowActivity?.label ?? "geen hotspot"}
+                  </span>
+                </article>
+              </div>
             </section>
 
-            <section className="ops-kpi-grid">
+            <section className="ops-priority-grid" aria-label="Wat vraagt aandacht">
+              {primaryInsight ? (
+                <article className={`ops-priority-lead ${toneClass(primaryInsight.tone)}`}>
+                  <div className="ops-priority-head">
+                    <span className={pillClass(primaryInsight.tone)}>
+                      {primaryInsight.tone === "ok"
+                        ? "Stabiel"
+                        : primaryInsight.tone === "warn"
+                        ? "Let op"
+                        : "Direct actie"}
+                    </span>
+                    <HelpTip
+                      label="Focus nu"
+                      text="Dit is de belangrijkste operationele boodschap op basis van tokens, rate limits, success rate en incidenten."
+                    />
+                  </div>
+                  <strong className="ops-priority-title">{primaryInsight.title}</strong>
+                  <p className="ops-priority-text">{primaryInsight.text}</p>
+                </article>
+              ) : null}
+
+              <div className="ops-priority-stack">
+                {supportingInsights.length ? (
+                  supportingInsights.map((item) => <AlertCard key={item.id} item={item} />)
+                ) : (
+                  <article className="ops-alert-card ops-tone-ok">
+                    <span className="pill pill-success">Alles ok</span>
+                    <strong>Geen extra aandachtspunten</strong>
+                    <p className="text-subtle">
+                      Tokens, API en synchronisatie ogen op dit moment stabiel.
+                    </p>
+                  </article>
+                )}
+              </div>
+            </section>
+
+            <section className="ops-kpi-grid" aria-label="Gezondheidsmetingen">
               <KpiCard
                 title="Koppeling"
                 value={authStatusLabel}
@@ -1404,65 +1551,16 @@ export default function MonitoringDashboard() {
               />
             </section>
 
-            <section className="ops-insights">
-              <div className="ops-section-head">
-                <h2 className="ops-section-title">Wat vraagt nu aandacht?</h2>
-                <HelpTip
-                  label="Aandacht"
-                  text="Fouten worden geprioriteerd op impact: groen = ok, oranje = mogelijk issue, rood = directe actie."
-                />
-              </div>
-              <div className="ops-insight-grid">
-                {insights.map((item) => (
-                  <AlertCard key={item.id} item={item} />
-                ))}
-              </div>
-            </section>
-
             <section className="ops-main-grid" aria-label="Settings en acties">
-              <article className="panel ops-panel span-8">
+              <article className="panel ops-panel span-7">
                 <div className="ops-section-head">
-                  <h3 className="ops-section-title">Snelle acties</h3>
+                  <h3 className="ops-section-title">Herstellen & bedienen</h3>
                   <HelpTip
                     label="Snelle acties"
-                    text="Veilige acties voor dagelijks gebruik. Deze acties herstellen de meeste problemen zonder risico."
+                    text="Dagelijkse acties om koppeling, tokens en sync te herstellen zonder handmatige shell-werkzaamheden."
                   />
                 </div>
                 <div className="ops-action-grid">
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => {
-                      window.location.href = "/api/auth/login";
-                    }}
-                    disabled={actionBusy !== null}
-                  >
-                    Spotify koppelen
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={actionBusy !== null || tokenRefreshCooldownLeftSec > 0}
-                    onClick={async () => {
-                      const payload = await runAction(
-                        "Token vernieuwen",
-                        "/api/monitoring/token/refresh",
-                        "POST",
-                        () => "Token vernieuwd"
-                      );
-                      if (payload) {
-                        setTokenRefreshCooldownUntil(Date.now() + 10_000);
-                      }
-                    }}
-                  >
-                    {tokenRefreshCooldownLeftSec > 0
-                      ? `Wacht ${tokenRefreshCooldownLeftSec}s`
-                      : actionBusy === "Token vernieuwen"
-                      ? "Bezig..."
-                      : "Token vernieuwen"}
-                  </button>
-
                   <button
                     type="button"
                     className="btn btn-secondary"
@@ -1476,40 +1574,9 @@ export default function MonitoringDashboard() {
                     type="button"
                     className="btn btn-secondary"
                     disabled={actionBusy !== null}
-                    onClick={async () => {
-                      const ok = window.confirm(
-                        "Bibliotheek bijwerken kan kort extra belasting geven. Nu starten?"
-                      );
-                      if (!ok) return;
-                      await runBulkSync();
-                    }}
-                  >
-                    {actionBusy === "Bibliotheek bijwerken" ? "Bezig..." : "Bibliotheek sync"}
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={actionBusy !== null}
                     onClick={() => void runDiagnosticsExport()}
                   >
                     {actionBusy === "Diagnostics export" ? "Bezig..." : "Diagnose"}
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={rateLimitLogLoading}
-                    onClick={async () => {
-                      setRateLimitLogOpen(true);
-                      await loadRateLimitActivityLog();
-                    }}
-                  >
-                    {rateLimitLogLoading
-                      ? "Log laden..."
-                      : rateLimitLogOpen
-                      ? "Rate-limit log verversen"
-                      : `Rate-limit log (${fmtCount(rateLimitActivityTotal)})`}
                   </button>
 
                   <button
@@ -1532,41 +1599,12 @@ export default function MonitoringDashboard() {
                 </div>
               </article>
 
-              <article className="panel ops-panel span-4 ops-history-panel">
+              <article className="panel ops-panel span-5">
                 <div className="ops-section-head">
-                  <h3 className="ops-section-title">Actiehistorie</h3>
-                  <HelpTip
-                    label="Actiehistorie"
-                    text="Laatste acties en resultaat, zodat je direct ziet wat wel of niet gelukt is."
-                  />
-                </div>
-
-                {actionHistory.length ? (
-                  <div className="ops-history-list">
-                    {actionHistory.map((entry) => (
-                      <div key={entry.id} className="ops-history-row">
-                        <div className="ops-history-top">
-                          <span className={entry.outcome === "success" ? "pill pill-success" : "pill pill-error"}>
-                            {entry.outcome === "success" ? "Gelukt" : "Mislukt"}
-                          </span>
-                          <span className="ops-recent-time">{fmtCompactTime(entry.at)}</span>
-                        </div>
-                        <strong>{entry.name}</strong>
-                        <div className="text-subtle">{entry.message}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-subtle">Nog geen acties uitgevoerd in deze sessie.</div>
-                )}
-              </article>
-
-              <article className="panel ops-panel span-4">
-                <div className="ops-section-head">
-                  <h3 className="ops-section-title">Koppeling details</h3>
+                  <h3 className="ops-section-title">Koppeling & tokens</h3>
                   <HelpTip
                     label="Koppeling details"
-                    text="Kerninformatie over de actieve Spotify gebruiker en sessiegezondheid."
+                    text="Kerninformatie over de actieve Spotify gebruiker en de gezondheid van user/app tokens."
                   />
                 </div>
                 <div className="ops-keyvalue-list">
@@ -1634,12 +1672,83 @@ export default function MonitoringDashboard() {
                 </div>
               </article>
 
+              <article className="panel ops-panel span-4">
+                <div className="ops-section-head">
+                  <h3 className="ops-section-title">Weergave & updates</h3>
+                  <HelpTip
+                    label="Weergave"
+                    text="Bepaalt hoe agressief deze control room zichzelf ververst en hoe vaak je terugkoppeling ziet."
+                  />
+                </div>
+
+                <div className="ops-settings-list">
+                  <label className="ops-switch-row">
+                    <span>Automatisch verversen</span>
+                    <input
+                      type="checkbox"
+                      checked={autoRefresh}
+                      onChange={(event) => setAutoRefresh(event.target.checked)}
+                    />
+                  </label>
+
+                  <label className="ops-input-row">
+                    <span>Refresh interval</span>
+                    <select
+                      className="input"
+                      value={String(refreshIntervalSec)}
+                      disabled={!autoRefresh}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        if (Number.isFinite(value)) {
+                          setRefreshIntervalSec(Math.max(5, Math.min(60, Math.floor(value))));
+                        }
+                      }}
+                    >
+                      <option value="5">5 seconden</option>
+                      <option value="10">10 seconden</option>
+                      <option value="15">15 seconden</option>
+                      <option value="30">30 seconden</option>
+                      <option value="60">60 seconden</option>
+                    </select>
+                  </label>
+                </div>
+              </article>
+
+              <article className="panel ops-panel span-8 ops-history-panel">
+                <div className="ops-section-head">
+                  <h3 className="ops-section-title">Actiehistorie</h3>
+                  <HelpTip
+                    label="Actiehistorie"
+                    text="Laatste uitgevoerde herstelacties en hun resultaat in deze sessie."
+                  />
+                </div>
+
+                {actionHistory.length ? (
+                  <div className="ops-history-list">
+                    {actionHistory.map((entry) => (
+                      <div key={entry.id} className="ops-history-row">
+                        <div className="ops-history-top">
+                          <span className={entry.outcome === "success" ? "pill pill-success" : "pill pill-error"}>
+                            {entry.outcome === "success" ? "Gelukt" : "Mislukt"}
+                          </span>
+                          <span className="ops-recent-time">{fmtCompactTime(entry.at)}</span>
+                        </div>
+                        <strong>{entry.name}</strong>
+                        <div className="text-subtle">{entry.message}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-subtle">Nog geen acties uitgevoerd in deze sessie.</div>
+                )}
+              </article>
+
               <article className="panel ops-panel span-6">
                 <div className="ops-section-head">
-                  <h3 className="ops-section-title">Foutmix</h3>
+                  <h3 className="ops-section-title">Foutmix per endpoint</h3>
                   <HelpTip
                     label="Foutmix"
-                    text="Klik op een categorie om alleen de meest recente fouten van die categorie te zien."
+                    text="Endpointcategorieen die in het huidige meetvenster de meeste fouten produceren. Klik om recente fouten te filteren."
                   />
                 </div>
                 {topErrors.length ? (
@@ -1683,11 +1792,11 @@ export default function MonitoringDashboard() {
                   <h3 className="ops-section-title">
                     {selectedErrorEndpointMeta
                       ? `Recente fouten · ${selectedErrorEndpointMeta.label}`
-                      : "Recente fouten"}
+                      : "Recente fouten & context"}
                   </h3>
                   <HelpTip
                     label="Recente fouten"
-                    text="Toont de laatste fouten. Na klik op Foutmix zie je alleen die categorie."
+                    text="De meest recente foutmeldingen met een vertaalslag naar een bruikbare operator-uitleg."
                   />
                 </div>
                 {selectedErrorEndpointMeta ? (
@@ -1870,54 +1979,12 @@ export default function MonitoringDashboard() {
                 </article>
               ) : null}
 
-              <article className="panel ops-panel span-4">
-                <div className="ops-section-head">
-                  <h3 className="ops-section-title">Weergave & updates</h3>
-                  <HelpTip
-                    label="Weergave"
-                    text="Kies hoe vaak de pagina automatisch ververst."
-                  />
-                </div>
-
-                <div className="ops-settings-list">
-                  <label className="ops-switch-row">
-                    <span>Automatisch verversen</span>
-                    <input
-                      type="checkbox"
-                      checked={autoRefresh}
-                      onChange={(event) => setAutoRefresh(event.target.checked)}
-                    />
-                  </label>
-
-                  <label className="ops-input-row">
-                    <span>Refresh interval</span>
-                    <select
-                      className="input"
-                      value={String(refreshIntervalSec)}
-                      disabled={!autoRefresh}
-                      onChange={(event) => {
-                        const value = Number(event.target.value);
-                        if (Number.isFinite(value)) {
-                          setRefreshIntervalSec(Math.max(5, Math.min(60, Math.floor(value))));
-                        }
-                      }}
-                    >
-                      <option value="5">5 seconden</option>
-                      <option value="10">10 seconden</option>
-                      <option value="15">15 seconden</option>
-                      <option value="30">30 seconden</option>
-                      <option value="60">60 seconden</option>
-                    </select>
-                  </label>
-                </div>
-              </article>
-
               <article className="panel ops-panel span-12">
                 <div className="ops-section-head">
-                  <h3 className="ops-section-title">Bibliotheek & prompt</h3>
+                  <h3 className="ops-section-title">Bibliotheek & prompt-instellingen</h3>
                   <HelpTip
                     label="Bibliotheek & prompt"
-                    text="Toont basis-overzicht van playlists/tracks/artiesten en de ChatGPT prompt instellingen."
+                    text="Lagere prioriteit dan herstel en diagnose, maar wel direct bruikbaar voor bibliotheekoverzicht en promptconfiguratie."
                   />
                 </div>
                 <div className="ops-statusbox-basic">

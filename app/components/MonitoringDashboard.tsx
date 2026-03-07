@@ -1551,8 +1551,8 @@ export default function MonitoringDashboard() {
               />
             </section>
 
-            <section className="ops-main-grid" aria-label="Settings en acties">
-              <article className="panel ops-panel span-7">
+            <section className="ops-main-grid ops-settings-grid" aria-label="Settings en acties">
+              <article className="panel ops-panel ops-settings-panel ops-settings-panel-actions">
                 <div className="ops-section-head">
                   <h3 className="ops-section-title">Herstellen & bedienen</h3>
                   <HelpTip
@@ -1599,7 +1599,7 @@ export default function MonitoringDashboard() {
                 </div>
               </article>
 
-              <article className="panel ops-panel span-5">
+              <article className="panel ops-panel ops-settings-panel ops-settings-panel-account">
                 <div className="ops-section-head">
                   <h3 className="ops-section-title">Koppeling & tokens</h3>
                   <HelpTip
@@ -1672,7 +1672,7 @@ export default function MonitoringDashboard() {
                 </div>
               </article>
 
-              <article className="panel ops-panel span-4">
+              <article className="panel ops-panel ops-settings-panel ops-settings-panel-preferences">
                 <div className="ops-section-head">
                   <h3 className="ops-section-title">Weergave & updates</h3>
                   <HelpTip
@@ -1682,8 +1682,11 @@ export default function MonitoringDashboard() {
                 </div>
 
                 <div className="ops-settings-list">
-                  <label className="ops-switch-row">
-                    <span>Automatisch verversen</span>
+                  <label className="ops-settings-control ops-switch-row">
+                    <span className="ops-settings-control-copy">
+                      <strong>Automatisch verversen</strong>
+                      <small>Houdt de control room live zonder handmatig te verversen.</small>
+                    </span>
                     <input
                       type="checkbox"
                       checked={autoRefresh}
@@ -1691,8 +1694,11 @@ export default function MonitoringDashboard() {
                     />
                   </label>
 
-                  <label className="ops-input-row">
-                    <span>Refresh interval</span>
+                  <label className="ops-settings-control ops-input-row">
+                    <span className="ops-settings-control-copy">
+                      <strong>Refresh interval</strong>
+                      <small>Kies hoe vaak nieuwe status- en foutdata wordt opgehaald.</small>
+                    </span>
                     <select
                       className="input"
                       value={String(refreshIntervalSec)}

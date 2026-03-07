@@ -170,8 +170,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const path = pathname ?? "/";
   const showPlayer = path !== "/login";
-  const hidePlayerShell = path.startsWith("/status") || path.startsWith("/about");
-  const showPlayerShell = showPlayer && !hidePlayerShell;
+  const hidePlayerControls = path.startsWith("/status") || path.startsWith("/about");
+  const showBrandShell = showPlayer;
+  const showPlayerShell = showPlayer && !hidePlayerControls;
   const showLibraryDock = path === "/" || path.startsWith("/gsplayer");
 
   const setControllerHandlers = useCallback((handlers: PlayerCommandHandlers | null) => {
@@ -468,15 +469,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           ? Math.max(0, Math.round(headerEl.getBoundingClientRect().bottom))
           : 0;
       const playerHeight =
-        showPlayerShell && playerShellRef.current
+        showBrandShell && playerShellRef.current
           ? Math.max(0, Math.round(playerShellRef.current.getBoundingClientRect().height))
           : 0;
       const playerBottom =
-        showPlayerShell && playerShellRef.current
+        showBrandShell && playerShellRef.current
           ? Math.max(0, Math.round(playerShellRef.current.getBoundingClientRect().bottom))
           : 0;
       const reservedBottom = Math.max(headerBottom, playerBottom);
-      const contentOffsetTop = showPlayerShell
+      const contentOffsetTop = showBrandShell
         ? Math.max(0, reservedBottom - playerHeight)
         : headerBottom;
       const next = Math.max(220, Math.floor(viewportHeight - reservedBottom - 10));
@@ -508,20 +509,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       window.visualViewport?.removeEventListener("scroll", applyContentHeight);
       observer?.disconnect();
     };
-  }, [showPlayerShell, viewport.height, viewport.visualHeight]);
+  }, [showBrandShell, viewport.height, viewport.visualHeight]);
 
   return (
     <PlayerContext.Provider value={value}>
       <QueueProvider>
         <QueuePlaybackProvider>
-          {showPlayer ? (
+          {showBrandShell ? (
             <div
               ref={playerShellRef}
               className="shell player-shell-wrap"
-              data-visible={showPlayerShell ? "true" : "false"}
-              aria-hidden={showPlayerShell ? undefined : true}
+              data-visible="true"
             >
-              <div className="library-sticky player-shell">
+              <div className={`library-sticky player-shell${showPlayerShell ? "" : " is-logo-only"}`}>
                 <Image
                   src="/georgies-spotify.png"
                   alt="Georgies Spotify logo"
@@ -530,13 +530,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                   className="library-logo"
                   priority
                 />
-                <SpotifyPlayer
-                  onReady={setApi}
-                  onPlaybackFocusChange={setPlaybackFocus}
-                  controller={controller}
-                  onControllerHandlersChange={setControllerHandlers}
-                  onControllerRuntimeChange={setControllerRuntimeFromPlayer}
-                />
+                {showPlayerShell ? (
+                  <SpotifyPlayer
+                    onReady={setApi}
+                    onPlaybackFocusChange={setPlaybackFocus}
+                    controller={controller}
+                    onControllerHandlersChange={setControllerHandlers}
+                    onControllerRuntimeChange={setControllerRuntimeFromPlayer}
+                  />
+                ) : null}
                 {showLibraryDock ? (
                   <div
                     id="player-library-dock-slot"

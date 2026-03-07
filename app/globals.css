@@ -4112,6 +4112,35 @@ details[open] > .details-summary::after {
   white-space: nowrap;
 }
 
+.ops-kpi-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ops-kpi-detail {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ops-kpi-detail-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.56);
+}
+
+.ops-kpi-detail-value {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
 .ops-kpi-meter {
   width: 100%;
   height: 5px;
@@ -4607,6 +4636,10 @@ details[open] > .details-summary::after {
 
   .ops-kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ops-kpi-details {
+    grid-template-columns: 1fr;
   }
 
   .ops-insight-grid {

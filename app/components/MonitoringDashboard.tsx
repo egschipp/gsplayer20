@@ -540,6 +540,7 @@ function KpiCard({
   tone,
   meter,
   hint,
+  details,
 }: {
   title: string;
   value: string;
@@ -547,6 +548,7 @@ function KpiCard({
   tone: Tone;
   meter: number;
   hint: string;
+  details?: Array<{ label: string; value: string }>;
 }) {
   return (
     <article className={`ops-kpi ${toneClass(tone)}`}>
@@ -556,6 +558,16 @@ function KpiCard({
       </div>
       <div className="ops-kpi-value">{value}</div>
       <div className="ops-kpi-subtitle">{subtitle}</div>
+      {details?.length ? (
+        <div className="ops-kpi-details">
+          {details.map((detail) => (
+            <div key={detail.label} className="ops-kpi-detail">
+              <span className="ops-kpi-detail-label">{detail.label}</span>
+              <span className="ops-kpi-detail-value">{detail.value}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div className="ops-kpi-meter" aria-hidden="true">
         <span style={{ width: `${Math.max(5, clamp01(meter) * 100)}%` }} />
       </div>
@@ -1016,6 +1028,10 @@ export default function MonitoringDashboard() {
       : (summary?.apiHealth.latencyMs.p95 ?? 0) <= 900
       ? "warn"
       : "error";
+  const foregroundLatencyP95 =
+    summary?.apiHealth.latencyByPriority?.foreground.p95 ?? summary?.apiHealth.latencyMs.p95 ?? 0;
+  const backgroundLatencyP95 =
+    summary?.apiHealth.latencyByPriority?.background.p95 ?? summary?.apiHealth.latencyMs.p95 ?? 0;
 
   const elapsedSinceSummaryMs = Math.max(0, clockNowMs - summaryReceivedAtMs);
   const backoffFromSnapshotMs = Math.max(
@@ -1327,27 +1343,21 @@ export default function MonitoringDashboard() {
 
               <KpiCard
                 title="Reactiesnelheid"
-                value={`${
-                  summary?.apiHealth.latencyByPriority?.foreground.p95 ??
-                  summary?.apiHealth.latencyMs.p95 ??
-                  0
-                } ms`}
+                value={`${foregroundLatencyP95} ms`}
                 subtitle={
                   topSlowActivity
-                    ? `bg p95 ${summary?.apiHealth.latencyByPriority?.background.p95 ?? 0} ms · traag: ${topSlowActivity.label} (${topSlowActivity.count})`
-                    : `bg p95 ${summary?.apiHealth.latencyByPriority?.background.p95 ?? 0} ms`
+                    ? `Traagste activiteit: ${topSlowActivity.label} (${topSlowActivity.count})`
+                    : "Foreground en background worden apart gemeten"
                 }
                 tone={latencyTone}
                 meter={
                   1 -
-                  clamp01(
-                    (
-                      summary?.apiHealth.latencyByPriority?.foreground.p95 ??
-                      summary?.apiHealth.latencyMs.p95 ??
-                      0
-                    ) / 1800
-                  )
+                  clamp01(foregroundLatencyP95 / 1800)
                 }
+                details={[
+                  { label: "Foreground p95", value: `${foregroundLatencyP95} ms` },
+                  { label: "Background p95", value: `${backgroundLatencyP95} ms` },
+                ]}
                 hint="Toont foreground request-latency voor UX, met background latency als context."
               />
 

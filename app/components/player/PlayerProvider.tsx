@@ -169,7 +169,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const viewport = useViewport();
   const pathname = usePathname();
   const path = pathname ?? "/";
-  const showPlayer = path !== "/login" && !path.startsWith("/status");
+  const showPlayer = path !== "/login";
+  const showPlayerShell = showPlayer && !path.startsWith("/status");
   const showLibraryDock = path === "/" || path.startsWith("/gsplayer");
 
   const setControllerHandlers = useCallback((handlers: PlayerCommandHandlers | null) => {
@@ -466,15 +467,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           ? Math.max(0, Math.round(headerEl.getBoundingClientRect().bottom))
           : 0;
       const playerHeight =
-        showPlayer && playerShellRef.current
+        showPlayerShell && playerShellRef.current
           ? Math.max(0, Math.round(playerShellRef.current.getBoundingClientRect().height))
           : 0;
       const playerBottom =
-        showPlayer && playerShellRef.current
+        showPlayerShell && playerShellRef.current
           ? Math.max(0, Math.round(playerShellRef.current.getBoundingClientRect().bottom))
           : 0;
       const reservedBottom = Math.max(headerBottom, playerBottom);
-      const contentOffsetTop = showPlayer
+      const contentOffsetTop = showPlayerShell
         ? Math.max(0, reservedBottom - playerHeight)
         : headerBottom;
       const next = Math.max(220, Math.floor(viewportHeight - reservedBottom - 10));
@@ -506,7 +507,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       window.visualViewport?.removeEventListener("scroll", applyContentHeight);
       observer?.disconnect();
     };
-  }, [showPlayer, viewport.height, viewport.visualHeight]);
+  }, [showPlayerShell, viewport.height, viewport.visualHeight]);
 
   return (
     <PlayerContext.Provider value={value}>
@@ -516,7 +517,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             <div
               ref={playerShellRef}
               className="shell player-shell-wrap"
-              data-visible="true"
+              data-visible={showPlayerShell ? "true" : "false"}
+              aria-hidden={showPlayerShell ? undefined : true}
             >
               <div className="library-sticky player-shell">
                 <Image

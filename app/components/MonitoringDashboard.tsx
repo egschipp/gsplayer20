@@ -541,6 +541,7 @@ function KpiCard({
   meter,
   hint,
   details,
+  featured = false,
 }: {
   title: string;
   value: string;
@@ -549,9 +550,10 @@ function KpiCard({
   meter: number;
   hint: string;
   details?: Array<{ label: string; value: string }>;
+  featured?: boolean;
 }) {
   return (
-    <article className={`ops-kpi ${toneClass(tone)}`}>
+    <article className={`ops-kpi ${toneClass(tone)}${featured ? " ops-kpi-featured" : ""}`}>
       <div className="ops-kpi-head">
         <span className="ops-kpi-title">{title}</span>
         <HelpTip label={title} text={hint} />
@@ -1359,6 +1361,7 @@ export default function MonitoringDashboard() {
                   { label: "Background p95", value: `${backgroundLatencyP95} ms` },
                 ]}
                 hint="Toont foreground request-latency voor UX, met background latency als context."
+                featured
               />
 
               <KpiCard

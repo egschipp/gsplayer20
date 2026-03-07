@@ -282,6 +282,8 @@ jobs:
               container_name: gsplayer20
               env_file:
                 - .env
+              ports:
+                - "127.0.0.1:3000:3000"
               volumes:
                 - ./data:/data
               logging:

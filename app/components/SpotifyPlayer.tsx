@@ -2114,7 +2114,11 @@ export default function SpotifyPlayer({
       const isPlayerDevicesGet =
         method === "GET" && playerApiUrl?.endpoint === "/devices";
       const bodyPayload = extractProxyPayload(options?.body) as
-        | { device_ids?: string[] | null }
+        | {
+            device_ids?: string[] | null;
+            uris?: string[] | null;
+            context_uri?: string | null;
+          }
         | null
         | undefined;
       const playerProxyUrl = isPlayerStateGet
@@ -2165,13 +2169,22 @@ export default function SpotifyPlayer({
           Array.isArray(bodyPayload?.device_ids) &&
           bodyPayload.device_ids.length > 0;
         if (transferCommand) return null;
+        const explicitPlayStart =
+          method === "PUT" &&
+          playerApiUrl.endpoint === "/play" &&
+          ((Array.isArray(bodyPayload?.uris) && bodyPayload.uris.length > 0) ||
+            (typeof bodyPayload?.context_uri === "string" &&
+              bodyPayload.context_uri.trim().length > 0));
         if (activeDeviceRestrictedRef.current) {
           return "Spotify is currently blocking playback controls on this device. Switch device or wait a moment.";
         }
         const disallows = playbackDisallowsRef.current;
         const endpoint = playerApiUrl.endpoint;
         const blocked =
-          (method === "PUT" && endpoint === "/play" && disallows.resuming) ||
+          (method === "PUT" &&
+            endpoint === "/play" &&
+            !explicitPlayStart &&
+            disallows.resuming) ||
           (method === "PUT" && endpoint === "/pause" && disallows.pausing) ||
           (method === "POST" && endpoint === "/next" && disallows.skipping_next) ||
           (method === "POST" && endpoint === "/previous" && disallows.skipping_prev) ||

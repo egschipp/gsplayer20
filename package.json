@@ -1,6 +1,6 @@
 {
   "name": "gsplayer20",
-  "version": "3.0.24",
+  "version": "3.0.25",
   "private": true,
   "scripts": {
     "prepare": "node -e \"const fs=require('node:fs'); const {execFileSync}=require('node:child_process'); if (fs.existsSync('scripts/setup-hooks.mjs')) execFileSync(process.execPath, ['scripts/setup-hooks.mjs'], { stdio: 'inherit' });\"",

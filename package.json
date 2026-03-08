@@ -3,7 +3,7 @@
   "version": "3.0.19",
   "private": true,
   "scripts": {
-    "prepare": "node scripts/setup-hooks.mjs",
+    "prepare": "node -e \"const fs=require('node:fs'); const {execFileSync}=require('node:child_process'); if (fs.existsSync('scripts/setup-hooks.mjs')) execFileSync(process.execPath, ['scripts/setup-hooks.mjs'], { stdio: 'inherit' });\"",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

@@ -6,3 +6,6 @@ if (!fs.existsSync(".git")) {
 }
 
 execSync("git config core.hooksPath .githooks", { stdio: "inherit" });
+execSync("git config pull.rebase true", { stdio: "inherit" });
+execSync("git config rebase.autoStash true", { stdio: "inherit" });
+execSync("git config fetch.prune true", { stdio: "inherit" });

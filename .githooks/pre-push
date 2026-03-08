@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+current_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+[ -n "$current_branch" ] || exit 0
+
+upstream="$(git for-each-ref --format='%(upstream:short)' "refs/heads/$current_branch")"
+[ -n "$upstream" ] || exit 0
+
+remote="${upstream%%/*}"
+remote_branch="${upstream#*/}"
+remote_ref="refs/remotes/$remote/$remote_branch"
+
+git fetch --prune "$remote" "$remote_branch" >/dev/null 2>&1
+
+local_sha="$(git rev-parse HEAD)"
+remote_sha="$(git rev-parse "$remote_ref")"
+base_sha="$(git merge-base HEAD "$remote_ref")"
+
+if [ "$local_sha" = "$remote_sha" ]; then
+  exit 0
+fi
+
+if [ "$local_sha" = "$base_sha" ] || [ "$remote_sha" != "$base_sha" ]; then
+  echo "pre-push: syncing $current_branch with $upstream via rebase..."
+  git pull --rebase --autostash "$remote" "$remote_branch"
+fi

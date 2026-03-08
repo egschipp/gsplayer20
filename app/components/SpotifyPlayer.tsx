@@ -701,6 +701,7 @@ export default function SpotifyPlayer({
   const sdkDeviceIdRef = useRef<string | null>(null);
   const activeDeviceIdRef = useRef<string | null>(null);
   const activeDeviceNameRef = useRef<string | null>(null);
+  const activeDeviceRestrictedRef = useRef(activeDeviceRestricted);
   const readyRef = useRef(false);
   const rateLimitRef = useRef({ until: 0, backoffMs: 5000 });
   const lastRequestAtRef = useRef(0);
@@ -731,6 +732,7 @@ export default function SpotifyPlayer({
   const liveTrackUiGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastIsPlayingRef = useRef(false);
   const playerStateRef = useRef<typeof playerState>(null);
+  const playbackDisallowsRef = useRef<Record<string, boolean>>(playbackDisallows);
   const shuffleOnRef = useRef(shuffleOn);
   const shufflePendingRef = useRef(false);
   const lastShuffleSyncRef = useRef(0);
@@ -1941,6 +1943,10 @@ export default function SpotifyPlayer({
   }, [activeDeviceName]);
 
   useEffect(() => {
+    activeDeviceRestrictedRef.current = activeDeviceRestricted;
+  }, [activeDeviceRestricted]);
+
+  useEffect(() => {
     refreshAuthorityMode("runtime_state_change");
   }, [activeDeviceId, deviceId, refreshAuthorityMode, sdkReadyState]);
 
@@ -1967,6 +1973,10 @@ export default function SpotifyPlayer({
   useEffect(() => {
     shuffleOnRef.current = shuffleOn;
   }, [shuffleOn]);
+
+  useEffect(() => {
+    playbackDisallowsRef.current = playbackDisallows;
+  }, [playbackDisallows]);
 
   const ownPlaybackSyncRef = useRef(shouldOwnPlaybackSync);
   useEffect(() => {
@@ -2103,6 +2113,10 @@ export default function SpotifyPlayer({
         method === "GET" && playerApiUrl?.endpoint === "";
       const isPlayerDevicesGet =
         method === "GET" && playerApiUrl?.endpoint === "/devices";
+      const bodyPayload = extractProxyPayload(options?.body) as
+        | { device_ids?: string[] | null }
+        | null
+        | undefined;
       const playerProxyUrl = isPlayerStateGet
         ? "/api/spotify/me/player?raw=1"
         : isPlayerDevicesGet
@@ -2118,10 +2132,6 @@ export default function SpotifyPlayer({
         const query = new URLSearchParams(playerApiUrl.search || "");
         const deviceFromQuery = query.get("device_id");
         if (deviceFromQuery) return deviceFromQuery;
-        const bodyPayload = extractProxyPayload(options?.body) as
-          | { device_ids?: string[] | null }
-          | null
-          | undefined;
         const bodyDevice =
           Array.isArray(bodyPayload?.device_ids) && bodyPayload.device_ids.length
             ? bodyPayload.device_ids.find((value) => typeof value === "string" && value.trim()) ??
@@ -2148,8 +2158,54 @@ export default function SpotifyPlayer({
           : null;
       const isPlaybackCommand =
         method !== "GET" && Boolean(playerApiUrl);
+      const knownPlaybackRestriction = (() => {
+        if (!playerApiUrl || method === "GET") return null;
+        const transferCommand =
+          playerApiUrl.endpoint === "" &&
+          Array.isArray(bodyPayload?.device_ids) &&
+          bodyPayload.device_ids.length > 0;
+        if (transferCommand) return null;
+        if (activeDeviceRestrictedRef.current) {
+          return "Spotify is currently blocking playback controls on this device. Switch device or wait a moment.";
+        }
+        const disallows = playbackDisallowsRef.current;
+        const endpoint = playerApiUrl.endpoint;
+        const blocked =
+          (method === "PUT" && endpoint === "/play" && disallows.resuming) ||
+          (method === "PUT" && endpoint === "/pause" && disallows.pausing) ||
+          (method === "POST" && endpoint === "/next" && disallows.skipping_next) ||
+          (method === "POST" && endpoint === "/previous" && disallows.skipping_prev) ||
+          (method === "PUT" && endpoint.startsWith("/seek") && disallows.seeking) ||
+          (method === "PUT" &&
+            endpoint.startsWith("/shuffle") &&
+            disallows.toggling_shuffle);
+        if (!blocked) return null;
+        if (endpoint === "/play") {
+          return "Spotify is not allowing playback to resume in the current context.";
+        }
+        if (endpoint === "/pause") {
+          return "Spotify is not allowing playback to pause in the current context.";
+        }
+        if (endpoint === "/next") {
+          return "Spotify is not allowing skip next on the current device or context.";
+        }
+        if (endpoint === "/previous") {
+          return "Spotify is not allowing skip previous on the current device or context.";
+        }
+        if (endpoint.startsWith("/seek")) {
+          return "Spotify is not allowing seeking for the current track or context.";
+        }
+        if (endpoint.startsWith("/shuffle")) {
+          return "Spotify is not allowing shuffle changes in the current context.";
+        }
+        return "Spotify is currently blocking this playback command.";
+      })();
       const chaosLevel = Number(process.env.NEXT_PUBLIC_PLAYBACK_CHAOS ?? "0");
       if (!token && !playerCommandProxyPayload && !playerProxyUrl) return null;
+      if (isPlaybackCommand && knownPlaybackRestriction) {
+        setError(knownPlaybackRestriction);
+        return null;
+      }
       if (isPlaybackCommand && Date.now() < playbackRestrictionUntilRef.current) {
         const retryInSec = Math.max(
           1,
@@ -6034,6 +6090,20 @@ export default function SpotifyPlayer({
     allowQueueActivation: boolean
   ) {
     setPlaybackTouched(true);
+    if (activeDeviceRestrictedRef.current) {
+      setError(
+        "Spotify is currently blocking playback controls on this device. Switch device or wait a moment."
+      );
+      return;
+    }
+    if (targetPaused && playbackDisallowsRef.current.pausing) {
+      setError("Spotify is not allowing playback to pause in the current context.");
+      return;
+    }
+    if (!targetPaused && playbackDisallowsRef.current.resuming) {
+      setError("Spotify is not allowing playback to resume in the current context.");
+      return;
+    }
     if (allowQueueActivation && !targetPaused && isCustomQueueActive && !isCurrentTrackFromCustomQueue) {
       const targetQueueId =
         customQueue.currentQueueId ?? customQueue.items[0]?.queueId ?? null;
@@ -6153,6 +6223,10 @@ export default function SpotifyPlayer({
 
   async function handleNext() {
     setPlaybackTouched(true);
+    if (activeDeviceRestrictedRef.current || playbackDisallowsRef.current.skipping_next) {
+      setError("Spotify is not allowing skip next on the current device or context.");
+      return;
+    }
     if (isCustomQueueActive) {
       await customQueuePlayback.playNextFromQueue();
       return;
@@ -6202,6 +6276,10 @@ export default function SpotifyPlayer({
 
   async function handlePrevious() {
     setPlaybackTouched(true);
+    if (activeDeviceRestrictedRef.current || playbackDisallowsRef.current.skipping_prev) {
+      setError("Spotify is not allowing skip previous on the current device or context.");
+      return;
+    }
     if (isCustomQueueActive) {
       await customQueuePlayback.playPreviousFromQueue();
       return;
@@ -6250,6 +6328,10 @@ export default function SpotifyPlayer({
 
   async function handleToggleShuffle() {
     setPlaybackTouched(true);
+    if (activeDeviceRestrictedRef.current || playbackDisallowsRef.current.toggling_shuffle) {
+      setError("Spotify is not allowing shuffle changes in the current context.");
+      return;
+    }
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice || shufflePendingRef.current) return;
@@ -6282,6 +6364,12 @@ export default function SpotifyPlayer({
 
   async function handleToggleRepeat() {
     setPlaybackTouched(true);
+    if (activeDeviceRestrictedRef.current) {
+      setError(
+        "Spotify is currently blocking playback controls on this device. Switch device or wait a moment."
+      );
+      return;
+    }
     const token = accessTokenRef.current;
     const currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (!token || !currentDevice) return;
@@ -6323,7 +6411,16 @@ export default function SpotifyPlayer({
   }, [clampProgressMs]);
 
   async function handleSeek(nextMs: number) {
-    if (playbackDisallows.seeking) return;
+    if (activeDeviceRestrictedRef.current) {
+      setError(
+        "Spotify is currently blocking playback controls on this device. Switch device or wait a moment."
+      );
+      return;
+    }
+    if (playbackDisallowsRef.current.seeking) {
+      setError("Spotify is not allowing seeking for the current track or context.");
+      return;
+    }
     setPlaybackTouched(true);
     const token = accessTokenRef.current;
     const fallbackDevice =

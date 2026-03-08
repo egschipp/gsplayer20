@@ -42,6 +42,7 @@ test("derives active track ids from focus and snapshot", () => {
       deviceId: "dev1",
       isActiveDevice: true,
       sdkReady: true,
+      mode: "local_sdk",
       lastError: null,
     },
     controllerError: null,
@@ -74,6 +75,7 @@ test("marks transient gap when stale loading snapshot still has active ids", () 
       deviceId: null,
       isActiveDevice: false,
       sdkReady: true,
+      mode: "degraded",
       lastError: null,
     },
     controllerError: null,
@@ -81,4 +83,3 @@ test("marks transient gap when stale loading snapshot still has active ids", () 
   assert.equal(model.transientGap, true);
   assert.equal(model.activeTrackId, TRACK_A);
 });
-

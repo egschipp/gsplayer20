@@ -16,6 +16,7 @@ import {
   type PlaybackApiError,
   fetchPlaybackStateSnapshot,
 } from "@/lib/spotify/webPlaybackApi";
+import { getPlayerErrorMessage, normalizePlayerError } from "./playerErrors";
 
 type QueuePlaybackContextValue = {
   playFromQueue: (queueId: string) => Promise<void>;
@@ -73,24 +74,16 @@ function findQueueIndexByTrackIds(
 }
 
 function mapPlaybackError(error: unknown) {
-  const candidate = error as Partial<PlaybackApiError>;
-  if (typeof candidate?.status === "number") {
-    if (candidate.status === 401) return "Spotify session expired. Sign in again.";
-    if (candidate.status === 403) return "Missing Spotify playback permissions.";
-    if (candidate.status === 404) return "No active Spotify player found.";
-    if (candidate.status === 429) {
-      const retryAfter =
-        typeof candidate.retryAfterSec === "number" && candidate.retryAfterSec > 0
-          ? candidate.retryAfterSec
-          : 1;
-      return `Spotify is busy. Try again in ${retryAfter}s.`;
-    }
+  const normalized = normalizePlayerError(error);
+  if (normalized.code !== "UNKNOWN") {
+    return getPlayerErrorMessage(normalized.code, {
+      retryAfterSec: normalized.retryAfterSec,
+    });
   }
-  const message =
-    typeof (error as { message?: string })?.message === "string"
-      ? (error as { message: string }).message
-      : "Queue playback could not be completed.";
-  return message;
+  const candidate = error as Partial<PlaybackApiError>;
+  return typeof candidate?.message === "string" && candidate.message.trim()
+    ? candidate.message
+    : getPlayerErrorMessage("QUEUE_PLAYBACK_FAILED");
 }
 
 export function QueuePlaybackProvider({ children }: { children: React.ReactNode }) {

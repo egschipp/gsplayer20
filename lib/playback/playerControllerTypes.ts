@@ -1,3 +1,5 @@
+import type { PlaybackExecutionMode } from "./runtimeMode";
+
 export type PlayerPlaybackStatus =
   | "empty"
   | "loading"
@@ -15,6 +17,7 @@ export type PlayerRuntimeState = {
   deviceId: string | null;
   isActiveDevice: boolean;
   sdkReady: boolean;
+  mode: PlaybackExecutionMode;
   lastError: string | null;
 };
 
@@ -27,6 +30,27 @@ export type PlayTrackRequest = {
   trackPosition?: number | null;
   selectedPlaylistId?: string | null;
   selectedPlaylistType?: "liked" | "all_music" | "playlist" | null;
+};
+
+export type PlayerApi = {
+  primePlaybackGesture?: () => void;
+  playQueue: (
+    uris: string[],
+    offsetUri?: string,
+    offsetIndex?: number | null
+  ) => Promise<void>;
+  playContext: (
+    contextUri: string,
+    offsetPosition?: number | null,
+    offsetUri?: string
+  ) => Promise<void>;
+  togglePlay: () => Promise<void>;
+  pause: () => Promise<void>;
+  resume: () => Promise<void>;
+  seek: (ms: number) => Promise<void>;
+  transfer: (deviceId: string, play?: boolean) => Promise<void>;
+  next: () => Promise<void>;
+  previous: () => Promise<void>;
 };
 
 export type PlayerCommandHandlers = {

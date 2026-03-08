@@ -12,7 +12,6 @@ import {
   useRef,
   useState,
 } from "react";
-import type { PlayerApi } from "../SpotifyPlayer";
 import { QueueProvider } from "@/lib/queue/QueueProvider";
 import { QueuePlaybackProvider } from "@/lib/playback/QueuePlaybackProvider";
 import { useViewport } from "@/lib/responsive/useViewport";
@@ -23,11 +22,13 @@ import {
 } from "./playbackFocus";
 import type {
   PlayTrackRequest,
+  PlayerApi,
   PlayerCommandHandlers,
   PlayerCommandType,
   PlayerPlaybackStatus,
   PlayerRuntimeState,
 } from "@/lib/playback/playerControllerTypes";
+import { normalizePlayerError } from "@/lib/playback/playerErrors";
 import {
   derivePlaybackSnapshot,
   type PlaybackSnapshot,
@@ -81,6 +82,7 @@ const INITIAL_RUNTIME: PlayerRuntimeState = {
   deviceId: null,
   isActiveDevice: false,
   sdkReady: false,
+  mode: "idle",
   lastError: null,
 };
 
@@ -186,6 +188,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         prev.deviceId === runtime.deviceId &&
         prev.isActiveDevice === runtime.isActiveDevice &&
         prev.sdkReady === runtime.sdkReady &&
+        prev.mode === runtime.mode &&
         prev.lastError === runtime.lastError
       ) {
         return prev;
@@ -211,12 +214,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           await run(handlers);
         });
       } catch (error) {
-        const message = (error as Error)?.message ?? "Unable to play track right now.";
-        if (message === "PLAYER_NOT_READY") {
-          setControllerError("Spotify player is not ready yet. Try again in a few seconds.");
-        } else {
-          setControllerError(message);
-        }
+        const normalized = normalizePlayerError(error);
+        setControllerError(normalized.message);
         throw error;
       } finally {
         setCommandDepth((prev) => {

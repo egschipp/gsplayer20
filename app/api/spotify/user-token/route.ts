@@ -49,6 +49,7 @@ export async function GET(req: Request) {
   return jsonNoStore(
     {
       ok: true,
+      accessToken: tokenResult.accessToken,
       expiresAt: tokenResult.accessExpiresAt,
       expiresInSec,
       scope: tokenResult.scope,

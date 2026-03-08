@@ -52,9 +52,28 @@ import {
 } from "@/lib/playback/authority";
 import { animateScrollTop } from "@/lib/ui/smoothScroll";
 import type {
+  PlayerApi,
   PlayerCommandHandlers,
   PlayerRuntimeState,
 } from "@/lib/playback/playerControllerTypes";
+import {
+  PLAYBACK_CROSS_TAB_CHANNEL,
+  type PlaybackCrossTabMessage,
+  type PlaybackCrossTabSnapshot,
+} from "@/lib/playback/crossTab";
+import {
+  getPlayerErrorMessage,
+  normalizePlayerError,
+} from "@/lib/playback/playerErrors";
+import {
+  resolvePlaybackExecutionMode,
+  resolvePlaybackSyncOwnership,
+} from "@/lib/playback/runtimeMode";
+import {
+  createPlayerApiHandlers,
+  type PlayerDeferredPlayIntent,
+} from "@/lib/playback/playerApiFactory";
+import { usePlaybackLeader } from "@/lib/playback/usePlaybackLeader";
 
 declare global {
   interface Window {
@@ -171,21 +190,7 @@ type QueueTrackItem = {
   isCurrent: boolean;
 };
 
-type DeferredPlayIntent =
-  | {
-      kind: "queue";
-      uris: string[];
-      offsetUri?: string;
-      offsetIndex?: number | null;
-      createdAt: number;
-    }
-  | {
-      kind: "context";
-      contextUri: string;
-      offsetPosition?: number | null;
-      offsetUri?: string;
-      createdAt: number;
-    };
+type DeferredPlayIntent = PlayerDeferredPlayIntent;
 
 const INITIAL_HANDOFF_STATE: HandoffState = {
   phase: "idle",
@@ -214,23 +219,6 @@ function detectWebplayerPlatform() {
   if (/windows/.test(ua)) return "Windows";
   return "";
 }
-
-export type PlayerApi = {
-  primePlaybackGesture?: () => void;
-  playQueue: (uris: string[], offsetUri?: string, offsetIndex?: number | null) => Promise<void>;
-  playContext: (
-    contextUri: string,
-    offsetPosition?: number | null,
-    offsetUri?: string
-  ) => Promise<void>;
-  togglePlay: () => Promise<void>;
-  pause: () => Promise<void>;
-  resume: () => Promise<void>;
-  seek: (ms: number) => Promise<void>;
-  transfer: (deviceId: string, play?: boolean) => Promise<void>;
-  next: () => Promise<void>;
-  previous: () => Promise<void>;
-};
 
 type PlayerProps = {
   onReady: (api: PlayerApi | null) => void;
@@ -765,6 +753,7 @@ export default function SpotifyPlayer({
   const lastCommandAtRef = useRef(0);
   const playbackRecoveryRef = useRef(false);
   const playerApiRef = useRef<PlayerApi | null>(null);
+  const publishedPlayerHandlersRef = useRef<PlayerApi | null>(null);
   const playIntentReplayRef = useRef(false);
   const pendingPlayIntentRef = useRef<DeferredPlayIntent | null>(null);
   const pendingPlayIntentProcessingRef = useRef(false);
@@ -781,6 +770,12 @@ export default function SpotifyPlayer({
 
   function formatPlayerError(message?: string | null) {
     if (!message) return null;
+    const normalized = normalizePlayerError({ message });
+    if (normalized.code !== "UNKNOWN") {
+      return getPlayerErrorMessage(normalized.code, {
+        retryAfterSec: normalized.retryAfterSec,
+      });
+    }
     const lower = String(message).toLowerCase();
     if (lower.includes("invalid token scopes") || lower.includes("insufficient_scope")) {
       return "Missing Spotify permissions. Reconnect.";
@@ -1491,6 +1486,7 @@ export default function SpotifyPlayer({
     () => process.env.NEXT_PUBLIC_SPOTIFY_CONNECT_STREAM === "1",
     []
   );
+  const { isLeader: isPlaybackLeader } = usePlaybackLeader(Boolean(accessToken));
   const sdkSupport = useMemo(() => getWebPlaybackSdkSupport(), []);
   const sdkSupported = sdkSupport.supported;
   const premiumRequired =
@@ -1630,6 +1626,19 @@ export default function SpotifyPlayer({
     ? queuePresentation.status
     : activeQueueTrackStatusRaw;
   const activeQueueTrackIsStale = queuePresentation.stale;
+  const playbackExecutionMode = resolvePlaybackExecutionMode({
+    activeDeviceId: activeDeviceId || deviceId || null,
+    sdkDeviceId: sdkDeviceIdRef.current,
+    pendingDeviceId: pendingDeviceIdRef.current,
+    sdkReady: sdkReadyState,
+  });
+  const { shouldOwnPlaybackSync, shouldRunPlaybackStream } =
+    resolvePlaybackSyncOwnership({
+      executionMode: playbackExecutionMode,
+      isLeader: isPlaybackLeader,
+      activeDeviceId: activeDeviceId || deviceId || null,
+      sdkDeviceId: sdkDeviceIdRef.current,
+    });
   useEffect(() => {
     if (!PLAYBACK_FEATURE_FLAGS.playbackUiTelemetryV1) return;
     if (lastQueueUiStatusRef.current === activeQueueTrackStatus) return;
@@ -1914,6 +1923,7 @@ export default function SpotifyPlayer({
       deviceId: activeDeviceId || deviceId || null,
       isActiveDevice: Boolean(activeDeviceId || deviceId),
       sdkReady: sdkReadyState,
+      mode: playbackExecutionMode,
       lastError: formatPlayerError(error) || sdkLastError || null,
     });
   }, [
@@ -1921,6 +1931,7 @@ export default function SpotifyPlayer({
     deviceId,
     error,
     onControllerRuntimeChange,
+    playbackExecutionMode,
     sdkLastError,
     sdkReadyState,
   ]);
@@ -1930,13 +1941,18 @@ export default function SpotifyPlayer({
     shuffleOnRef.current = shuffleOn;
   }, [shuffleOn]);
 
+  const ownPlaybackSyncRef = useRef(shouldOwnPlaybackSync);
+  useEffect(() => {
+    ownPlaybackSyncRef.current = shouldOwnPlaybackSync;
+  }, [shouldOwnPlaybackSync]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (typeof BroadcastChannel === "undefined") return;
-    const channel = new BroadcastChannel("gsplayer-playback-sync");
+    const channel = new BroadcastChannel(PLAYBACK_CROSS_TAB_CHANNEL);
     crossTabChannelRef.current = channel;
-    channel.onmessage = (event: MessageEvent<any>) => {
-      const payload = event.data;
+    channel.onmessage = (event: MessageEvent<PlaybackCrossTabMessage>) => {
+      const payload = event.data as PlaybackCrossTabMessage | null;
       if (!payload || typeof payload !== "object") return;
       if (payload.type === "sync" && typeof payload.at === "number") {
         lastRemoteSyncAtRef.current = Math.max(lastRemoteSyncAtRef.current, payload.at);
@@ -1947,6 +1963,38 @@ export default function SpotifyPlayer({
           lastRemoteIntentSeqRef.current,
           Math.floor(payload.seq)
         );
+        return;
+      }
+      if (
+        payload.type === "snapshot" &&
+        typeof payload.at === "number" &&
+        payload.snapshot &&
+        typeof payload.source === "string"
+      ) {
+        lastRemoteSyncAtRef.current = Math.max(lastRemoteSyncAtRef.current, payload.at);
+        if (ownPlaybackSyncRef.current) return;
+        const source =
+          payload.source === "api_stream" ||
+          payload.source === "api_poll" ||
+          payload.source === "api_verify" ||
+          payload.source === "api_sync" ||
+          payload.source === "api_bootstrap"
+            ? payload.source
+            : "api_sync";
+        const responseReceivedAtWallMs = Date.now();
+        const responseReceivedAtMonoMs =
+          typeof performance !== "undefined" && typeof performance.now === "function"
+            ? performance.now()
+            : responseReceivedAtWallMs;
+        const requestStartedAtWallMs =
+          typeof payload.snapshot.timestamp === "number"
+            ? Math.max(0, payload.snapshot.timestamp)
+            : responseReceivedAtWallMs;
+        ingestCrossTabSnapshotRef.current(payload.snapshot, source, {
+          requestStartedAtWallMs,
+          responseReceivedAtWallMs,
+          responseReceivedAtMonoMs,
+        });
       }
     };
     return () => {
@@ -1970,7 +2018,11 @@ export default function SpotifyPlayer({
       rateLimitRef.current.backoffMs * 2,
       60000
     );
-    setError(`Spotify is even druk. Opnieuw in ${Math.ceil(retryMs / 1000)}s`);
+    setError(
+      getPlayerErrorMessage("RATE_LIMITED", {
+        retryAfterSec: Math.ceil(retryMs / 1000),
+      })
+    );
     return true;
   }, []);
 
@@ -2138,7 +2190,7 @@ export default function SpotifyPlayer({
                 continue;
               }
             }
-            setError("Spotify session expired. Reconnect.");
+            setError(getPlayerErrorMessage("UNAUTHENTICATED"));
             return res;
           }
 
@@ -2161,7 +2213,7 @@ export default function SpotifyPlayer({
               return res;
             }
 
-            setError("Missing Spotify permissions. Reconnect.");
+            setError(getPlayerErrorMessage("FORBIDDEN"));
             return res;
           }
           if (res.status === 409 && isPlaybackCommand) {
@@ -3072,6 +3124,18 @@ export default function SpotifyPlayer({
     [emitPlaybackMetric, preserveTransientNoTrackState, recordNoTrackEvent]
   );
 
+  const ingestCrossTabSnapshotRef = useRef(
+    (
+      _payload: PlaybackCrossTabSnapshot,
+      _source: PlaybackSource,
+      _timing: {
+        requestStartedAtWallMs: number;
+        responseReceivedAtWallMs: number;
+        responseReceivedAtMonoMs: number;
+      }
+    ) => undefined
+  );
+
   const ingestApiSnapshot = useCallback(
     (
       data: any,
@@ -3114,6 +3178,14 @@ export default function SpotifyPlayer({
         return Boolean(data?.is_playing);
       }
       lastPlaybackSnapshotAtRef.current = Date.now();
+      if (ownPlaybackSyncRef.current) {
+        postCrossTabEvent({
+          type: "snapshot",
+          at: Date.now(),
+          source,
+          snapshot: data as PlaybackCrossTabSnapshot,
+        } satisfies PlaybackCrossTabMessage);
+      }
       const device = data?.device;
       const remoteDeviceId = device?.id ?? null;
       const canAdoptRemoteDevice = shouldAdoptRemoteDevice(remoteDeviceId);
@@ -3396,6 +3468,24 @@ export default function SpotifyPlayer({
     ]
   );
 
+  ingestCrossTabSnapshotRef.current = (
+    payload,
+    source,
+    {
+      requestStartedAtWallMs,
+      responseReceivedAtWallMs,
+      responseReceivedAtMonoMs,
+    }
+  ) => {
+    ingestApiSnapshot(payload, {
+      source,
+      requestStartedAtWallMs,
+      responseReceivedAtWallMs,
+      responseReceivedAtMonoMs,
+      pauseLocalSdkOnRemote: source === "api_poll" || source === "api_stream",
+    });
+  };
+
   const syncPlaybackState = useCallback(
     async (source: PlaybackSource = "api_sync", minEpoch?: number) => {
       const nowMs = Date.now();
@@ -3474,6 +3564,7 @@ export default function SpotifyPlayer({
     if (!enablePlaybackStream) return;
     if (!accessToken) return;
     if (typeof window === "undefined") return;
+    if (!shouldRunPlaybackStream) return;
 
     let cancelled = false;
     let source: EventSource | null = null;
@@ -3548,7 +3639,13 @@ export default function SpotifyPlayer({
       if (retryTimer) clearTimeout(retryTimer);
       if (source) source.close();
     };
-  }, [accessToken, enablePlaybackStream, getMonotonicNow, ingestApiSnapshot]);
+  }, [
+    accessToken,
+    enablePlaybackStream,
+    getMonotonicNow,
+    ingestApiSnapshot,
+    shouldRunPlaybackStream,
+  ]);
 
   useEffect(() => {
     if (!accessToken || !currentTrackIdState) {
@@ -4351,8 +4448,9 @@ export default function SpotifyPlayer({
 
   useEffect(() => {
     if (!accessToken) return;
+    if (!shouldOwnPlaybackSync) return;
     void refreshDevices(true);
-  }, [accessToken, refreshDevices]);
+  }, [accessToken, refreshDevices, shouldOwnPlaybackSync]);
 
   const startLocalWebPlayerFromConnect = useCallback(() => {
     preferSdkDeviceRef.current = true;
@@ -4427,6 +4525,7 @@ export default function SpotifyPlayer({
 
   useEffect(() => {
     if (sessionStatus !== "authenticated") return;
+    if (!shouldOwnPlaybackSync) return;
     const hidden =
       typeof document !== "undefined" && document.visibilityState === "hidden";
     const intervalMs = hidden ? 20_000 : connectDockOpen ? 10_000 : 16_000;
@@ -4434,18 +4533,20 @@ export default function SpotifyPlayer({
       void refreshDevices(false);
     }, intervalMs);
     return () => clearInterval(interval);
-  }, [connectDockOpen, refreshDevices, sessionStatus]);
+  }, [connectDockOpen, refreshDevices, sessionStatus, shouldOwnPlaybackSync]);
 
   useEffect(() => {
     if (!canUseSdk || !accessToken) return;
+    if (!shouldOwnPlaybackSync) return;
     if (sdkReadyRef.current || playerRef.current) return;
     if (autoBootAttemptedRef.current) return;
     autoBootAttemptedRef.current = true;
     startLocalWebPlayerFromConnect();
-  }, [accessToken, canUseSdk, startLocalWebPlayerFromConnect]);
+  }, [accessToken, canUseSdk, shouldOwnPlaybackSync, startLocalWebPlayerFromConnect]);
 
   useEffect(() => {
     if (!canUseSdk) return;
+    if (!shouldOwnPlaybackSync) return;
     if (sdkReadyState) return;
     if (sdkLifecycle !== "connecting") return;
     if (sdkLastError) return;
@@ -4465,10 +4566,11 @@ export default function SpotifyPlayer({
       setSdkLifecycle("error");
     }, 12000);
     return () => window.clearTimeout(timer);
-  }, [canUseSdk, sdkLifecycle, sdkLastError, sdkReadyState]);
+  }, [canUseSdk, sdkLifecycle, sdkLastError, sdkReadyState, shouldOwnPlaybackSync]);
 
   useEffect(() => {
     if (!canUseSdk) return;
+    if (!shouldOwnPlaybackSync) return;
     let cancelled = false;
 
     const reconnect = async () => {
@@ -4520,10 +4622,11 @@ export default function SpotifyPlayer({
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUseSdk, refreshDevices]);
+  }, [canUseSdk, refreshDevices, shouldOwnPlaybackSync]);
 
   useEffect(() => {
     if (!canUseSdk) return;
+    if (!shouldOwnPlaybackSync) return;
     const onInteraction = () => {
       if (sdkReadyRef.current) return;
       void kickstartLocalPlayer();
@@ -4534,7 +4637,7 @@ export default function SpotifyPlayer({
       window.removeEventListener("pointerdown", onInteraction);
       window.removeEventListener("keydown", onInteraction);
     };
-  }, [canUseSdk, kickstartLocalPlayer]);
+  }, [canUseSdk, kickstartLocalPlayer, shouldOwnPlaybackSync]);
 
   useEffect(() => {
     if (!accessToken || !playbackAllowed) {
@@ -4592,14 +4695,18 @@ export default function SpotifyPlayer({
       activeDeviceIdRef.current || deviceIdRef.current || sdkDeviceIdRef.current
     );
     if (!hasDevice) {
-      if (canUseSdk && !sdkReadyRef.current) {
+      if (shouldOwnPlaybackSync && canUseSdk && !sdkReadyRef.current) {
         void kickstartLocalPlayer();
       }
-      void refreshDevices(true);
+      if (shouldOwnPlaybackSync) {
+        void refreshDevices(true);
+      }
       return;
     }
     if (!deviceReady) {
-      void refreshDevices(false);
+      if (shouldOwnPlaybackSync) {
+        void refreshDevices(false);
+      }
       return;
     }
 
@@ -4639,6 +4746,7 @@ export default function SpotifyPlayer({
     kickstartLocalPlayer,
     pendingPlayIntentVersion,
     refreshDevices,
+    shouldOwnPlaybackSync,
   ]);
 
   useEffect(() => {
@@ -4647,8 +4755,6 @@ export default function SpotifyPlayer({
         playerCleanupRef.current();
         playerCleanupRef.current = null;
       }
-      onReady(null);
-      onControllerHandlersChange?.(null);
       readyRef.current = false;
       sdkReadyRef.current = false;
       autoBootAttemptedRef.current = false;
@@ -5107,618 +5213,6 @@ export default function SpotifyPlayer({
       });
     playerRef.current = player;
 
-    const raisePlaybackCommandError = (
-      status: number | undefined,
-      code: string,
-      userMessage: string,
-      retryAfterSec?: number
-    ): never => {
-      setError(userMessage);
-      const error = new Error(
-        typeof status === "number" ? `SPOTIFY_${status}_${code}` : `SPOTIFY_${code}`
-      ) as Error & { status?: number; retryAfterSec?: number; userMessage?: string };
-      if (typeof status === "number") {
-        error.status = status;
-      }
-      if (typeof retryAfterSec === "number" && Number.isFinite(retryAfterSec)) {
-        error.retryAfterSec = retryAfterSec;
-      }
-      error.userMessage = userMessage;
-      throw error;
-    };
-
-    const isRestrictionViolationResponse = async (res: Response) => {
-      if (res.status !== 403) return false;
-      const details = await readJsonSafely<{ error?: string; message?: string }>(res.clone());
-      const errorCode = String(details?.error ?? "").trim().toUpperCase();
-      return (
-        errorCode === "RESTRICTION_VIOLATED" ||
-        String(details?.message ?? "").toLowerCase().includes("restriction violated")
-      );
-    };
-
-    const recoverDeferredPlaybackStart = async (
-      res: Response,
-      intent: DeferredPlayIntent
-    ) => {
-      const noActiveDevice = res.status === 404;
-      const restrictionViolation =
-        res.status === 403 && (await isRestrictionViolationResponse(res));
-      if (!noActiveDevice && !restrictionViolation) {
-        return false;
-      }
-
-      lastConfirmedActiveDeviceRef.current = null;
-      setDeviceReady(false);
-      void refreshDevices(true);
-
-      if (!playIntentReplayRef.current) {
-        if (restrictionViolation) {
-          playbackRestrictionUntilRef.current =
-            Date.now() + PLAYBACK_RESTRICTION_COOLDOWN_MS;
-          setActiveDeviceRestricted(true);
-          setError(
-            "Spotify is temporarily blocking playback on this device. Retrying automatically."
-          );
-        }
-        queueDeferredPlayIntent({
-          ...intent,
-          createdAt: Date.now(),
-        });
-        return true;
-      }
-
-      if (restrictionViolation) {
-        raisePlaybackCommandError(
-          403,
-          "RESTRICTION_VIOLATED",
-          "Spotify is temporarily blocking playback on this device. Switch device or try again."
-        );
-      }
-      raisePlaybackCommandError(
-        404,
-        "NO_ACTIVE_DEVICE",
-        "No active Spotify player found."
-      );
-    };
-
-    const api: PlayerApi = {
-      primePlaybackGesture: () => {
-        setPlaybackTouched(true);
-        playerRef.current?.activateElement?.().catch?.(() => undefined);
-        playerRef.current?.connect?.().catch?.(() => undefined);
-      },
-      playQueue: async (uris, offsetUri, offsetIndex) =>
-        enqueuePlaybackCommand(async () => {
-          const operationEpoch = beginOperationEpoch();
-          setPlaybackTouched(true);
-          playerRef.current?.activateElement?.().catch?.(() => undefined);
-          playerRef.current?.connect?.().catch?.(() => undefined);
-          const tokenValue = accessTokenRef.current;
-          if (!tokenValue) {
-            raisePlaybackCommandError(401, "MISSING_TOKEN", "Spotify-sessie verlopen. Log opnieuw in.");
-          }
-          const token = tokenValue!;
-          let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
-          if (!playbackAllowed) {
-            raisePlaybackCommandError(
-              403,
-              "MISSING_SCOPE",
-              "Missing Spotify permissions. Reconnect."
-            );
-          }
-          if (!currentDevice && sdkDeviceIdRef.current) {
-            currentDevice = sdkDeviceIdRef.current;
-            setActiveDevice(currentDevice, localWebplayerName);
-          }
-          if (!currentDevice) {
-            const awaitedDevice = await waitForKnownDeviceId();
-            if (awaitedDevice) {
-              currentDevice = awaitedDevice;
-              if (awaitedDevice === sdkDeviceIdRef.current) {
-                setActiveDevice(awaitedDevice, localWebplayerName);
-              }
-            }
-          }
-          if (!currentDevice) {
-            const preparedDevice = await waitForPlayableDevice();
-            if (preparedDevice) {
-              currentDevice = preparedDevice;
-              if (preparedDevice === sdkDeviceIdRef.current) {
-                setActiveDevice(preparedDevice, localWebplayerName);
-              }
-            }
-          }
-          if (!currentDevice) {
-            if (!playIntentReplayRef.current) {
-              queueDeferredPlayIntent({
-                kind: "queue",
-                uris: [...uris],
-                offsetUri,
-                offsetIndex,
-                createdAt: Date.now(),
-              });
-              return;
-            }
-            raisePlaybackCommandError(
-              404,
-              "NO_ACTIVE_DEVICE",
-                "No Spotify device selected. Choose a device to start playback."
-            );
-          }
-          if (!Array.isArray(uris) || uris.length === 0) {
-            return;
-          }
-          const hasIndex =
-            typeof offsetIndex === "number" &&
-            Number.isFinite(offsetIndex) &&
-            offsetIndex >= 0 &&
-            offsetIndex < uris.length;
-          const resolvedIndex = hasIndex
-            ? (offsetIndex as number)
-            : offsetUri
-            ? Math.max(0, uris.indexOf(offsetUri))
-            : Math.max(0, getIndexFromTrackId(uris, pendingTrackIdRef.current));
-          const resolvedUri = uris[resolvedIndex] ?? offsetUri ?? null;
-
-          if (resolvedUri) {
-            const id = resolvedUri.split(":").pop() || null;
-            pendingTrackIdRef.current = id;
-            trackChangeLockUntilRef.current = Date.now() + 2000;
-            applyProgressPosition(0);
-          }
-          if (currentDevice === sdkDeviceIdRef.current) {
-            await playerRef.current?.activateElement?.();
-          }
-
-          const payload = {
-            uris,
-            offset: resolvedUri ? { uri: resolvedUri } : undefined,
-            position_ms: 0,
-          };
-          const startIndex = Math.max(0, Math.min(resolvedIndex, uris.length - 1));
-
-          // For explicit track/context selection we must not auto-resume old playback
-          // during device transfer, otherwise a short stale-audio blip can be heard.
-          const ready = await ensureActiveDevice(currentDevice as string, token, false);
-          if (!ready) {
-            const preparedDevice = await waitForPlayableDevice(5_000);
-            if (preparedDevice) {
-              currentDevice = preparedDevice;
-            } else if (!playIntentReplayRef.current) {
-              queueDeferredPlayIntent({
-                kind: "queue",
-                uris: [...uris],
-                offsetUri,
-                offsetIndex,
-                createdAt: Date.now(),
-              });
-              return;
-            }
-          }
-          if (!currentDevice) {
-            raisePlaybackCommandError(
-              404,
-              "DEVICE_NOT_READY",
-              "Spotify‑apparaat is nog niet klaar. Probeer opnieuw."
-            );
-          }
-          const shuffleReady = await setRemoteShuffleState(
-            shuffleOnRef.current,
-            currentDevice as string,
-            token,
-            false
-          );
-          if (!shuffleReady) {
-            setError("Shuffle status kon niet worden toegepast op dit apparaat.");
-          }
-
-          const attemptPlay = async () => {
-            return spotifyApiFetch(
-              withDeviceId(
-                "https://api.spotify.com/v1/me/player/play",
-                currentDevice as string
-              ),
-              { method: "PUT", body: JSON.stringify(payload) }
-            );
-          };
-
-          let res = await attemptPlay();
-          if (res && !res.ok) {
-            if (res.status === 409) {
-              refreshDevices(true);
-              const preparedDevice = await waitForPlayableDevice(3_500);
-              if (preparedDevice) {
-                currentDevice = preparedDevice;
-              }
-              await new Promise((resolve) => setTimeout(resolve, 450));
-              res = await attemptPlay();
-            } else if (res.status === 404 || res.status >= 500) {
-              refreshDevices(true);
-              await new Promise((resolve) => setTimeout(resolve, 600));
-              res = await attemptPlay();
-            }
-          }
-          if (!res) {
-            raisePlaybackCommandError(
-              undefined,
-              "PLAY_REQUEST_FAILED",
-              "Spotify‑verbinding is instabiel. Probeer opnieuw."
-            );
-          }
-          const playRes = res!;
-          if (!playRes.ok && playRes.status !== 204) {
-            if (playRes.status === 401) {
-              raisePlaybackCommandError(401, "UNAUTHORIZED", "Spotify-sessie verlopen. Log opnieuw in.");
-            }
-            if (playRes.status === 403) {
-              if (
-                await recoverDeferredPlaybackStart(playRes, {
-                  kind: "queue",
-                  uris: [...uris],
-                  offsetUri,
-                  offsetIndex,
-                  createdAt: Date.now(),
-                })
-              ) {
-                return;
-              }
-              raisePlaybackCommandError(403, "FORBIDDEN", "Missing Spotify permissions. Reconnect.");
-            }
-            if (playRes.status === 404) {
-              if (
-                await recoverDeferredPlaybackStart(playRes, {
-                  kind: "queue",
-                  uris: [...uris],
-                  offsetUri,
-                  offsetIndex,
-                  createdAt: Date.now(),
-                })
-              ) {
-                return;
-              }
-              raisePlaybackCommandError(404, "NO_ACTIVE_DEVICE", "No active Spotify player found.");
-            }
-            if (playRes.status === 429) {
-              const retryAfterRaw = Number(playRes.headers.get("Retry-After") ?? "1");
-              const retryAfter = Number.isFinite(retryAfterRaw)
-                ? Math.min(retryAfterRaw, PLAYER_RETRY_AFTER_MAX_MS / 1000)
-                : 1;
-              raisePlaybackCommandError(
-                429,
-                "RATE_LIMITED",
-                `Spotify is druk. Probeer opnieuw over ${Math.max(1, Math.round(retryAfter))}s.`,
-                retryAfter
-              );
-            }
-            raisePlaybackCommandError(
-              playRes.status,
-              "PLAY_FAILED",
-              "Playback is unavailable right now. Try again."
-            );
-          }
-          if (playRes.ok) {
-            const expectedTrackId = resolveTrackIdFromUri(resolvedUri);
-            const playAck = await readJsonSafely<any>(playRes.clone());
-            shouldApplyIngest({
-              source: "command",
-              seq: readSyncServerSeq(playAck),
-              atMs: readSyncServerTime(playAck),
-              deviceId: currentDevice as string,
-              trackId: expectedTrackId,
-              isPlaying: true,
-              force: true,
-            }, {
-              receivedMonoMs: getMonotonicNow(),
-              snapshotDeviceId: currentDevice as string,
-            });
-            const started = await ensurePlaybackStartedWithRetry({
-              deviceId: currentDevice as string,
-              expectedTrackId,
-              replay: attemptPlay,
-            });
-            if (!started) {
-              setError("Track startte niet direct. Probeer opnieuw.");
-              emitPlaybackMetric("play_start_failed", 1, {
-                mode: "queue",
-                reason: "not_started_after_retry",
-              });
-            } else {
-              setError(null);
-              emitPlaybackMetric("play_start_success", 1, { mode: "queue" });
-            }
-            queueModeRef.current = "queue";
-            queueUrisRef.current = uris;
-            queueIndexRef.current = startIndex;
-            if (shuffleOnRef.current) {
-              queueOrderRef.current = buildShuffleOrder(uris.length, startIndex);
-              queuePosRef.current = queueOrderRef.current.indexOf(startIndex);
-              if (queuePosRef.current < 0) queuePosRef.current = 0;
-            } else {
-              queueOrderRef.current = null;
-              queuePosRef.current = startIndex;
-            }
-            applyProgressPosition(0);
-            if (resolvedUri) {
-              const id = resolvedUri.split(":").pop() || null;
-              pendingTrackIdRef.current = id;
-              trackChangeLockUntilRef.current = Date.now() + 3000;
-            }
-            schedulePlaybackVerify(280, "api_verify", operationEpoch);
-          }
-        }),
-      playContext: async (contextUri, offsetPosition, offsetUri) =>
-        enqueuePlaybackCommand(async () => {
-          const operationEpoch = beginOperationEpoch();
-          setPlaybackTouched(true);
-          playerRef.current?.activateElement?.().catch?.(() => undefined);
-          playerRef.current?.connect?.().catch?.(() => undefined);
-          const tokenValue = accessTokenRef.current;
-          if (!tokenValue) {
-            raisePlaybackCommandError(401, "MISSING_TOKEN", "Spotify-sessie verlopen. Log opnieuw in.");
-          }
-          const token = tokenValue!;
-          let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
-          if (!playbackAllowed) {
-            raisePlaybackCommandError(
-              403,
-              "MISSING_SCOPE",
-              "Missing Spotify permissions. Reconnect."
-            );
-          }
-          if (!currentDevice && sdkDeviceIdRef.current) {
-            currentDevice = sdkDeviceIdRef.current;
-            setActiveDevice(currentDevice, localWebplayerName);
-          }
-          if (!currentDevice) {
-            const awaitedDevice = await waitForKnownDeviceId();
-            if (awaitedDevice) {
-              currentDevice = awaitedDevice;
-              if (awaitedDevice === sdkDeviceIdRef.current) {
-                setActiveDevice(awaitedDevice, localWebplayerName);
-              }
-            }
-          }
-          if (!currentDevice) {
-            const preparedDevice = await waitForPlayableDevice();
-            if (preparedDevice) {
-              currentDevice = preparedDevice;
-              if (preparedDevice === sdkDeviceIdRef.current) {
-                setActiveDevice(preparedDevice, localWebplayerName);
-              }
-            }
-          }
-          if (!currentDevice) {
-            if (!playIntentReplayRef.current) {
-              queueDeferredPlayIntent({
-                kind: "context",
-                contextUri,
-                offsetPosition,
-                offsetUri,
-                createdAt: Date.now(),
-              });
-              return;
-            }
-            raisePlaybackCommandError(
-              404,
-              "NO_ACTIVE_DEVICE",
-              "No Spotify device selected. Choose a device to start playback."
-            );
-          }
-          if (offsetUri) {
-            const id = offsetUri.split(":").pop() || null;
-            pendingTrackIdRef.current = id;
-            trackChangeLockUntilRef.current = Date.now() + 2000;
-            applyProgressPosition(0);
-          }
-          if (currentDevice === sdkDeviceIdRef.current) {
-            await playerRef.current?.activateElement?.();
-          }
-
-          // For explicit track/context selection we must not auto-resume old playback
-          // during device transfer, otherwise a short stale-audio blip can be heard.
-          const ready = await ensureActiveDevice(currentDevice as string, token, false);
-          if (!ready) {
-            const preparedDevice = await waitForPlayableDevice(5_000);
-            if (preparedDevice) {
-              currentDevice = preparedDevice;
-            } else if (!playIntentReplayRef.current) {
-              queueDeferredPlayIntent({
-                kind: "context",
-                contextUri,
-                offsetPosition,
-                offsetUri,
-                createdAt: Date.now(),
-              });
-              return;
-            }
-          }
-
-          if (!currentDevice) {
-            raisePlaybackCommandError(
-              404,
-              "DEVICE_NOT_READY",
-              "Spotify‑apparaat is nog niet klaar. Probeer opnieuw."
-            );
-          }
-
-          const body = {
-            context_uri: contextUri,
-            offset:
-              typeof offsetPosition === "number"
-                ? { position: Math.max(0, offsetPosition) }
-                : offsetUri
-                ? { uri: offsetUri }
-                : undefined,
-            position_ms: 0,
-          };
-
-          const attemptContextPlay = () =>
-            spotifyApiFetch(
-              withDeviceId(
-                "https://api.spotify.com/v1/me/player/play",
-                currentDevice as string
-              ),
-              { method: "PUT", body: JSON.stringify(body) }
-            );
-          let res = await attemptContextPlay();
-          if (res && !res.ok) {
-            if (res.status === 409) {
-              refreshDevices(true);
-              const preparedDevice = await waitForPlayableDevice(3_500);
-              if (preparedDevice) {
-                currentDevice = preparedDevice;
-              }
-              await new Promise((resolve) => setTimeout(resolve, 450));
-              res = await attemptContextPlay();
-            } else if (res.status === 404 || res.status >= 500) {
-              refreshDevices(true);
-              await new Promise((resolve) => setTimeout(resolve, 600));
-              res = await attemptContextPlay();
-            }
-          }
-          if (!res) {
-            raisePlaybackCommandError(
-              undefined,
-              "PLAY_REQUEST_FAILED",
-              "Spotify‑verbinding is instabiel. Probeer opnieuw."
-            );
-          }
-          const contextRes = res!;
-          if (!contextRes.ok && contextRes.status !== 204) {
-            if (contextRes.status === 401) {
-              raisePlaybackCommandError(401, "UNAUTHORIZED", "Spotify-sessie verlopen. Log opnieuw in.");
-            }
-            if (contextRes.status === 403) {
-              if (
-                await recoverDeferredPlaybackStart(contextRes, {
-                  kind: "context",
-                  contextUri,
-                  offsetPosition,
-                  offsetUri,
-                  createdAt: Date.now(),
-                })
-              ) {
-                return;
-              }
-              raisePlaybackCommandError(403, "FORBIDDEN", "Missing Spotify permissions. Reconnect.");
-            }
-            if (contextRes.status === 404) {
-              if (
-                await recoverDeferredPlaybackStart(contextRes, {
-                  kind: "context",
-                  contextUri,
-                  offsetPosition,
-                  offsetUri,
-                  createdAt: Date.now(),
-                })
-              ) {
-                return;
-              }
-              raisePlaybackCommandError(404, "NO_ACTIVE_DEVICE", "No active Spotify player found.");
-            }
-            if (contextRes.status === 429) {
-              const retryAfterRaw = Number(contextRes.headers.get("Retry-After") ?? "1");
-              const retryAfter = Number.isFinite(retryAfterRaw)
-                ? Math.min(retryAfterRaw, PLAYER_RETRY_AFTER_MAX_MS / 1000)
-                : 1;
-              raisePlaybackCommandError(
-                429,
-                "RATE_LIMITED",
-                `Spotify is druk. Probeer opnieuw over ${Math.max(1, Math.round(retryAfter))}s.`,
-                retryAfter
-              );
-            }
-            raisePlaybackCommandError(
-              contextRes.status,
-              "PLAY_FAILED",
-              "Playback is unavailable right now. Try again."
-            );
-          }
-          if (contextRes.ok) {
-            const expectedTrackId = resolveTrackIdFromUri(offsetUri ?? null);
-            const contextAck = await readJsonSafely<any>(contextRes.clone());
-            shouldApplyIngest({
-              source: "command",
-              seq: readSyncServerSeq(contextAck),
-              atMs: readSyncServerTime(contextAck),
-              deviceId: currentDevice as string,
-              trackId: expectedTrackId,
-              isPlaying: true,
-              force: true,
-            }, {
-              receivedMonoMs: getMonotonicNow(),
-              snapshotDeviceId: currentDevice as string,
-            });
-            const started = await ensurePlaybackStartedWithRetry({
-              deviceId: currentDevice as string,
-              expectedTrackId,
-              replay: attemptContextPlay,
-            });
-            if (!started) {
-              setError("Track startte niet direct. Probeer opnieuw.");
-              emitPlaybackMetric("play_start_failed", 1, {
-                mode: "context",
-                reason: "not_started_after_retry",
-              });
-            } else {
-              setError(null);
-              emitPlaybackMetric("play_start_success", 1, { mode: "context" });
-            }
-            queueModeRef.current = "context";
-            queueUrisRef.current = null;
-            queueOrderRef.current = null;
-            queuePosRef.current = 0;
-            applyProgressPosition(0);
-            if (offsetUri) {
-              const id = offsetUri.split(":").pop() || null;
-              pendingTrackIdRef.current = id;
-              trackChangeLockUntilRef.current = Date.now() + 3000;
-            }
-            schedulePlaybackVerify(280, "api_verify", operationEpoch);
-          }
-          const shuffleReady = await setRemoteShuffleState(
-            shuffleOnRef.current,
-            currentDevice as string,
-            token,
-            false
-          );
-          if (!shuffleReady) {
-            setError("Shuffle status kon niet worden toegepast op dit apparaat.");
-          }
-        }),
-      togglePlay: async () =>
-        handleTogglePlay(),
-      pause: async () =>
-        handlePausePlayback(),
-      resume: async () =>
-        handleResumePlayback(),
-      seek: async (ms: number) =>
-        handleSeek(ms),
-      transfer: async (nextDeviceId: string, play = false) => {
-        if (!nextDeviceId) return;
-        await handleDeviceChange(nextDeviceId);
-        if (play) {
-          await handleResumePlayback();
-        }
-      },
-      next: async () => handleNext(),
-      previous: async () => handlePrevious(),
-    };
-
-    playerApiRef.current = api;
-    onReady(api);
-    onControllerHandlersChange?.({
-      primePlaybackGesture: api.primePlaybackGesture,
-      playQueue: api.playQueue,
-      playContext: api.playContext,
-      togglePlay: api.togglePlay,
-      pause: api.pause,
-      resume: api.resume,
-      seek: api.seek,
-      transfer: api.transfer,
-    });
-
     return () => {
       player.removeListener("ready", onSdkReady);
       player.removeListener("not_ready", onNotReady);
@@ -5735,11 +5229,162 @@ export default function SpotifyPlayer({
       setSdkReadyState(false);
       setSdkLifecycle("idle");
       setDeviceReady(false);
+    };
+  }
+
+  const publishedPlayerApi = useMemo<PlayerApi>(
+    () => ({
+      primePlaybackGesture: () => {
+        publishedPlayerHandlersRef.current?.primePlaybackGesture?.();
+      },
+      playQueue: async (uris, offsetUri, offsetIndex) => {
+        const handlers = publishedPlayerHandlersRef.current;
+        if (!handlers) throw new Error("PLAYER_NOT_READY");
+        return await handlers.playQueue(uris, offsetUri, offsetIndex);
+      },
+      playContext: async (contextUri, offsetPosition, offsetUri) => {
+        const handlers = publishedPlayerHandlersRef.current;
+        if (!handlers) throw new Error("PLAYER_NOT_READY");
+        return await handlers.playContext(contextUri, offsetPosition, offsetUri);
+      },
+      togglePlay: async () => {
+        const handlers = publishedPlayerHandlersRef.current;
+        if (!handlers) throw new Error("PLAYER_NOT_READY");
+        return await handlers.togglePlay();
+      },
+      pause: async () => {
+        const handlers = publishedPlayerHandlersRef.current;
+        if (!handlers) throw new Error("PLAYER_NOT_READY");
+        return await handlers.pause();
+      },
+      resume: async () => {
+        const handlers = publishedPlayerHandlersRef.current;
+        if (!handlers) throw new Error("PLAYER_NOT_READY");
+        return await handlers.resume();
+      },
+      seek: async (ms: number) => {
+        const handlers = publishedPlayerHandlersRef.current;
+        if (!handlers) throw new Error("PLAYER_NOT_READY");
+        return await handlers.seek(ms);
+      },
+      transfer: async (deviceId: string, play?: boolean) => {
+        const handlers = publishedPlayerHandlersRef.current;
+        if (!handlers) throw new Error("PLAYER_NOT_READY");
+        return await handlers.transfer(deviceId, play);
+      },
+      next: async () => {
+        const handlers = publishedPlayerHandlersRef.current;
+        if (!handlers) throw new Error("PLAYER_NOT_READY");
+        return await handlers.next();
+      },
+      previous: async () => {
+        const handlers = publishedPlayerHandlersRef.current;
+        if (!handlers) throw new Error("PLAYER_NOT_READY");
+        return await handlers.previous();
+      },
+    }),
+    []
+  );
+
+  const playbackApiAvailable =
+    playbackSessionReady && playbackAllowed && !premiumRequired;
+
+  // The published controller handlers intentionally refresh with the latest refs.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    publishedPlayerHandlersRef.current = playbackApiAvailable
+      ? createPlayerApiHandlers({
+          accessTokenRef,
+          activeDeviceIdRef,
+          deviceIdRef,
+          sdkDeviceIdRef,
+          playerRef,
+          playIntentReplayRef,
+          pendingTrackIdRef,
+          trackChangeLockUntilRef,
+          lastConfirmedActiveDeviceRef,
+          playbackRestrictionUntilRef,
+          shuffleOnRef,
+          queueModeRef,
+          queueUrisRef,
+          queueIndexRef,
+          queueOrderRef,
+          queuePosRef,
+          shouldOwnPlaybackSync,
+          playbackAllowed,
+          localWebplayerName,
+          retryAfterMaxMs: PLAYER_RETRY_AFTER_MAX_MS,
+          playbackRestrictionCooldownMs: PLAYBACK_RESTRICTION_COOLDOWN_MS,
+          setError,
+          setPlaybackTouched,
+          setActiveDevice,
+          setDeviceReady,
+          setActiveDeviceRestricted,
+          enqueuePlaybackCommand,
+          beginOperationEpoch,
+          waitForKnownDeviceId,
+          waitForPlayableDevice,
+          queueDeferredPlayIntent,
+          getIndexFromTrackId,
+          applyProgressPosition,
+          ensureActiveDevice,
+          setRemoteShuffleState,
+          spotifyApiFetch,
+          withDeviceId,
+          refreshDevices,
+          readJsonSafely,
+          resolveTrackIdFromUri,
+          shouldApplyIngest,
+          readSyncServerSeq,
+          readSyncServerTime,
+          getMonotonicNow,
+          ensurePlaybackStartedWithRetry,
+          emitPlaybackMetric,
+          buildShuffleOrder,
+          schedulePlaybackVerify,
+          handleTogglePlay,
+          handlePausePlayback,
+          handleResumePlayback,
+          handleSeek,
+          handleDeviceChange,
+          handleNext,
+          handlePrevious,
+        })
+      : null;
+  });
+
+  useEffect(() => {
+    if (!playbackApiAvailable) {
       playerApiRef.current = null;
       onReady(null);
       onControllerHandlersChange?.(null);
+      return;
+    }
+
+    playerApiRef.current = publishedPlayerApi;
+    onReady(publishedPlayerApi);
+    onControllerHandlersChange?.({
+      primePlaybackGesture: publishedPlayerApi.primePlaybackGesture,
+      playQueue: publishedPlayerApi.playQueue,
+      playContext: publishedPlayerApi.playContext,
+      togglePlay: publishedPlayerApi.togglePlay,
+      pause: publishedPlayerApi.pause,
+      resume: publishedPlayerApi.resume,
+      seek: publishedPlayerApi.seek,
+      transfer: publishedPlayerApi.transfer,
+    });
+
+    return () => {
+      if (playerApiRef.current === publishedPlayerApi) {
+        playerApiRef.current = null;
+      }
     };
-  }
+  }, [
+    onControllerHandlersChange,
+    onReady,
+    playbackApiAvailable,
+    publishedPlayerApi,
+  ]);
 
   const playbackPausedUi =
     playPauseOptimisticPaused ?? (playerState?.paused ?? true);
@@ -5795,24 +5440,48 @@ export default function SpotifyPlayer({
 
   useEffect(() => {
     if (sessionStatus !== "authenticated") return;
+    if (!shouldOwnPlaybackSync) return;
     refreshDevices();
-  }, [deviceId, refreshDevices, sessionStatus]);
+  }, [refreshDevices, sessionStatus, shouldOwnPlaybackSync]);
 
   useEffect(() => {
     if (sessionStatus !== "authenticated") return;
     let cancelled = false;
     const bootstrap = async () => {
-      await refreshClientAccessToken(true);
+      await refreshClientAccessToken(shouldOwnPlaybackSync);
       if (cancelled) return;
-      await refreshDevices(true);
+
+      if (shouldOwnPlaybackSync) {
+        await refreshDevices(true);
+        if (cancelled) return;
+        await syncPlaybackState("api_bootstrap").catch(() => undefined);
+        return;
+      }
+
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, 1400));
       if (cancelled) return;
+      if (Date.now() - lastRemoteSyncAtRef.current < 2500) return;
+
+      await refreshDevices(false);
+      if (cancelled) return;
+      if (Date.now() - lastRemoteSyncAtRef.current < 2500) return;
       await syncPlaybackState("api_bootstrap").catch(() => undefined);
     };
     void bootstrap();
     return () => {
       cancelled = true;
     };
-  }, [refreshClientAccessToken, refreshDevices, sessionStatus, syncPlaybackState]);
+  }, [
+    refreshClientAccessToken,
+    refreshDevices,
+    sessionStatus,
+    shouldOwnPlaybackSync,
+    syncPlaybackState,
+  ]);
 
   useEffect(() => {
     async function restoreLocalSdkAudioIfNeeded() {
@@ -5845,6 +5514,7 @@ export default function SpotifyPlayer({
     }
 
     async function handleFocusOrResume() {
+      if (!ownPlaybackSyncRef.current) return;
       await refreshClientAccessToken();
       refreshDevices(true);
       await syncPlaybackState("api_sync").catch(() => undefined);
@@ -5879,6 +5549,7 @@ export default function SpotifyPlayer({
   useEffect(() => {
     if (sessionStatus !== "authenticated") return;
     if (!accessToken) return;
+    if (!shouldOwnPlaybackSync) return;
 
     let cancelled = false;
 
@@ -5994,6 +5665,7 @@ export default function SpotifyPlayer({
     refreshDevices,
     sessionStatus,
     setActiveDevice,
+    shouldOwnPlaybackSync,
   ]);
 
   useEffect(() => {
@@ -6033,6 +5705,7 @@ export default function SpotifyPlayer({
 
   useEffect(() => {
     if (!accessToken) return;
+    if (!shouldOwnPlaybackSync) return;
     let cancelled = false;
 
     async function poll() {
@@ -6196,6 +5869,7 @@ export default function SpotifyPlayer({
     commandBusy,
     enablePlaybackStream,
     postCrossTabEvent,
+    shouldOwnPlaybackSync,
     syncPlaybackState,
   ]);
 

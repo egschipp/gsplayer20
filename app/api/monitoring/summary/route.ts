@@ -18,6 +18,11 @@ export const runtime = "nodejs";
 
 const METRICS_WINDOW_MS = Number(process.env.MONITORING_METRICS_WINDOW_MS || "600000");
 
+function isPlayerEndpoint(endpoint: string) {
+  const value = String(endpoint ?? "").trim().toLowerCase();
+  return value === "me_player" || value.startsWith("me_player_");
+}
+
 function normalizeMetricsWindowMs() {
   if (!Number.isFinite(METRICS_WINDOW_MS)) return 600000;
   return Math.max(60000, Math.min(3600000, Math.floor(METRICS_WINDOW_MS)));
@@ -105,7 +110,7 @@ export async function GET() {
     const statusCode = String(row.labels.status_code || "").trim();
     const isExpectedPlayer404 =
       statusCode === "404" &&
-      (endpoint === "me_player" || endpoint === "me_player_devices");
+      (isPlayerEndpoint(endpoint) || endpoint === "me_player_devices");
 
     if (statusCode === "429") {
       count429 += row.value;
@@ -133,15 +138,16 @@ export async function GET() {
       );
     }
   }
-  const restrictionViolatedCount = counterTotalWindow(
+  const restrictionViolatedCount = counterEntriesWindow(
     "spotify_api_errors_total",
     {
-      endpoint: "me_player",
       code: "RESTRICTION_VIOLATED",
     },
     metricsWindowMs,
     now
-  );
+  )
+    .filter((row) => isPlayerEndpoint(String(row.labels.endpoint || "")))
+    .reduce((total, row) => total + row.value, 0);
   if (restrictionViolatedCount > 0 && api4xx > 0) {
     const expectedCount = Math.min(api4xx, restrictionViolatedCount);
     api4xx -= expectedCount;

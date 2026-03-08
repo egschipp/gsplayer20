@@ -5124,6 +5124,61 @@ export default function SpotifyPlayer({
       throw error;
     };
 
+    const isRestrictionViolationResponse = async (res: Response) => {
+      if (res.status !== 403) return false;
+      const details = await readJsonSafely<{ error?: string; message?: string }>(res.clone());
+      const errorCode = String(details?.error ?? "").trim().toUpperCase();
+      return (
+        errorCode === "RESTRICTION_VIOLATED" ||
+        String(details?.message ?? "").toLowerCase().includes("restriction violated")
+      );
+    };
+
+    const recoverDeferredPlaybackStart = async (
+      res: Response,
+      intent: DeferredPlayIntent
+    ) => {
+      const noActiveDevice = res.status === 404;
+      const restrictionViolation =
+        res.status === 403 && (await isRestrictionViolationResponse(res));
+      if (!noActiveDevice && !restrictionViolation) {
+        return false;
+      }
+
+      lastConfirmedActiveDeviceRef.current = null;
+      setDeviceReady(false);
+      void refreshDevices(true);
+
+      if (!playIntentReplayRef.current) {
+        if (restrictionViolation) {
+          playbackRestrictionUntilRef.current =
+            Date.now() + PLAYBACK_RESTRICTION_COOLDOWN_MS;
+          setActiveDeviceRestricted(true);
+          setError(
+            "Spotify is temporarily blocking playback on this device. Retrying automatically."
+          );
+        }
+        queueDeferredPlayIntent({
+          ...intent,
+          createdAt: Date.now(),
+        });
+        return true;
+      }
+
+      if (restrictionViolation) {
+        raisePlaybackCommandError(
+          403,
+          "RESTRICTION_VIOLATED",
+          "Spotify is temporarily blocking playback on this device. Switch device or try again."
+        );
+      }
+      raisePlaybackCommandError(
+        404,
+        "NO_ACTIVE_DEVICE",
+        "No active Spotify player found."
+      );
+    };
+
     const api: PlayerApi = {
       primePlaybackGesture: () => {
         setPlaybackTouched(true);
@@ -5294,18 +5349,32 @@ export default function SpotifyPlayer({
               raisePlaybackCommandError(401, "UNAUTHORIZED", "Spotify-sessie verlopen. Log opnieuw in.");
             }
             if (playRes.status === 403) {
-              raisePlaybackCommandError(
-                403,
-                "FORBIDDEN",
-                "Missing Spotify permissions. Reconnect."
-              );
+              if (
+                await recoverDeferredPlaybackStart(playRes, {
+                  kind: "queue",
+                  uris: [...uris],
+                  offsetUri,
+                  offsetIndex,
+                  createdAt: Date.now(),
+                })
+              ) {
+                return;
+              }
+              raisePlaybackCommandError(403, "FORBIDDEN", "Missing Spotify permissions. Reconnect.");
             }
             if (playRes.status === 404) {
-              raisePlaybackCommandError(
-                404,
-                "NO_ACTIVE_DEVICE",
-                "No active Spotify player found."
-              );
+              if (
+                await recoverDeferredPlaybackStart(playRes, {
+                  kind: "queue",
+                  uris: [...uris],
+                  offsetUri,
+                  offsetIndex,
+                  createdAt: Date.now(),
+                })
+              ) {
+                return;
+              }
+              raisePlaybackCommandError(404, "NO_ACTIVE_DEVICE", "No active Spotify player found.");
             }
             if (playRes.status === 429) {
               const retryAfterRaw = Number(playRes.headers.get("Retry-After") ?? "1");
@@ -5518,18 +5587,32 @@ export default function SpotifyPlayer({
               raisePlaybackCommandError(401, "UNAUTHORIZED", "Spotify-sessie verlopen. Log opnieuw in.");
             }
             if (contextRes.status === 403) {
-              raisePlaybackCommandError(
-                403,
-                "FORBIDDEN",
-                "Missing Spotify permissions. Reconnect."
-              );
+              if (
+                await recoverDeferredPlaybackStart(contextRes, {
+                  kind: "context",
+                  contextUri,
+                  offsetPosition,
+                  offsetUri,
+                  createdAt: Date.now(),
+                })
+              ) {
+                return;
+              }
+              raisePlaybackCommandError(403, "FORBIDDEN", "Missing Spotify permissions. Reconnect.");
             }
             if (contextRes.status === 404) {
-              raisePlaybackCommandError(
-                404,
-                "NO_ACTIVE_DEVICE",
-                "No active Spotify player found."
-              );
+              if (
+                await recoverDeferredPlaybackStart(contextRes, {
+                  kind: "context",
+                  contextUri,
+                  offsetPosition,
+                  offsetUri,
+                  createdAt: Date.now(),
+                })
+              ) {
+                return;
+              }
+              raisePlaybackCommandError(404, "NO_ACTIVE_DEVICE", "No active Spotify player found.");
             }
             if (contextRes.status === 429) {
               const retryAfterRaw = Number(contextRes.headers.get("Retry-After") ?? "1");

@@ -4381,10 +4381,10 @@ details[open] > .details-summary::after {
 
 .ops-hero-title {
   margin: 0;
-  font-size: clamp(1.2rem, 1.6vw, 1.5rem);
+  font-size: clamp(1.05rem, 1.15vw, 1.18rem);
   font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
+  line-height: 1.16;
+  letter-spacing: -0.015em;
   font-family: var(--font-display), system-ui, sans-serif;
 }
 

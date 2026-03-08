@@ -128,13 +128,15 @@ function classifyCode(
   method: string
 ): string {
   const lower = body.toLowerCase();
+  const isPlayerEndpoint =
+    endpointGroup === "me_player" || endpointGroup.startsWith("me_player_");
   if (status === 401) {
     if (lower.includes("invalid_grant")) return "INVALID_GRANT";
     return "UNAUTHENTICATED";
   }
   if (status === 403) {
     if (
-      endpointGroup === "me_player" &&
+      isPlayerEndpoint &&
       /restriction\s+violated/i.test(body)
     ) {
       return "RESTRICTION_VIOLATED";
@@ -142,7 +144,7 @@ function classifyCode(
     return "FORBIDDEN";
   }
   if (status === 404) {
-    if (endpointGroup === "me_player") {
+    if (isPlayerEndpoint) {
       return method === "GET" ? "NO_ACTIVE_DEVICE" : "PLAYER_NOT_FOUND";
     }
     if (endpointGroup === "me_player_devices") return "NO_CONNECT_DEVICE";
@@ -160,11 +162,21 @@ function isExpectedHttpCondition(args: {
   errorCode: string;
 }): boolean {
   const { status, endpointGroup, method, errorCode } = args;
+  const isPlayerEndpoint =
+    endpointGroup === "me_player" || endpointGroup.startsWith("me_player_");
   if (
     status === 404 &&
-    endpointGroup === "me_player" &&
+    isPlayerEndpoint &&
     method === "GET" &&
     errorCode === "NO_ACTIVE_DEVICE"
+  ) {
+    return true;
+  }
+  if (
+    status === 404 &&
+    isPlayerEndpoint &&
+    method !== "GET" &&
+    errorCode === "PLAYER_NOT_FOUND"
   ) {
     return true;
   }
@@ -177,7 +189,7 @@ function isExpectedHttpCondition(args: {
   }
   if (
     status === 403 &&
-    endpointGroup === "me_player" &&
+    isPlayerEndpoint &&
     errorCode === "RESTRICTION_VIOLATED"
   ) {
     return true;

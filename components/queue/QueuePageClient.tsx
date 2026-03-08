@@ -377,7 +377,7 @@ export default function QueuePageClient() {
   function handleClearQueue() {
     if (!hasItems) return;
     if (queue.items.length > 1) {
-      const approved = window.confirm("Weet je zeker dat je Georgies Queue wilt leegmaken?");
+      const approved = window.confirm("Are you sure you want to clear Georgies Queue?");
       if (!approved) return;
     }
     queue.clearQueue();
@@ -411,8 +411,8 @@ export default function QueuePageClient() {
             <div />
             <div>Track</div>
             <div className={styles.statusHeader}>Status</div>
-            <div className={styles.durationHeader}>Duur</div>
-            <div className={styles.actionsHeader}>Acties</div>
+            <div className={styles.durationHeader}>Duration</div>
+            <div className={styles.actionsHeader}>Actions</div>
           </div>
           <ol
             className={styles.queueRows}
@@ -506,19 +506,19 @@ export default function QueuePageClient() {
                       <button
                         type="button"
                         className="track-meta-link text-body track-artist-line"
-                        title={item.artists || "Onbekende artiest"}
+                        title={item.artists || "Unknown artist"}
                         onClick={() => void handleSelectArtist(item)}
                       >
-                        {item.artists || "Onbekende artiest"}
+                        {item.artists || "Unknown artist"}
                       </button>
                       <button
                         type="button"
                         className={`track-meta-link text-subtle track-album-line ${styles.trackMetaUri}`}
-                        title={item.albumName || "Onbekend album"}
+                        title={item.albumName || "Unknown album"}
                         onClick={() => handleSelectAlbum(item)}
                         disabled={!createAlbumSelectionId(item)}
                       >
-                        {item.albumName || "Onbekend album"}
+                        {item.albumName || "Unknown album"}
                       </button>
                     </div>
 
@@ -534,10 +534,10 @@ export default function QueuePageClient() {
                       >
                         {isCurrent
                           ? isStarting
-                            ? "Starten..."
-                            : "Nu spelend"
+                            ? "Starting..."
+                            : "Now playing"
                           : isNext
-                          ? "Volgende"
+                          ? "Next"
                           : "Queue"}
                       </span>
                       {typeof selectedPlaylistMembership === "boolean" ? (
@@ -548,7 +548,7 @@ export default function QueuePageClient() {
                               : styles.statusPlaylistOut
                           }`}
                         >
-                          {selectedPlaylistMembership ? "In selectie" : "Niet in selectie"}
+                          {selectedPlaylistMembership ? "In selection" : "Not in selection"}
                         </span>
                       ) : null}
                     </div>
@@ -563,8 +563,8 @@ export default function QueuePageClient() {
                         className={`detail-btn ${styles.queueActionBtn} ${styles.queueRemoveBtn}`}
                         onClick={() => queue.removeTrack(item.queueId)}
                         disabled={playback.busy}
-                        aria-label={`Verwijder ${item.name} uit Georgies Queue`}
-                        title="Verwijder"
+                        aria-label={`Remove ${item.name} from Georgies Queue`}
+                        title="Remove"
                       >
                         −
                       </button>
@@ -579,15 +579,15 @@ export default function QueuePageClient() {
 
       {!queue.hydrated ? (
         <div className={styles.empty} role="status">
-          Queue laden...
+          Loading queue...
         </div>
       ) : null}
 
       {queue.hydrated && !hasItems ? (
         <div className={styles.empty} role="status">
-          <div className={styles.emptyTitle}>Je queue is leeg</div>
+          <div className={styles.emptyTitle}>Your queue is empty</div>
           <p className="text-body" style={{ margin: 0 }}>
-            Voeg tracks toe met de <strong>＋ Queue</strong> knop in de lijsten.
+            Add tracks using the <strong>＋ Queue</strong> button in the lists.
           </p>
         </div>
       ) : null}
@@ -610,7 +610,7 @@ export default function QueuePageClient() {
 
       {!playback.ready ? (
         <div className={styles.info} role="status">
-          Player initialiseren...
+          Initializing player...
         </div>
       ) : null}
 
@@ -618,7 +618,7 @@ export default function QueuePageClient() {
         <div className={styles.error} role="alert">
           <span>{playback.error}</span>
           <button type="button" className="btn btn-ghost" onClick={playback.clearError}>
-            Sluiten
+            Close
           </button>
         </div>
       ) : null}
@@ -637,14 +637,14 @@ function ActiveTrackIndicator({
     status === "playing"
       ? "Now playing"
       : status === "paused"
-      ? "Gepauzeerd"
+      ? "Paused"
       : status === "loading"
       ? "Buffering"
       : status === "ended"
-      ? "Track beëindigd"
+      ? "Track ended"
       : status === "error"
-      ? "Playback fout"
-      : "Actieve track";
+      ? "Playback error"
+      : "Active track";
   return (
     <span
       className={`playing-indicator ${status}${isStale ? " stale" : ""}`}

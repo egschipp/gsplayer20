@@ -240,7 +240,7 @@ export async function GET(req: Request) {
         if (item.trackId) {
           await upsertTrack({
             trackId: item.trackId,
-            name: item.name ?? "Onbekend nummer",
+            name: item.name ?? "Unknown track",
             durationMs: item.durationMs ?? 0,
             explicit: item.explicit === 1,
             isLocal: item.isLocal === null ? null : item.isLocal === 1,

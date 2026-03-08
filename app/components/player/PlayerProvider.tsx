@@ -211,9 +211,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           await run(handlers);
         });
       } catch (error) {
-        const message = (error as Error)?.message ?? "Track afspelen lukt nu niet.";
+        const message = (error as Error)?.message ?? "Unable to play track right now.";
         if (message === "PLAYER_NOT_READY") {
-          setControllerError("Spotify player is nog niet klaar. Probeer het over een paar seconden opnieuw.");
+          setControllerError("Spotify player is not ready yet. Try again in a few seconds.");
         } else {
           setControllerError(message);
         }

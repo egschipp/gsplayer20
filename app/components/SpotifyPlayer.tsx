@@ -248,12 +248,12 @@ type PlayerProps = {
 
 function getWebPlaybackSdkSupport() {
   if (typeof window === "undefined") {
-    return { supported: false, reason: "Webplayer vereist een browsercontext." };
+    return { supported: false, reason: "Web player requires a browser context." };
   }
   if (!window.isSecureContext) {
     return {
       supported: false,
-      reason: "Webplayer vereist HTTPS (secure context).",
+      reason: "Web player requires HTTPS (secure context).",
     };
   }
   const hasAudioContext =
@@ -263,7 +263,7 @@ function getWebPlaybackSdkSupport() {
   if (!hasAudioContext || !hasMediaSource) {
     return {
       supported: false,
-      reason: "Browser ondersteunt Spotify Web Playback niet volledig.",
+      reason: "This browser does not fully support Spotify Web Playback.",
     };
   }
   return { supported: true, reason: null as string | null };
@@ -364,7 +364,7 @@ function mapQueueTrackItem(track: any, fallbackIndex = 0): QueueTrackItem {
     id: normalizedId ?? `${uri ?? "queue-track"}:${fallbackIndex}`,
     uri,
     matchTrackIds,
-    name: track?.name ?? "Onbekend nummer",
+    name: track?.name ?? "Unknown track",
     artists: Array.isArray(track?.artists)
       ? track.artists.map((a: any) => a?.name).filter(Boolean).join(", ")
       : "",
@@ -783,19 +783,19 @@ export default function SpotifyPlayer({
     if (!message) return null;
     const lower = String(message).toLowerCase();
     if (lower.includes("invalid token scopes") || lower.includes("insufficient_scope")) {
-      return "Ontbrekende Spotify‑rechten. Koppel opnieuw.";
+      return "Missing Spotify permissions. Reconnect.";
     }
     if (lower.includes("403")) {
-      return "Ontbrekende Spotify‑rechten. Koppel opnieuw.";
+      return "Missing Spotify permissions. Reconnect.";
     }
     if (lower.includes("401")) {
-      return "Spotify‑sessie verlopen. Koppel opnieuw.";
+      return "Spotify session expired. Reconnect.";
     }
     if (lower.includes("authentication") || lower.includes("token")) {
-      return "Verbinding met Spotify is verlopen. Koppel opnieuw.";
+      return "Connection to Spotify expired. Reconnect.";
     }
     if (lower.includes("premium")) {
-      return "Spotify Premium is vereist voor Web Playback.";
+      return "Spotify Premium is required for Web Playback.";
     }
     return message;
   }
@@ -803,12 +803,12 @@ export default function SpotifyPlayer({
   function formatPlaybackBootStateLabel(
     state: "idle" | "booting" | "sdk_ready" | "device_ready" | "playable" | "playing"
   ) {
-    if (state === "booting") return "Speler start op";
-    if (state === "sdk_ready") return "Speler klaar, wacht op apparaat";
-    if (state === "device_ready") return "Apparaat wordt geactiveerd";
-    if (state === "playable") return "Klaar om af te spelen";
-    if (state === "playing") return "Afspelen actief";
-    return "Wacht op sessie";
+    if (state === "booting") return "Player is starting";
+    if (state === "sdk_ready") return "Player ready, waiting for device";
+    if (state === "device_ready") return "Device is activating";
+    if (state === "playable") return "Ready to play";
+    if (state === "playing") return "Playback active";
+    return "Waiting for session";
   }
 
   const playerErrorMessage = formatPlayerError(error);
@@ -1525,10 +1525,10 @@ export default function SpotifyPlayer({
     try {
       const connected = await playerRef.current?.connect?.();
       if (connected === false) {
-        setSdkLastError("Lokale webplayer kon niet verbinden.");
+        setSdkLastError("Local web player could not connect.");
       }
     } catch {
-      setSdkLastError("Lokale webplayer kon niet verbinden.");
+      setSdkLastError("Local web player could not connect.");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUseSdk]);
@@ -1751,7 +1751,7 @@ export default function SpotifyPlayer({
     const name =
       (found?.name && found.name.trim()) ||
       (activeDeviceName && activeDeviceName.trim()) ||
-      "Geen actief apparaat";
+      "No active device";
     const type = found?.type ?? null;
     return {
       name,
@@ -2138,7 +2138,7 @@ export default function SpotifyPlayer({
                 continue;
               }
             }
-            setError("Spotify‑sessie verlopen. Koppel opnieuw.");
+            setError("Spotify session expired. Reconnect.");
             return res;
           }
 
@@ -2161,7 +2161,7 @@ export default function SpotifyPlayer({
               return res;
             }
 
-            setError("Ontbrekende Spotify‑rechten. Koppel opnieuw.");
+            setError("Missing Spotify permissions. Reconnect.");
             return res;
           }
           if (res.status === 409 && isPlaybackCommand) {
@@ -2169,8 +2169,8 @@ export default function SpotifyPlayer({
             emitPlaybackMetric("command_conflict", 1, {
               total: playbackMetricsRef.current.commandConflicts,
             });
-            setConnectConflict("Spotify Connect staat op een ander apparaat. Kies opnieuw.");
-            setError("Spotify Connect staat op een ander apparaat. Kies opnieuw.");
+            setConnectConflict("Spotify Connect is active on another device. Choose again.");
+            setError("Spotify Connect is active on another device. Choose again.");
             return res;
           }
 
@@ -3122,8 +3122,8 @@ export default function SpotifyPlayer({
       ) {
         setConnectConflict(
           device?.name
-            ? `Connect wijziging gedetecteerd op ${device.name}.`
-            : "Connect wijziging gedetecteerd op een ander apparaat."
+            ? `Connect change detected on ${device.name}.`
+            : "Connect change detected on another device."
         );
         if (shouldForceAdoptRemoteDevice(remoteDeviceId)) {
           setConnectConflict(null);
@@ -3903,10 +3903,10 @@ export default function SpotifyPlayer({
   useEffect(() => {
     if (!currentTrackIdState || !accessToken) return;
     void ensureTrackPlaylistOptionsLoaded().catch(() => {
-      setError("Playlist-doelen laden lukt nu niet.");
+      setError("Unable to load playlist targets right now.");
     });
     void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(() => {
-      setError("Track-playlists laden lukt nu niet.");
+      setError("Unable to load track playlists right now.");
     });
   }, [
     accessToken,
@@ -3966,8 +3966,8 @@ export default function SpotifyPlayer({
       ) {
         setConnectConflict(
           state?.device?.name
-            ? `Connect wijziging gedetecteerd op ${state.device.name}.`
-            : "Connect wijziging gedetecteerd op een ander apparaat."
+            ? `Connect change detected on ${state.device.name}.`
+            : "Connect change detected on another device."
         );
       } else if (
         !stateDeviceId ||
@@ -4142,9 +4142,9 @@ export default function SpotifyPlayer({
         setAccountProduct(product);
         setAccountProductChecked(true);
         if (product && product !== "premium") {
-          setSdkLastError("Spotify Premium is vereist voor Web Playback.");
+          setSdkLastError("Spotify Premium is required for Web Playback.");
           setSdkLifecycle("error");
-          setError("Spotify Premium is vereist voor Web Playback.");
+          setError("Spotify Premium is required for Web Playback.");
         }
       })
       .catch(() => {
@@ -4237,7 +4237,7 @@ export default function SpotifyPlayer({
       const key =
         typeof d?.id === "string" && d.id
           ? d.id
-          : `unavailable:${String(d?.name ?? "Onbekend")}:${String(
+          : `unavailable:${String(d?.name ?? "Unknown")}:${String(
               d?.type ?? "Unknown"
             )}:${unavailableCounter++}`;
       if (!deduped.has(key)) {
@@ -4284,7 +4284,7 @@ export default function SpotifyPlayer({
       const isLocalSdkDevice = Boolean(sdkDeviceIdRef.current && id === sdkDeviceIdRef.current);
       return {
         id,
-        name: d?.name ?? "Onbekend apparaat",
+        name: d?.name ?? "Unknown device",
         isActive: Boolean(d.is_active),
         type: isLocalSdkDevice ? localWebplayerType : d?.type ?? "Unknown",
         isRestricted: Boolean(d.is_restricted),
@@ -4294,7 +4294,7 @@ export default function SpotifyPlayer({
         unavailableReason:
           typeof d?.id === "string" && d.id
             ? null
-            : "Open Spotify op dit apparaat en start een track zodat het als Connect-device beschikbaar wordt.",
+            : "Open Spotify on this device and start a track so it becomes available as a Connect device.",
       };
     });
     setDevices(mapped);
@@ -4369,7 +4369,7 @@ export default function SpotifyPlayer({
       setPendingPlayIntentVersion((prev) => prev + 1);
       setPlaybackTouched(true);
       setPlaybackBootState((prev) => (prev === "playing" ? prev : "booting"));
-      setError("Speler wordt gestart. Afspelen volgt automatisch.");
+      setError("Player is starting. Playback will continue automatically.");
       emitPlaybackMetric("play_intent_deferred", 1, { kind: intent.kind });
       void kickstartLocalPlayer();
       void refreshDevices(true);
@@ -4452,11 +4452,11 @@ export default function SpotifyPlayer({
       const isIOS = /iphone|ipad|ipod/.test(ua);
       if (isIOS) {
         setSdkLastError(
-          "Webplayer wacht op iOS user gesture. Tik op Play en probeer opnieuw."
+          "Web player is waiting for an iOS user gesture. Tap Play and try again."
         );
       } else {
         setSdkLastError(
-          "Webplayer kon niet ready worden. Controleer Premium, scopes en actieve Spotify-sessie."
+          "Web player could not become ready. Check Premium, scopes, and the active Spotify session."
         );
       }
       setSdkLifecycle("error");
@@ -4498,7 +4498,7 @@ export default function SpotifyPlayer({
           reconnectAttemptsRef.current += 1;
         }
         if (reconnectAttemptsRef.current >= 6) {
-          setSdkLastError("Lokale webplayer blijft offline. Gebruik ↻ of open Spotify app.");
+          setSdkLastError("Local web player stays offline. Use ↻ or open the Spotify app.");
           setSdkLifecycle("error");
         }
       } else {
@@ -4577,7 +4577,7 @@ export default function SpotifyPlayer({
       pendingPlayIntentRef.current = null;
       pendingPlayIntentProcessingRef.current = false;
       setPendingPlayIntentVersion((prev) => prev + 1);
-      setError("Afspelen kon niet automatisch starten. Kies opnieuw een track.");
+      setError("Playback could not start automatically. Choose a track again.");
       emitPlaybackMetric("play_intent_deferred_expired", 1, { kind: pending.kind });
       return;
     }
@@ -4622,7 +4622,7 @@ export default function SpotifyPlayer({
         setError(null);
         emitPlaybackMetric("play_intent_deferred_flushed", 1, { kind: pending.kind });
       } catch {
-        setError("Track afspelen lukt nu niet.");
+        setError("Unable to play track right now.");
       } finally {
         playIntentReplayRef.current = false;
         pendingPlayIntentProcessingRef.current = false;
@@ -4667,7 +4667,7 @@ export default function SpotifyPlayer({
       setCurrentTrackLiked(null);
       setDeviceReady(false);
       if (accessToken && !playbackAllowed) {
-        setError("Ontbrekende Spotify‑rechten. Koppel opnieuw.");
+        setError("Missing Spotify permissions. Reconnect.");
       }
       return;
     }
@@ -4996,7 +4996,7 @@ export default function SpotifyPlayer({
         if (connected === false) {
           setSdkReadyState(false);
           setSdkLifecycle("error");
-          setError("Lokale webplayer kon niet opnieuw verbinden.");
+          setError("Local web player could not reconnect.");
           setPlaybackTrackState(currentTrackIdRef.current || lastTrackIdRef.current, {
             isPlaying: playbackFocusRef.current.isPlaying,
             status: "error",
@@ -5005,7 +5005,7 @@ export default function SpotifyPlayer({
             confidence: 0.65,
             positionMs: lastKnownPositionRef.current,
             durationMs: durationMsRef.current,
-            errorMessage: "Lokale webplayer kon niet opnieuw verbinden.",
+            errorMessage: "Local web player could not reconnect.",
             updatedAt: Date.now(),
           });
           return;
@@ -5017,7 +5017,7 @@ export default function SpotifyPlayer({
       } catch {
         setSdkReadyState(false);
         setSdkLifecycle("error");
-        setError("Lokale webplayer kon niet opnieuw verbinden.");
+        setError("Local web player could not reconnect.");
         setPlaybackTrackState(currentTrackIdRef.current || lastTrackIdRef.current, {
           isPlaying: playbackFocusRef.current.isPlaying,
           status: "error",
@@ -5026,16 +5026,16 @@ export default function SpotifyPlayer({
           confidence: 0.65,
           positionMs: lastKnownPositionRef.current,
           durationMs: durationMsRef.current,
-          errorMessage: "Lokale webplayer kon niet opnieuw verbinden.",
+          errorMessage: "Local web player could not reconnect.",
           updatedAt: Date.now(),
         });
       }
     };
     const onAccountError = ({ message }: { message: string }) => {
       setSdkReadyState(false);
-      setSdkLastError(message || "Spotify Premium is vereist voor Web Playback.");
+      setSdkLastError(message || "Spotify Premium is required for Web Playback.");
       setSdkLifecycle("error");
-      setError(message || "Spotify Premium is vereist voor Web Playback.");
+      setError(message || "Spotify Premium is required for Web Playback.");
       setPlaybackTrackState(currentTrackIdRef.current || lastTrackIdRef.current, {
         isPlaying: playbackFocusRef.current.isPlaying,
         status: "error",
@@ -5044,7 +5044,7 @@ export default function SpotifyPlayer({
         confidence: 0.65,
         positionMs: lastKnownPositionRef.current,
         durationMs: durationMsRef.current,
-        errorMessage: message || "Spotify Premium is vereist voor Web Playback.",
+        errorMessage: message || "Spotify Premium is required for Web Playback.",
         updatedAt: Date.now(),
       });
     };
@@ -5093,13 +5093,13 @@ export default function SpotifyPlayer({
       .then((connected: boolean) => {
         if (!connected) {
           setSdkReadyState(false);
-          setSdkLastError("Lokale webplayer kon niet verbinden.");
+          setSdkLastError("Local web player could not connect.");
           setSdkLifecycle("error");
         }
       })
       .catch(() => {
         setSdkReadyState(false);
-        setSdkLastError("Lokale webplayer kon niet verbinden.");
+        setSdkLastError("Local web player could not connect.");
         setSdkLifecycle("error");
       });
     playerRef.current = player;
@@ -5146,7 +5146,7 @@ export default function SpotifyPlayer({
             raisePlaybackCommandError(
               403,
               "MISSING_SCOPE",
-              "Ontbrekende Spotify‑rechten. Koppel opnieuw."
+              "Missing Spotify permissions. Reconnect."
             );
           }
           if (!currentDevice && sdkDeviceIdRef.current) {
@@ -5185,7 +5185,7 @@ export default function SpotifyPlayer({
             raisePlaybackCommandError(
               404,
               "NO_ACTIVE_DEVICE",
-              "Geen Spotify‑apparaat geselecteerd. Kies een apparaat om af te spelen."
+                "No Spotify device selected. Choose a device to start playback."
             );
           }
           if (!Array.isArray(uris) || uris.length === 0) {
@@ -5297,14 +5297,14 @@ export default function SpotifyPlayer({
               raisePlaybackCommandError(
                 403,
                 "FORBIDDEN",
-                "Ontbrekende Spotify‑rechten. Koppel opnieuw."
+                "Missing Spotify permissions. Reconnect."
               );
             }
             if (playRes.status === 404) {
               raisePlaybackCommandError(
                 404,
                 "NO_ACTIVE_DEVICE",
-                "Geen actieve Spotify player gevonden."
+                "No active Spotify player found."
               );
             }
             if (playRes.status === 429) {
@@ -5322,7 +5322,7 @@ export default function SpotifyPlayer({
             raisePlaybackCommandError(
               playRes.status,
               "PLAY_FAILED",
-              "Afspelen lukt nu niet. Probeer opnieuw."
+              "Playback is unavailable right now. Try again."
             );
           }
           if (playRes.ok) {
@@ -5391,7 +5391,7 @@ export default function SpotifyPlayer({
             raisePlaybackCommandError(
               403,
               "MISSING_SCOPE",
-              "Ontbrekende Spotify‑rechten. Koppel opnieuw."
+              "Missing Spotify permissions. Reconnect."
             );
           }
           if (!currentDevice && sdkDeviceIdRef.current) {
@@ -5430,7 +5430,7 @@ export default function SpotifyPlayer({
             raisePlaybackCommandError(
               404,
               "NO_ACTIVE_DEVICE",
-              "Geen Spotify‑apparaat geselecteerd. Kies een apparaat om af te spelen."
+              "No Spotify device selected. Choose a device to start playback."
             );
           }
           if (offsetUri) {
@@ -5521,14 +5521,14 @@ export default function SpotifyPlayer({
               raisePlaybackCommandError(
                 403,
                 "FORBIDDEN",
-                "Ontbrekende Spotify‑rechten. Koppel opnieuw."
+                "Missing Spotify permissions. Reconnect."
               );
             }
             if (contextRes.status === 404) {
               raisePlaybackCommandError(
                 404,
                 "NO_ACTIVE_DEVICE",
-                "Geen actieve Spotify player gevonden."
+                "No active Spotify player found."
               );
             }
             if (contextRes.status === 429) {
@@ -5546,7 +5546,7 @@ export default function SpotifyPlayer({
             raisePlaybackCommandError(
               contextRes.status,
               "PLAY_FAILED",
-              "Afspelen lukt nu niet. Probeer opnieuw."
+              "Playback is unavailable right now. Try again."
             );
           }
           if (contextRes.ok) {
@@ -6000,7 +6000,7 @@ export default function SpotifyPlayer({
     if (!targetDevice?.selectable) {
       setError(
         targetDevice?.unavailableReason ||
-          "Dit apparaat is nog niet beschikbaar. Open Spotify op het apparaat en probeer opnieuw."
+          "This device is not available yet. Open Spotify on the device and try again."
       );
       return;
     }
@@ -6068,7 +6068,7 @@ export default function SpotifyPlayer({
       if (ready && shouldResume) {
         const resumed = await resumeAfterDeviceSwitch(targetId, switchContext);
         if (!resumed) {
-          setError("Afspelen hervatten op dit apparaat lukte niet direct.");
+          setError("Resuming playback on this device did not succeed immediately.");
         } else {
           setError(null);
         }
@@ -6135,7 +6135,7 @@ export default function SpotifyPlayer({
           await playerRef.current?.togglePlay?.();
         } catch {
           setPlayPauseOptimisticState(currentPausedSnapshot);
-          setError("Lokale webplayer kon play/pause niet uitvoeren.");
+          setError("Local web player could not execute play/pause.");
           return;
         }
         schedulePlaybackVerify(220, "api_verify", operationEpoch);
@@ -6540,7 +6540,7 @@ export default function SpotifyPlayer({
           });
           if (proxyRes.ok) return true;
           if (proxyRes.status === 409) {
-            setConnectConflict("Spotify Connect staat op een ander apparaat. Kies opnieuw.");
+            setConnectConflict("Spotify Connect is active on another device. Choose again.");
             return false;
           }
           if (proxyRes.status === 401 || proxyRes.status === 403) return false;
@@ -6554,7 +6554,7 @@ export default function SpotifyPlayer({
         });
         if (directRes?.ok) return true;
         if (directRes && directRes.status === 409) {
-          setConnectConflict("Spotify Connect staat op een ander apparaat. Kies opnieuw.");
+          setConnectConflict("Spotify Connect is active on another device. Choose again.");
           return false;
         }
         if (directRes && (directRes.status === 401 || directRes.status === 403)) return false;
@@ -6577,7 +6577,7 @@ export default function SpotifyPlayer({
       <div className="player-card">
         <div className="player-meta">
           <div className="player-title">Spotify Player</div>
-          <div className="text-body">Spotify‑sessie verbinden...</div>
+          <div className="text-body">Connecting Spotify session...</div>
         </div>
       </div>
     );
@@ -6589,22 +6589,22 @@ export default function SpotifyPlayer({
         <div className="player-meta">
           <div className="player-title">Spotify Player</div>
           <div className="text-body">
-            Verbind Spotify om afspelen te bedienen.
+            Connect Spotify to control playback.
           </div>
           {!playbackSessionReady ? (
-            <div className="text-subtle">Log in met Spotify om door te gaan.</div>
+            <div className="text-subtle">Sign in with Spotify to continue.</div>
           ) : null}
           {!playbackAllowed && accessToken ? (
             <div className="text-subtle">
-              Je mist rechten voor afspelen. Koppel opnieuw om door te gaan.
+              You are missing playback permissions. Reconnect to continue.
               {missingPlaybackScopes.length ? (
-                <span> Ontbrekend: {missingPlaybackScopes.join(", ")}.</span>
+                <span> Missing: {missingPlaybackScopes.join(", ")}.</span>
               ) : null}
             </div>
           ) : null}
           {premiumRequired ? (
             <div className="text-subtle">
-              Spotify Premium is vereist voor playback controls.
+              Spotify Premium is required for playback controls.
             </div>
           ) : null}
         </div>
@@ -6686,13 +6686,13 @@ export default function SpotifyPlayer({
               }`}
               aria-label={
                 currentTrackLiked
-                  ? "Verwijderen uit Liked Songs"
-                  : "Toevoegen aan Liked Songs"
+                  ? "Remove from Liked Songs"
+                  : "Add to Liked Songs"
               }
               title={
                 currentTrackLiked
-                  ? "Verwijderen uit Liked Songs"
-                  : "Toevoegen aan Liked Songs"
+                  ? "Remove from Liked Songs"
+                  : "Add to Liked Songs"
               }
               disabled={likedStateSaving || likedStateLoading || trackPlaylistSaving}
               onClick={handleLikeCurrentTrack}
@@ -6704,13 +6704,13 @@ export default function SpotifyPlayer({
               className={`player-track-action-btn player-track-action-membership${
                 currentTrackInAnyPlaylist ? " active" : ""
               }${trackPlaylistLoading ? " loading" : ""}`}
-              aria-label="Track playlists tonen"
+              aria-label="Show track playlists"
               title={
                 currentTrackInAnyPlaylist
-                  ? `Track staat in ${selectedPlaylistNamesForTrack.length} lijst${
-                      selectedPlaylistNamesForTrack.length === 1 ? "" : "en"
+                  ? `Track is in ${selectedPlaylistNamesForTrack.length} list${
+                      selectedPlaylistNamesForTrack.length === 1 ? "" : "s"
                     }`
-                  : "Track staat niet in je lijsten"
+                  : "Track is not in your lists"
               }
               disabled={trackPlaylistSaving}
               onClick={() =>
@@ -6719,10 +6719,10 @@ export default function SpotifyPlayer({
                   if (next) {
                     setTrackPlaylistMenuOpen(false);
                     void ensureTrackPlaylistOptionsLoaded().catch(() => {
-                      setError("Playlist-doelen laden lukt nu niet.");
+                      setError("Unable to load playlist targets right now.");
                     });
                     void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(() => {
-                      setError("Track-playlists laden lukt nu niet.");
+                      setError("Unable to load track playlists right now.");
                     });
                   }
                   return next;
@@ -6739,8 +6739,8 @@ export default function SpotifyPlayer({
             <button
               type="button"
               className="player-track-action-btn player-track-action-add"
-              aria-label="Track toevoegen aan lijsten"
-              title="Track toevoegen aan lijsten"
+              aria-label="Add track to playlists"
+              title="Add track to playlists"
               disabled={trackPlaylistSaving}
               onClick={() =>
                 setTrackPlaylistMenuOpen((prev) => {
@@ -6748,10 +6748,10 @@ export default function SpotifyPlayer({
                   if (next) {
                     setTrackPlaylistMembershipOpen(false);
                     void ensureTrackPlaylistOptionsLoaded().catch(() => {
-                      setError("Playlist-doelen laden lukt nu niet.");
+                      setError("Unable to load playlist targets right now.");
                     });
                     void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(() => {
-                      setError("Track-playlists laden lukt nu niet.");
+                      setError("Unable to load track playlists right now.");
                     });
                   }
                   return next;
@@ -6769,11 +6769,11 @@ export default function SpotifyPlayer({
               >
                 <div className="track-playlist-membership-summary">
                   {trackPlaylistLoading ? (
-                    <div className="combo-empty">Track-playlists laden...</div>
+                    <div className="combo-empty">Loading track playlists...</div>
                   ) : currentTrackInAnyPlaylist ? (
-                    <div className="text-subtle">Deze track staat in:</div>
+                    <div className="text-subtle">This track is in:</div>
                   ) : (
-                    <div className="text-subtle">Track staat niet in je lijsten.</div>
+                    <div className="text-subtle">This track is not in your lists.</div>
                   )}
                 </div>
                 {!trackPlaylistLoading && currentTrackInAnyPlaylist ? (
@@ -6812,19 +6812,19 @@ export default function SpotifyPlayer({
               >
                 <div className="track-playlist-membership-summary">
                   {trackPlaylistLoading ? (
-                    <div className="combo-empty">Track-playlists laden...</div>
+                    <div className="combo-empty">Loading track playlists...</div>
                   ) : currentTrackInAnyPlaylist ? (
                     <div className="text-subtle">
                       In playlists: {selectedPlaylistNamesForTrack.join(", ")}
                     </div>
                   ) : (
-                    <div className="text-subtle">Track staat niet in je playlists.</div>
+                    <div className="text-subtle">This track is not in your playlists.</div>
                   )}
                 </div>
                 {trackPlaylistLoading ? (
-                  <div className="combo-empty">Playlists laden...</div>
+                  <div className="combo-empty">Loading playlists...</div>
                 ) : trackPlaylistAddTargetOptions.length === 0 ? (
-                  <div className="combo-empty">Geen playlist-doelen.</div>
+                  <div className="combo-empty">No playlist targets.</div>
                 ) : (
                   trackPlaylistAddTargetOptions.map((option) => {
                     const opKey = `${currentTrackIdState}:${option.id}`;
@@ -6887,8 +6887,8 @@ export default function SpotifyPlayer({
         !deviceId &&
         !deviceMissing ? (
           <div className="text-subtle">
-            Probleem met afspelen: {playerErrorMessage}
-            {playerErrorMessage.includes("Koppel opnieuw") ? (
+            Playback problem: {playerErrorMessage}
+            {playerErrorMessage.includes("Reconnect") ? (
                 <button
                   type="button"
                   className="btn btn-ghost"
@@ -6897,24 +6897,24 @@ export default function SpotifyPlayer({
                     window.location.href = "/api/auth/login";
                   }}
                 >
-                  Opnieuw verbinden
+                  Reconnect
                 </button>
               ) : null}
             </div>
           ) : null}
         {activeDeviceRestricted ? (
           <div className="text-subtle">
-            Dit apparaat ondersteunt geen afstandsbediening.
+            This device does not support remote control.
           </div>
         ) : null}
         {activeDevicePrivateSession ? (
           <div className="text-subtle">
-            Privésessie actief op dit apparaat; historie en queue kunnen beperkt zijn.
+            A private session is active on this device; history and queue may be limited.
           </div>
         ) : null}
         {deviceMissing ? (
           <div className="text-subtle">
-            Geen Spotify‑apparaat geselecteerd. Kies een apparaat om af te spelen.
+            No Spotify device selected. Choose a device to start playback.
           </div>
         ) : null}
         {connectConflict ? (
@@ -6929,8 +6929,8 @@ export default function SpotifyPlayer({
             }${shufflePending ? " pending" : ""}`}
             aria-busy={shufflePending}
             aria-pressed={shuffleOn}
-            aria-label={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
-            title={shuffleOn ? "Shuffle uit" : "Shuffle aan"}
+            aria-label={shuffleOn ? "Turn shuffle off" : "Turn shuffle on"}
+            title={shuffleOn ? "Turn shuffle off" : "Turn shuffle on"}
             disabled={shufflePending || disallowShuffle}
             onClick={handleToggleShuffle}
           >
@@ -7171,8 +7171,8 @@ export default function SpotifyPlayer({
               <button
                 type="button"
                 className="detail-btn"
-                aria-label="Start lokale webplayer"
-                title="Start lokale webplayer"
+                aria-label="Start local web player"
+                title="Start local web player"
                 onClick={startLocalWebPlayerFromConnect}
               >
                 ▶
@@ -7181,8 +7181,8 @@ export default function SpotifyPlayer({
             <button
               type="button"
               className="player-library-dock-chevron-btn"
-              aria-label={connectDockOpen ? "Verberg apparaatselectie" : "Toon apparaatselectie"}
-              title={connectDockOpen ? "Verberg apparaatselectie" : "Toon apparaatselectie"}
+              aria-label={connectDockOpen ? "Hide device selection" : "Show device selection"}
+              title={connectDockOpen ? "Hide device selection" : "Show device selection"}
               aria-expanded={connectDockOpen}
               onClick={() => {
                 setConnectDockManualOpen((prev) => {
@@ -7206,8 +7206,8 @@ export default function SpotifyPlayer({
               type="button"
               className={`player-library-dock-pin${connectDockPinned ? " active" : ""}`}
               aria-pressed={connectDockPinned}
-              aria-label={connectDockPinned ? "Connect-balk losmaken" : "Connect-balk vastzetten"}
-              title={connectDockPinned ? "Connect-balk losmaken" : "Connect-balk vastzetten"}
+              aria-label={connectDockPinned ? "Unpin Connect bar" : "Pin Connect bar"}
+              title={connectDockPinned ? "Unpin Connect bar" : "Pin Connect bar"}
               onClick={() => setConnectDockPinned((prev) => !prev)}
             >
               <svg
@@ -7258,12 +7258,12 @@ export default function SpotifyPlayer({
                     });
                   }}
                   onBlur={deviceMenu.handleBlur}
-                  aria-label="Kies een Spotify‑apparaat"
+                  aria-label="Choose a Spotify device"
                   aria-haspopup="listbox"
                   aria-expanded={deviceMenuOpen}
                 >
                   {devices.find((d) => d.id === (activeDeviceId || deviceId))?.name ||
-                    "Kies apparaat"}
+                    "Choose device"}
                 </button>
                 {deviceMenuOpen ? (
                   <div className="combo-list" role="listbox">
@@ -7278,11 +7278,11 @@ export default function SpotifyPlayer({
                           setDeviceMenuOpen(false);
                         }}
                       >
-                        {localWebplayerName} <span className="text-subtle">(start lokaal)</span>
+                        {localWebplayerName} <span className="text-subtle">(start locally)</span>
                       </button>
                     ) : null}
                     {devices.length === 0 ? (
-                      <div className="combo-empty">Geen apparaten gevonden.</div>
+                      <div className="combo-empty">No devices found.</div>
                     ) : (
                       devices.map((device) => (
                         <button
@@ -7302,8 +7302,8 @@ export default function SpotifyPlayer({
                           {device.name}{" "}
                           <span className="text-subtle">
                             ({device.type}
-                            {device.isPrivateSession ? " • privésessie" : ""}
-                            {!device.selectable ? " • niet beschikbaar" : ""})
+                            {device.isPrivateSession ? " • private session" : ""}
+                            {!device.selectable ? " • unavailable" : ""})
                           </span>
                         </button>
                       ))
@@ -7314,8 +7314,8 @@ export default function SpotifyPlayer({
               <button
                 type="button"
                 className="detail-btn"
-                aria-label="Apparaten vernieuwen"
-                title="Apparaten vernieuwen"
+                aria-label="Refresh devices"
+                title="Refresh devices"
                 onClick={() => refreshDevices(true)}
               >
                 ↻
@@ -7327,7 +7327,7 @@ export default function SpotifyPlayer({
         !sdkReadyState &&
         (!activeDeviceId || activeDeviceId === sdkDeviceIdRef.current) ? (
           <div className="text-subtle" style={{ marginTop: 6 }}>
-            Lokale webplayer wordt automatisch verbonden ({sdkLifecycle}).
+            Local web player is connecting automatically ({sdkLifecycle}).
             {sdkLastError ? ` Laatste melding: ${sdkLastError}` : ""}
           </div>
         ) : null}
@@ -7340,13 +7340,13 @@ export default function SpotifyPlayer({
         ) : null}
         {!sdkSupported && !activeDeviceId && !deviceId ? (
           <div className="text-subtle" style={{ marginTop: 6 }}>
-            Lokale webplayer is niet beschikbaar in deze browser. Gebruik Spotify Connect
-            via de Spotify app om afspelen te bedienen.
+            Local web player is not available in this browser. Use Spotify Connect
+            through the Spotify app to control playback.
           </div>
         ) : null}
         {selectableDevicesCount === 0 ? (
           <div className="text-subtle" style={{ marginTop: 6 }}>
-            Geen selecteerbare apparaten gevonden. Open Spotify op je iPhone/iPad en start een track, daarna klik je op ↻.
+            No selectable devices found. Open Spotify on your iPhone/iPad and start a track, then click ↻.
             <button
               type="button"
               className="btn btn-ghost"
@@ -7377,11 +7377,11 @@ export default function SpotifyPlayer({
         <div className="player-queue">
           <div className="player-queue-title">Up Next ({queueDisplayItems.length})</div>
           {queueLoading ? (
-            <div className="text-subtle">Queue laden...</div>
+            <div className="text-subtle">Loading queue...</div>
           ) : queueError ? (
             <div className="text-subtle">{queueError}</div>
           ) : queueDisplayItems.length === 0 ? (
-            <div className="text-subtle">Geen volgende nummers.</div>
+            <div className="text-subtle">No upcoming tracks.</div>
           ) : (
             <div className="player-queue-list" ref={queueListRef} role="list">
               {queueDisplayItems.map((track, index) => {
@@ -7433,7 +7433,7 @@ export default function SpotifyPlayer({
                             status={trackStatus}
                             isStale={isStale}
                           />
-                          <span className="player-queue-nowplaying">Nu spelend</span>
+                          <span className="player-queue-nowplaying">Now playing</span>
                         </>
                       ) : null}
                     </div>

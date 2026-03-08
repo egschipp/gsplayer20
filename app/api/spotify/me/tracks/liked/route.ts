@@ -131,7 +131,7 @@ export async function POST(req: Request) {
       if (track?.id) {
         await upsertTrack({
           trackId: track.id,
-          name: track.name ?? "Onbekend nummer",
+          name: track.name ?? "Unknown track",
           durationMs:
             typeof track.duration_ms === "number" ? Math.max(0, track.duration_ms) : 0,
           explicit: Boolean(track.explicit),

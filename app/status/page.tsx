@@ -7,9 +7,9 @@ const MonitoringDashboard = dynamic(
       <main className="page settings-page">
         <section
           className="card"
-          style={{ marginTop: "calc(var(--app-content-offset-top, 0px) + 24px)" }}
+          style={{ marginTop: "4px" }}
         >
-          <p className="text-body">Monitoring laden...</p>
+          <p className="text-body">Loading monitoring...</p>
         </section>
       </main>
     ),

@@ -74,7 +74,7 @@ export default function MainNav() {
       </div>
       <div className="nav-right">
         {appVersion ? (
-          <span className="nav-version" aria-label={`Versie ${appVersion}`}>
+          <span className="nav-version" aria-label={`Version ${appVersion}`}>
             v{appVersion}
           </span>
         ) : null}
@@ -84,7 +84,7 @@ export default function MainNav() {
           onClick={handleLogout}
           disabled={loggingOut}
         >
-          {loggingOut ? "Uitloggen..." : "Uitloggen"}
+          {loggingOut ? "Signing out..." : "Sign out"}
         </button>
       </div>
     </nav>

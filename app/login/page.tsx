@@ -25,20 +25,20 @@ export default function LoginPage({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (data?.error === "PIN_LOCKED" && data?.retryAfter) {
-          setError(`Te veel pogingen. Probeer opnieuw over ${data.retryAfter}s.`);
+          setError(`Too many attempts. Try again in ${data.retryAfter}s.`);
         } else if (data?.error === "MISCONFIGURED") {
-          setError("Pincode niet ingesteld. Controleer APP_PIN en AUTH_SECRET.");
+          setError("PIN not configured. Check APP_PIN and AUTH_SECRET.");
         } else if (data?.error === "INVALID_ORIGIN") {
-          setError("Ongeldige origin. Controleer AUTH_URL/NEXTAUTH_URL.");
+          setError("Invalid origin. Check AUTH_URL/NEXTAUTH_URL.");
         } else {
-          setError("Onjuiste pincode. Probeer het opnieuw.");
+          setError("Incorrect PIN. Try again.");
         }
         return;
       }
       const next = searchParams?.next || "/";
       window.location.href = next;
     } catch {
-      setError("Inloggen mislukt. Probeer het opnieuw.");
+      setError("Login failed. Try again.");
     } finally {
       setLoading(false);
     }
@@ -56,7 +56,7 @@ export default function LoginPage({
           priority
         />
         <h1 className="login-title">Georgies Spotify</h1>
-        <p className="text-subtle">Voer je pincode in om door te gaan.</p>
+        <p className="text-subtle">Enter your PIN to continue.</p>
         <form onSubmit={handleSubmit} className="login-form">
           <input
             type="password"
@@ -64,13 +64,13 @@ export default function LoginPage({
             pattern="[0-9]*"
             autoComplete="one-time-code"
             className="input"
-            placeholder="Pincode"
+            placeholder="PIN"
             value={pin}
             onChange={(event) => setPin(event.target.value)}
             required
           />
           <button type="submit" className="btn btn-primary" disabled={loading}>
-            {loading ? "Controleren..." : "Ontgrendelen"}
+            {loading ? "Checking..." : "Unlock"}
           </button>
         </form>
         {error ? <div className="text-subtle">{error}</div> : null}

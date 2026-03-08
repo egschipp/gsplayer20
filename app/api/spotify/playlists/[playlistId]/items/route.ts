@@ -264,7 +264,7 @@ export async function GET(
           const albumImageUrl =
             track?.album?.images?.find((img) => typeof img?.url === "string")?.url ??
             null;
-          const trackName = track?.name ?? "Onbekend nummer";
+          const trackName = track?.name ?? "Unknown track";
           return {
             itemId: `${playlistId}:${offset + index}:${trackId ?? "unknown"}`,
             playlistId,

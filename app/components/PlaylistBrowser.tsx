@@ -224,9 +224,9 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
       ? Array.isArray(track.artists)
         ? dedupeArtistText(
             track.artists.map((artist) => artist?.name).filter(Boolean).join(", ")
-          ) || "Onbekende artiest"
-        : dedupeArtistText(track.artists || "") || "Onbekende artiest"
-      : "Onbekende artiest";
+          ) || "Unknown artist"
+        : dedupeArtistText(track.artists || "") || "Unknown artist"
+      : "Unknown artist";
   const artworkUrl =
     "album" in track
       ? track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null
@@ -246,7 +246,7 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
             .filter((playlist) => Boolean(playlist?.id))
             .map((playlist) => ({
               id: playlist.id,
-              name: playlist.name || "Onbekende playlist",
+              name: playlist.name || "Unknown playlist",
               spotifyUrl:
                 playlist.spotifyUrl ??
                 (playlist.id === "liked"
@@ -258,7 +258,7 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
   return {
     uri: `spotify:track:${trackId}`,
     trackId,
-    name: track.name || "Onbekend",
+    name: track.name || "Unknown",
     artists,
     primaryArtistId,
     albumId,
@@ -329,12 +329,12 @@ function resolveTrackItemArtistNames(track: TrackItem) {
         .map((artist) => artist?.name)
         .filter(Boolean)
         .join(", ")
-    ) || "Onbekende artiest"
+    ) || "Unknown artist"
   );
 }
 
 function resolveTrackRowArtistNames(track: TrackRow) {
-  return dedupeArtistText(track.artists || "") || "Onbekende artiest";
+  return dedupeArtistText(track.artists || "") || "Unknown artist";
 }
 
 function createAlbumOptionId(track: TrackItem, artistNames: string) {
@@ -390,7 +390,7 @@ function createTrackItemFromTrackRow(track: TrackRow): TrackItem {
   return {
     id: itemId || `row:${Date.now()}`,
     trackId,
-    name: String(track.name ?? "Onbekend"),
+    name: String(track.name ?? "Unknown"),
     artists,
     album: {
       id: track.albumId ?? null,
@@ -417,7 +417,7 @@ function isTrackItem(value: TrackRow | TrackItem): value is TrackItem {
 function normalizeAlbumOptions(items: TrackItem[]) {
   const unique = new Map<string, AlbumOption>();
   for (const track of items) {
-    const albumName = String(track.album?.name ?? "").trim() || "Onbekend album";
+    const albumName = String(track.album?.name ?? "").trim() || "Unknown album";
     const artistNames = resolveTrackItemArtistNames(track);
     const key = createAlbumOptionId(track, artistNames);
     const coverUrl = track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null;
@@ -777,7 +777,7 @@ function pickPreferredNumber(
 
 function normalizePlaylistLink(link: PlaylistLink): PlaylistLink {
   const id = String(link.id ?? "").trim();
-  const name = String(link.name ?? "").trim() || "Onbekende playlist";
+  const name = String(link.name ?? "").trim() || "Unknown playlist";
   const spotifyUrl =
     String(link.spotifyUrl ?? "").trim() ||
     (id === "liked"
@@ -973,7 +973,7 @@ function mergeTrackItemArtists(
       if (!name && !id) continue;
       const key = id || `name:${normalizeTrackName(name)}`;
       if (unique.has(key)) continue;
-      unique.set(key, { id: id || key, name: name || "Onbekende artiest" });
+      unique.set(key, { id: id || key, name: name || "Unknown artist" });
     }
   }
   return Array.from(unique.values());
@@ -1707,7 +1707,7 @@ export default function PlaylistBrowser() {
         }
       } catch {
         if (!cancelled && !hasCachedPlaylists) {
-          setError("Playlists laden lukt nu niet.");
+          setError("Unable to load playlists right now.");
         }
       } finally {
         if (!cancelled) setLoadingPlaylists(false);
@@ -1745,7 +1745,7 @@ export default function PlaylistBrowser() {
           { cache: "no-store" }
         );
         if (!res.ok) {
-          const mapped = mapSpotifyApiError(res.status, "Artiesten laden lukt nu niet.");
+          const mapped = mapSpotifyApiError(res.status, "Unable to load artists right now.");
           if (!cancelled && !hasCachedArtists) {
             setAuthRequired(Boolean(mapped.authRequired));
             setError(mapped.message);
@@ -1771,7 +1771,7 @@ export default function PlaylistBrowser() {
         }
       } catch {
         if (!cancelled && !hasCachedArtists) {
-          setError("Artiesten laden lukt nu niet.");
+          setError("Unable to load artists right now.");
         }
       } finally {
         if (!cancelled) setLoadingArtists(false);
@@ -1806,7 +1806,7 @@ export default function PlaylistBrowser() {
           cache: "no-store",
         });
         if (!res.ok) {
-          const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
+          const mapped = mapSpotifyApiError(res.status, "Unable to load tracks right now.");
           if (!cancelled && !hasCachedTrackOptions) {
             setAuthRequired(Boolean(mapped.authRequired));
             setError(mapped.message);
@@ -1831,7 +1831,7 @@ export default function PlaylistBrowser() {
         }
       } catch {
         if (!cancelled && !hasCachedTrackOptions) {
-          setError("Tracks laden lukt nu niet.");
+          setError("Unable to load tracks right now.");
         }
       } finally {
         if (!cancelled) setLoadingTracksList(false);
@@ -1926,19 +1926,19 @@ export default function PlaylistBrowser() {
     mode === "playlists"
       ? "Playlists"
       : mode === "artists"
-      ? "Artiesten"
+      ? "Artists"
       : mode === "tracks"
       ? "Tracks"
       : "Albums";
   const selectorCurrentLabel = selectedOption?.name
     ? selectedOption.name
     : mode === "playlists"
-    ? "Kies playlist"
+    ? "Choose playlist"
     : mode === "artists"
-    ? "Kies artiest"
+    ? "Choose artist"
     : mode === "tracks"
-    ? "Kies track"
-    : "Kies album";
+    ? "Choose track"
+    : "Choose album";
 
   const selectPlaylistInMyMusic = useCallback((playlistId: string) => {
     if (!playlistId) return;
@@ -1997,14 +1997,14 @@ export default function PlaylistBrowser() {
           .map((value) => value.trim())
           .filter(Boolean)[0] ?? "";
       const applyArtistSelection = (artistId: string, artistName: string) => {
-        const cleanName = String(artistName || normalizedName || "Onbekende artiest")
+        const cleanName = String(artistName || normalizedName || "Unknown artist")
           .trim()
           .slice(0, 160);
         setArtistOptions((prev) =>
           normalizeArtistOptions(
             prev.concat({
               id: artistId,
-              name: cleanName || "Onbekende artiest",
+              name: cleanName || "Unknown artist",
               spotifyUrl: `https://open.spotify.com/artist/${artistId}`,
             })
           )
@@ -3641,7 +3641,7 @@ export default function PlaylistBrowser() {
         setActiveTrackHydrationError(null);
       } else {
         activeTrackHydrationMetricsRef.current.failed += 1;
-        setActiveTrackHydrationError("Actieve track nog niet gevonden in de geladen lijst.");
+        setActiveTrackHydrationError("Active track not found in the loaded list yet.");
       }
       setActiveTrackHydrating(false);
       setActiveTrackHydrationRetryAfterMs(null);
@@ -4273,7 +4273,7 @@ export default function PlaylistBrowser() {
       } else if (message.includes("quotaexceeded")) {
         setError("Browser-opslag is vol. Ververs de pagina en probeer opnieuw.");
       } else {
-        setError("Track afspelen lukt nu niet.");
+        setError("Unable to play track right now.");
       }
     }
   }
@@ -4383,7 +4383,7 @@ export default function PlaylistBrowser() {
       <div
         className={`player-library-dock-toggle${selectorDockOpen ? " open" : ""}`}
       >
-        <span className="player-library-dock-label">MyMusic Selectie</span>
+        <span className="player-library-dock-label">My Music selection</span>
         <span className="player-library-dock-value">
           <span className="text-subtle">{selectorModeLabel}</span>
           <strong>{selectorCurrentLabel}</strong>
@@ -4399,7 +4399,7 @@ export default function PlaylistBrowser() {
           className="player-library-dock-chevron-btn"
           aria-controls="player-library-dock-body"
           aria-expanded={selectorDockOpen}
-          aria-label={selectorDockOpen ? "Selectiebalk inklappen" : "Selectiebalk uitklappen"}
+          aria-label={selectorDockOpen ? "Collapse selection bar" : "Expand selection bar"}
           onClick={() =>
             setSelectorDockManualOpen((prev) => {
               const next = !prev;
@@ -4421,8 +4421,8 @@ export default function PlaylistBrowser() {
           type="button"
           className={`player-library-dock-pin${selectorDockPinned ? " active" : ""}`}
           aria-pressed={selectorDockPinned}
-          aria-label={selectorDockPinned ? "Bar losmaken" : "Bar vastzetten"}
-          title={selectorDockPinned ? "Bar losmaken" : "Bar vastzetten"}
+          aria-label={selectorDockPinned ? "Unpin bar" : "Pin bar"}
+          title={selectorDockPinned ? "Unpin bar" : "Pin bar"}
           onClick={() => setSelectorDockPinned((prev) => !prev)}
         >
           <svg
@@ -4457,7 +4457,7 @@ export default function PlaylistBrowser() {
                 {value === "playlists"
                   ? "Playlists"
                   : value === "artists"
-                  ? "Artiesten"
+                  ? "Artists"
                   : value === "tracks"
                   ? "Tracks"
                   : "Albums"}
@@ -4471,7 +4471,7 @@ export default function PlaylistBrowser() {
             onTouchStartCapture={comboMenu.markInteraction}
           >
             <label className="sr-only" htmlFor="playlist-search">
-              Kies selectie
+              Choose selection
             </label>
             <input
               id="playlist-search"
@@ -4493,7 +4493,7 @@ export default function PlaylistBrowser() {
               }}
               onBlur={comboMenu.handleBlur}
               className="combo-input player-library-combo-input"
-              aria-label="Selectie zoeken"
+              aria-label="Search selection"
               role="combobox"
               aria-autocomplete="list"
               aria-expanded={open}
@@ -4501,12 +4501,12 @@ export default function PlaylistBrowser() {
               aria-controls="playlist-options"
               placeholder={
                 mode === "playlists"
-                  ? "Zoek playlists..."
+                  ? "Search playlists..."
                   : mode === "artists"
-                  ? "Zoek artiesten..."
+                  ? "Search artists..."
                   : mode === "tracks"
-                  ? "Zoek tracks..."
-                  : "Zoek albums..."
+                  ? "Search tracks..."
+                  : "Search albums..."
               }
               disabled={
                 mode === "playlists"
@@ -4519,7 +4519,7 @@ export default function PlaylistBrowser() {
             <button
               type="button"
               className={`player-library-combo-toggle${open ? " open" : ""}`}
-              aria-label={open ? "Sluit selectie" : "Open selectie"}
+              aria-label={open ? "Close selection" : "Open selection"}
               aria-expanded={open}
               aria-controls="playlist-options"
               onClick={() => setOpen((prev) => !prev)}
@@ -4564,7 +4564,7 @@ export default function PlaylistBrowser() {
                 }}
               >
                 {filteredOptions.length === 0 ? (
-                  <div className="combo-empty">Geen resultaten.</div>
+                  <div className="combo-empty">No results.</div>
                 ) : mode === "tracks" ? (
                   (filteredOptions as TrackOption[]).map((opt) => (
                     <button
@@ -4648,7 +4648,7 @@ export default function PlaylistBrowser() {
                             <span className="combo-track-name">{opt.name}</span>
                             <span className="combo-option-meta">
                               {(opt as PlaylistOption).ownerDisplayName
-                                ? `door ${(opt as PlaylistOption).ownerDisplayName}`
+                                ? `by ${(opt as PlaylistOption).ownerDisplayName}`
                                 : "Spotify playlist"}
                               {typeof (opt as PlaylistOption).tracksTotal === "number"
                                 ? ` • ${(opt as PlaylistOption).tracksTotal} tracks`
@@ -4669,13 +4669,13 @@ export default function PlaylistBrowser() {
                   ))
                 )}
                 {mode === "playlists" && loadingMorePlaylists ? (
-                  <div className="combo-loading">Meer playlists laden...</div>
+                  <div className="combo-loading">Loading more playlists...</div>
                 ) : null}
                 {mode === "artists" && loadingMoreArtists ? (
-                  <div className="combo-loading">Meer artiesten laden...</div>
+                  <div className="combo-loading">Loading more artists...</div>
                 ) : null}
                 {(mode === "tracks" || mode === "albums") && loadingMoreTrackOptions ? (
-                  <div className="combo-loading">Meer tracks laden...</div>
+                  <div className="combo-loading">Loading more tracks...</div>
                 ) : null}
               </div>
             ) : null}
@@ -4690,10 +4690,10 @@ export default function PlaylistBrowser() {
       {authRequired ? (
         <div className="panel" style={{ marginBottom: 16 }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>
-            Spotify is nog niet verbonden
+            Spotify is not connected yet
           </div>
           <div className="text-body">
-            Verbind je account om af te spelen en playlists te laden.
+            Connect your account to control playback and load playlists.
           </div>
           <div style={{ marginTop: 10 }}>
             <button
@@ -4703,7 +4703,7 @@ export default function PlaylistBrowser() {
                 window.location.href = "/api/auth/login";
               }}
             >
-              Spotify verbinden
+              Connect Spotify
             </button>
           </div>
         </div>
@@ -4717,7 +4717,7 @@ export default function PlaylistBrowser() {
           ((mode === "playlists" && selectedPlaylist?.id) ||
             (mode === "artists" && selectedArtist?.id)) ? (
             <div className="empty-state">
-              <div style={{ fontWeight: 600 }}>Geen tracks gevonden</div>
+              <div style={{ fontWeight: 600 }}>No tracks found</div>
               <div className="text-body">
                 Werk de bibliotheek bij via Settings als dit onverwacht is.
               </div>
@@ -4846,7 +4846,7 @@ export default function PlaylistBrowser() {
           (mode === "tracks" ? selectedTrackId : selectedAlbumId) &&
           !localFilteredTrackItems.length ? (
             <div className="empty-state">
-              <div style={{ fontWeight: 600 }}>Geen resultaten</div>
+              <div style={{ fontWeight: 600 }}>No results</div>
               <div className="text-body">
                 {mode === "tracks"
                   ? "Probeer een andere titel."
@@ -4975,7 +4975,7 @@ export default function PlaylistBrowser() {
           <span className="text-body">Tracks laden...</span>
         ) : null}
         {activeTrackMissingInRows && activeTrackHydrating ? (
-          <div className="text-body">Actieve track wordt geladen voor consistente highlight…</div>
+          <div className="text-body">Loading active track for consistent highlighting…</div>
         ) : null}
         {activeTrackMissingInRows && activeTrackHydrationRetryAfterMs ? (
           <div className="text-subtle">
@@ -5027,9 +5027,9 @@ export default function PlaylistBrowser() {
                   )}
                 </div>
                 <div>
-                  <div className="text-subtle">Trackdetails</div>
+                  <div className="text-subtle">Track details</div>
                   <div id="track-detail-dialog-title" style={{ fontWeight: 700, fontSize: 20 }}>
-                    {selectedTrackDetail.name || "Onbekende track"}
+                    {selectedTrackDetail.name || "Unknown track"}
                   </div>
                   {selectedTrackDetail.artists?.length ? (
                     <div className="text-body">
@@ -5065,7 +5065,7 @@ export default function PlaylistBrowser() {
                     className="btn btn-primary"
                     onClick={(event) => event.stopPropagation()}
                   >
-                    Openen in Spotify
+                    Open in Spotify
                   </a>
                 ) : null}
                 <button
@@ -5073,25 +5073,25 @@ export default function PlaylistBrowser() {
                   className="btn btn-secondary"
                   onClick={closeTrackDetail}
                 >
-                  Sluiten
+                  Close
                 </button>
               </div>
             </div>
             <div className="track-detail-body">
               <div className="track-detail-content">
                 <div className="track-detail-section">
-                  <div className="track-detail-title">Basis</div>
+                  <div className="track-detail-title">Basics</div>
                   <div className="track-detail-grid">
                     <div className="track-detail-field">
-                      <div className="text-subtle">Duur</div>
+                      <div className="text-subtle">Duration</div>
                       <div>{formatDuration(selectedTrackDetail.durationMs)}</div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Expliciet</div>
+                      <div className="text-subtle">Explicit</div>
                       <div>{formatExplicit(selectedTrackDetail.explicit)}</div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Populariteit</div>
+                      <div className="text-subtle">Popularity</div>
                       <div>
                         {selectedTrackDetail.popularity === null ||
                         selectedTrackDetail.popularity === undefined
@@ -5100,17 +5100,17 @@ export default function PlaylistBrowser() {
                       </div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Top track (6 mnd)</div>
+                      <div className="text-subtle">Top track (6 mo)</div>
                       <div>
                         {selectedTrackDetail.topRank ? `#${selectedTrackDetail.topRank}` : "—"}
                       </div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Toegevoegd op</div>
+                      <div className="text-subtle">Added on</div>
                       <div>{formatTimestamp(selectedTrackDetail.addedAt)}</div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Laatst gespeeld</div>
+                      <div className="text-subtle">Last played</div>
                       <div>{formatTimestamp(selectedTrackDetail.lastPlayedAt)}</div>
                     </div>
                   </div>
@@ -5127,7 +5127,7 @@ export default function PlaylistBrowser() {
                 </div>
 
                 <div className="track-detail-section">
-                  <div className="track-detail-title">Beschikbaarheid</div>
+                  <div className="track-detail-title">Availability</div>
                   <div className="track-detail-grid">
                     <div className="track-detail-field">
                       <div className="text-subtle">Local track</div>
@@ -5136,13 +5136,13 @@ export default function PlaylistBrowser() {
                         selectedTrackDetail.isLocal === undefined
                           ? "—"
                           : selectedTrackDetail.isLocal
-                          ? "Ja"
-                          : "Nee"}
+                          ? "Yes"
+                          : "No"}
                       </div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Spotify restrictie</div>
-                      <div>{selectedTrackDetail.restrictionsReason || "Geen"}</div>
+                      <div className="text-subtle">Spotify restriction</div>
+                      <div>{selectedTrackDetail.restrictionsReason || "None"}</div>
                     </div>
                     <div className="track-detail-field">
                       <div className="text-subtle">Linked-from track</div>
@@ -5152,7 +5152,7 @@ export default function PlaylistBrowser() {
                 </div>
 
                 <div className="track-detail-section">
-                  <div className="track-detail-title">Artiesten</div>
+                  <div className="track-detail-title">Artists</div>
                   <div className="track-detail-grid">
                     <div className="track-detail-field">
                       {selectedTrackDetail.artists?.length ? (
@@ -5173,7 +5173,7 @@ export default function PlaylistBrowser() {
                           ))}
                         </div>
                       ) : trackArtistsLoading ? (
-                        <div className="text-subtle">Artiestinfo laden…</div>
+                        <div className="text-subtle">Loading artist info…</div>
                       ) : (
                         <div>{selectedTrackDetail.artistsText || "—"}</div>
                       )}
@@ -5198,13 +5198,13 @@ export default function PlaylistBrowser() {
                                   selectPlaylistInMyMusic(pl.id);
                                 }}
                               >
-                                {pl.name || "Naamloze playlist"}
+                                {pl.name || "Untitled playlist"}
                               </button>
                               <button
                                 type="button"
                                 className="playlist-remove-btn"
-                                aria-label={`Verwijder uit ${pl.name || "playlist"}`}
-                                title={`Verwijder uit ${pl.name || "playlist"}`}
+                                aria-label={`Remove from ${pl.name || "playlist"}`}
+                                title={`Remove from ${pl.name || "playlist"}`}
                                 disabled={
                                   !selectedTrackDetail.trackId ||
                                   removingTargetKey ===
@@ -5236,33 +5236,33 @@ export default function PlaylistBrowser() {
       ) : null}
       {mode === "tracks" && !selectedTrackId ? (
         <div className="empty-state" style={{ marginTop: 16 }}>
-          <div style={{ fontWeight: 600 }}>Kies een track</div>
+          <div style={{ fontWeight: 600 }}>Choose a track</div>
           <div className="text-body">
-            Selecteer een track om resultaten te bekijken.
+            Select a track to view results.
           </div>
         </div>
       ) : null}
       {mode === "albums" && !selectedAlbumId ? (
         <div className="empty-state" style={{ marginTop: 16 }}>
-          <div style={{ fontWeight: 600 }}>Kies een album</div>
+          <div style={{ fontWeight: 600 }}>Choose an album</div>
           <div className="text-body">
-            Selecteer een album om resultaten te bekijken.
+            Select an album to view results.
           </div>
         </div>
       ) : null}
       {mode === "artists" && !selectedArtistId ? (
         <div className="empty-state" style={{ marginTop: 16 }}>
-          <div style={{ fontWeight: 600 }}>Kies een artiest</div>
+          <div style={{ fontWeight: 600 }}>Choose an artist</div>
           <div className="text-body">
-            Selecteer een artiest om resultaten te bekijken.
+            Select an artist to view results.
           </div>
         </div>
       ) : null}
       {mode === "playlists" && !selectedPlaylist?.id ? (
         <div className="empty-state" style={{ marginTop: 16 }}>
-          <div style={{ fontWeight: 600 }}>Kies een playlist</div>
+          <div style={{ fontWeight: 600 }}>Choose a playlist</div>
           <div className="text-body">
-            Selecteer een playlist om resultaten te bekijken.
+            Select a playlist to view results.
           </div>
         </div>
       ) : null}
@@ -5287,7 +5287,7 @@ export default function PlaylistBrowser() {
                   {selectedArtistDetail.imageUrl ? (
                     <Image
                       src={selectedArtistDetail.imageUrl}
-                      alt={selectedArtistDetail.name || "Artiest"}
+                      alt={selectedArtistDetail.name || "Artist"}
                       width={72}
                       height={72}
                       unoptimized
@@ -5298,16 +5298,16 @@ export default function PlaylistBrowser() {
                   )}
                 </div>
                 <div>
-                  <div className="text-subtle">Artiestdetails</div>
+                  <div className="text-subtle">Artist details</div>
                   <div id="artist-detail-dialog-title" style={{ fontWeight: 700, fontSize: 20 }}>
-                    {selectedArtistDetail.name || "Onbekende artiest"}
+                    {selectedArtistDetail.name || "Unknown artist"}
                   </div>
                   {selectedArtistDetail.genres?.length ? (
                     <div className="text-body">
                       {selectedArtistDetail.genres.join(", ")}
                     </div>
                   ) : (
-                    <div className="text-subtle">Geen genres beschikbaar</div>
+                    <div className="text-subtle">No genres available</div>
                   )}
                 </div>
               </div>
@@ -5320,7 +5320,7 @@ export default function PlaylistBrowser() {
                     className="btn btn-primary"
                     onClick={(event) => event.stopPropagation()}
                   >
-                    Openen in Spotify
+                    Open in Spotify
                   </a>
                 ) : null}
                 <button
@@ -5328,17 +5328,17 @@ export default function PlaylistBrowser() {
                   className="btn btn-secondary"
                   onClick={() => setSelectedArtistDetail(null)}
                 >
-                  Terug
+                  Back
                 </button>
               </div>
             </div>
             <div className="track-detail-body">
               <div className="track-detail-content">
                 <div className="track-detail-section">
-                  <div className="track-detail-title">Overzicht</div>
+                  <div className="track-detail-title">Overview</div>
                   <div className="track-detail-grid">
                     <div className="track-detail-field">
-                      <div className="text-subtle">Populariteit</div>
+                      <div className="text-subtle">Popularity</div>
                       <div>
                         {selectedArtistDetail.popularity === null ||
                         selectedArtistDetail.popularity === undefined
@@ -5347,11 +5347,11 @@ export default function PlaylistBrowser() {
                       </div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Tracks in bibliotheek</div>
+                      <div className="text-subtle">Tracks in library</div>
                       <div>{selectedArtistDetail.tracksCount ?? 0}</div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Volgers</div>
+                      <div className="text-subtle">Followers</div>
                       <div>
                         {selectedArtistDetail.followersTotal === null ||
                         selectedArtistDetail.followersTotal === undefined
@@ -5360,7 +5360,7 @@ export default function PlaylistBrowser() {
                       </div>
                     </div>
                     <div className="track-detail-field">
-                      <div className="text-subtle">Top artiest (6 mnd)</div>
+                      <div className="text-subtle">Top artist (6 mo)</div>
                       <div>
                         {selectedArtistDetail.topRank ? `#${selectedArtistDetail.topRank}` : "—"}
                       </div>
@@ -5385,7 +5385,7 @@ export default function PlaylistBrowser() {
                   </div>
                 </div>
                 {artistDetailLoading ? (
-                  <div className="text-subtle">Artiestdetails laden...</div>
+                  <div className="text-subtle">Loading artist details...</div>
                 ) : null}
               </div>
             </div>
@@ -5581,7 +5581,7 @@ function AddToPlaylistMenu({
             </div>
           ) : null}
           {options.length === 0 ? (
-            <div className="combo-empty">Geen playlist-doelen.</div>
+            <div className="combo-empty">No playlist targets.</div>
           ) : (
             options.map((option) => {
               const opKey = `${trackId}:${option.id}`;
@@ -5681,7 +5681,7 @@ function ActiveTrackIndicator({
       ? "Track beëindigd"
       : status === "error"
       ? "Playback fout"
-      : "Actieve track";
+      : "Active track";
   return (
     <span
       className={`playing-indicator ${status}${isStale ? " stale" : ""}`}
@@ -5865,8 +5865,8 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
           <button
             type="button"
             className="play-btn"
-            aria-label="Track afspelen"
-            title="Afspelen"
+            aria-label="Play track"
+            title="Play"
             disabled={!track.trackId}
             onClick={() => data.handlePlayTrack(track, index)}
           >
@@ -5886,8 +5886,8 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
           )}
         </div>
         <div className="track-col-track">
-          <div className="track-title-line" title={track.name || "Onbekend"}>
-            <span className="track-title-text">{track.name || "Onbekend"}</span>
+          <div className="track-title-line" title={track.name || "Unknown"}>
+            <span className="track-title-text">{track.name || "Unknown"}</span>
             {isTrackActive ? (
               <ActiveTrackIndicator status={trackStatus} isStale={isStale} />
             ) : null}
@@ -5895,7 +5895,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
           <button
             type="button"
             className="track-meta-link text-body track-artist-line"
-            title={artistLine || "Onbekende artiest"}
+            title={artistLine || "Unknown artist"}
             disabled={!primaryArtistName}
             onClick={(event) => {
               event.stopPropagation();
@@ -5903,7 +5903,7 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
               void data.selectArtistInMyMusic(track, primaryArtistName, null);
             }}
           >
-            {artistLine || "Onbekende artiest"}
+            {artistLine || "Unknown artist"}
           </button>
           {albumLine ? (
             <button
@@ -5979,8 +5979,8 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
               href={`https://open.spotify.com/track/${track.trackId}`}
               target="_blank"
               rel="noreferrer"
-              aria-label="Openen in Spotify"
-              title="Openen in Spotify"
+              aria-label="Open in Spotify"
+              title="Open in Spotify"
               className="track-action-link"
               onClick={(event) => event.stopPropagation()}
             >
@@ -6074,7 +6074,7 @@ function TrackItemRenderer({
   const primaryArtistId =
     primaryArtist && typeof primaryArtist.id === "string" ? primaryArtist.id : null;
   const primaryArtistName = String(
-    primaryArtist?.name || uniqueArtistNames || "Onbekende artiest"
+    primaryArtist?.name || uniqueArtistNames || "Unknown artist"
   ).trim();
   const albumLine = String(track.album?.name ?? "").trim();
   const rowColumnsStyle = {
@@ -6105,8 +6105,8 @@ function TrackItemRenderer({
         <div className="track-media-cell" onClick={(event) => event.stopPropagation()}>
           <label
             className="track-select-control"
-            aria-label={isSelected ? "Track selectie uit" : "Track selecteren"}
-            title={isSelected ? "Track selectie uit" : "Track selecteren"}
+            aria-label={isSelected ? "Deselect track" : "Select track"}
+            title={isSelected ? "Deselect track" : "Select track"}
             onClick={(event) => event.stopPropagation()}
           >
             <input
@@ -6120,8 +6120,8 @@ function TrackItemRenderer({
           <button
             type="button"
             className="play-btn"
-            aria-label="Track afspelen"
-            title="Afspelen"
+            aria-label="Play track"
+            title="Play"
             onClick={() => data.handlePlayTrack(track, index)}
           >
             ▶
@@ -6140,8 +6140,8 @@ function TrackItemRenderer({
           )}
         </div>
         <div className="track-col-track">
-          <div className="track-title-line" title={track.name || "Onbekend"}>
-            <span className="track-title-text">{track.name || "Onbekend"}</span>
+          <div className="track-title-line" title={track.name || "Unknown"}>
+            <span className="track-title-text">{track.name || "Unknown"}</span>
             {isTrackActive ? (
               <ActiveTrackIndicator status={trackStatus} isStale={isStale} />
             ) : null}
@@ -6149,7 +6149,7 @@ function TrackItemRenderer({
           <button
             type="button"
             className="track-meta-link text-body track-artist-line"
-            title={uniqueArtistNames || "Onbekende artiest"}
+            title={uniqueArtistNames || "Unknown artist"}
             disabled={!primaryArtistName}
             onClick={(event) => {
               event.stopPropagation();
@@ -6157,7 +6157,7 @@ function TrackItemRenderer({
               void data.selectArtistInMyMusic(track, primaryArtistName, primaryArtistId);
             }}
           >
-            {uniqueArtistNames || "Onbekende artiest"}
+            {uniqueArtistNames || "Unknown artist"}
           </button>
           {albumLine ? (
             <button
@@ -6228,8 +6228,8 @@ function TrackItemRenderer({
             href={`https://open.spotify.com/track/${track.id}`}
             target="_blank"
             rel="noreferrer"
-            aria-label="Openen in Spotify"
-            title="Openen in Spotify"
+            aria-label="Open in Spotify"
+            title="Open in Spotify"
             className="track-action-link"
             onClick={(event) => event.stopPropagation()}
           >

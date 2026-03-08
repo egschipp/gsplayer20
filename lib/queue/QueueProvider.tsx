@@ -98,7 +98,7 @@ function normalizePlaylistRefs(playlists: QueuePlaylistRef[] | undefined) {
     if (!playlist?.id) continue;
     deduped.set(playlist.id, {
       id: playlist.id,
-      name: playlist.name || "Onbekende playlist",
+      name: playlist.name || "Unknown playlist",
     });
   }
   return Array.from(deduped.values()).sort((a, b) =>

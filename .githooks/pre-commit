@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+npm run readme:update >/dev/null
+git add README.md

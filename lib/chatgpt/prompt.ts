@@ -16,86 +16,86 @@ export const CHATGPT_PROMPT_TOKENS = [
 
 export const CHATGPT_PROMPT_TOKEN_LABELS: { token: string; label: string }[] = [
   { token: "[TRACK_URL]", label: "Spotify track URL" },
-  { token: "[PLAYLISTS]", label: "Beschikbare playlists" },
-  { token: "[TRACK_META]", label: "Verificatie-metadata (samenvatting)" },
-  { token: "[TRACK_ID]", label: "Primaire verificatie-ID" },
-  { token: "[TRACK_NAME]", label: "Tracknaam validatie" },
-  { token: "[ARTIST_IDS]", label: "Unieke artiest-ID validatie" },
-  { token: "[ARTIST_NAMES]", label: "Cross-check met verwachte artiest" },
-  { token: "[ALBUM_ID]", label: "Albumvalidatie" },
-  { token: "[ALBUM_RELEASE_DATE]", label: "Chronologische verificatie" },
-  { token: "[DURATION_MS]", label: "Exacte technische verificatie" },
-  { token: "[ISRC]", label: "Sterke unieke identificator (indien aanwezig)" },
-  { token: "[EXPLICIT]", label: "Consistentiecontrole" },
-  { token: "[POPULARITY]", label: "Plausibiliteitscontrole" },
+  { token: "[PLAYLISTS]", label: "Available playlists" },
+  { token: "[TRACK_META]", label: "Verification metadata (summary)" },
+  { token: "[TRACK_ID]", label: "Primary verification ID" },
+  { token: "[TRACK_NAME]", label: "Track name validation" },
+  { token: "[ARTIST_IDS]", label: "Unique artist ID validation" },
+  { token: "[ARTIST_NAMES]", label: "Cross-check with expected artist" },
+  { token: "[ALBUM_ID]", label: "Album validation" },
+  { token: "[ALBUM_RELEASE_DATE]", label: "Chronological verification" },
+  { token: "[DURATION_MS]", label: "Exact technical verification" },
+  { token: "[ISRC]", label: "Strong unique identifier (if available)" },
+  { token: "[EXPLICIT]", label: "Consistency check" },
+  { token: "[POPULARITY]", label: "Plausibility check" },
 ];
 
-export const CHATGPT_PROMPT_TEMPLATE = `Je bent een uiterst nauwkeurige muziekcurator en Spotify-verifier. Je werkt in “Instant”-modus: snel, maar met strikte verificatie en nul aannames.
+export const CHATGPT_PROMPT_TEMPLATE = `You are an extremely precise music curator and Spotify verifier. You operate in “Instant” mode: fast, but with strict verification and zero assumptions.
 
-DOEL
-Gebruik de opgegeven Spotify-link om EXACT het juiste nummer te identificeren en lever een strak, overzichtelijk rapport met metadata, context en playlist-advies. De output is pas geldig na een expliciete kwaliteitscheck die bevestigt dat het juiste nummer is gevonden.
+GOAL
+Use the provided Spotify link to identify the EXACT correct track and deliver a concise, well-structured report with metadata, context, and playlist advice. The output is only valid after an explicit quality check confirms the correct track was found.
 
 INPUT
-- Nummer-URL: [TRACK_URL]
-- Beschikbare playlists (één per regel): [PLAYLISTS]
-- Verificatie-metadata (door app geleverd): [TRACK_META]
+- Track URL: [TRACK_URL]
+- Available playlists (one per line): [PLAYLISTS]
+- Verification metadata (provided by the app): [TRACK_META]
 
-WERKWIJZE (STRICT)
-1) Open en analyseer de Spotify-link [TRACK_URL] en haal de officiële trackgegevens op.
-2) Voer een “Ground Truth”-verificatie uit:
-   - Vergelijk minimaal 3 onafhankelijke identificatoren uit Spotify (bijv. tracktitel, primaire artiest, album/single naam, releasejaar/-datum, trackduur, ISRC indien zichtbaar, Spotify track-ID/URI).
-   - Als de URL doorverwijst (remaster, deluxe, live, radio edit, cover, re-recording, compilation): detecteer dit en benoem expliciet welke versie het is.
-   - Controleer of er meerdere tracks met (bijna) dezelfde titel/artiestsamenstelling bestaan; als ja, leg in 1–2 zinnen uit waarom dit de juiste is (op basis van de identificatoren).
-3) Kwaliteitscheck gate (VERPLICHT):
-   - Als je niet met hoge zekerheid kunt bevestigen dat dit het juiste nummer is: STOP en geef alleen een “Verificatie mislukt”-sectie met:
-     a) wat ontbreekt,
-     b) welke identificatoren conflicteren,
-     c) welke extra input nodig is (max. 3 bullets).
-   - Ga alleen door naar het volledige rapport als verificatie slaagt.
-4) Bronnenbeleid:
-   - Primair: Spotify track-/artistpagina (titel, artiest(en), album/single, credits/label indien beschikbaar, release datum/jaar, duur, URI/ID).
-   - Secundair (alleen voor achtergrond): officiële artist bio/label site/Wikipedia/gerenommeerde muziekmedia.
-   - Als een gegeven niet zeker te verifiëren is: zet “Onbekend” + korte reden (max. 1 zin). Geen aannames.
+METHOD (STRICT)
+1) Open and analyze the Spotify link [TRACK_URL] and retrieve the official track data.
+2) Perform a “Ground Truth” verification:
+   - Compare at least 3 independent identifiers from Spotify (for example track title, primary artist, album/single name, release year/date, track duration, ISRC if visible, Spotify track ID/URI).
+   - If the URL redirects (remaster, deluxe, live, radio edit, cover, re-recording, compilation): detect it and explicitly state which version it is.
+   - Check whether multiple tracks exist with the same or nearly the same title/artist combination; if so, explain in 1-2 sentences why this is the correct one based on the identifiers.
+3) Quality gate (REQUIRED):
+   - If you cannot confirm with high confidence that this is the correct track: STOP and provide only a “Verification failed” section with:
+     a) what is missing,
+     b) which identifiers conflict,
+     c) what additional input is needed (max. 3 bullets).
+   - Only continue to the full report if verification succeeds.
+4) Source policy:
+   - Primary: Spotify track/artist page (title, artist(s), album/single, credits/label if available, release date/year, duration, URI/ID).
+   - Secondary (background only): official artist bio/label site/Wikipedia/reputable music media.
+   - If a datum cannot be verified reliably: write “Unknown” + brief reason (max. 1 sentence). No assumptions.
 
-OUTPUT (Nederlands, mooi opgemaakt in Markdown, compacte maar duidelijke structuur)
-0) Verificatiestatus (VERPLICHT, bovenaan)
-- Status: ✅ Verificatie geslaagd / ❌ Verificatie mislukt
-- Bewijs (min. 3 bullets): noem de gebruikte identificatoren + waarden
-- Versiecheck: Original / Remaster / Live / Edit / Cover / Re-recording / Compilation (kies 1, met korte toelichting)
+OUTPUT (English, cleanly formatted in Markdown, compact but clear structure)
+0) Verification status (REQUIRED, at the top)
+- Status: ✅ Verification passed / ❌ Verification failed
+- Evidence (min. 3 bullets): list the identifiers used + their values
+- Version check: Original / Remaster / Live / Edit / Cover / Re-recording / Compilation (pick 1, with brief explanation)
 
-ALS (en alleen als) VERIFICATIE GESLAAGD:
-A) Trackgegevens
-- Titel:
-- Artiest(en):
+IF (and only if) VERIFICATION PASSED:
+A) Track details
+- Title:
+- Artist(s):
 - Album / Single:
-- Releasejaar (en volledige releasedatum indien beschikbaar):
-- Trackduur:
-- Genre(s) / mood tags (zoals Spotify aangeeft of breed erkend):
-- Populariteit (als Spotify dit toont):
+- Release year (and full release date if available):
+- Track duration:
+- Genre(s) / mood tags (as shown by Spotify or broadly recognized):
+- Popularity (if Spotify shows it):
 - Spotify URI/ID:
-- Spotify-link:
+- Spotify link:
 
-B) Korte achtergrond van het nummer (80–120 woorden)
-- Thema/ontstaansgeschiedenis/impact (geen speculatie).
-- Bronnen (1–3) als bullets: bronnaam + URL.
+B) Short background of the track (80-120 words)
+- Theme/origin/impact (no speculation).
+- Sources (1-3) as bullets: source name + URL.
 
-C) Korte achtergrond van de artiest (80–120 woorden)
-- Afkomst/doorbraak/stijl/hoogtepunten.
-- Bronnen (1–3) als bullets: bronnaam + URL.
+C) Short background of the artist (80-120 words)
+- Origin/breakthrough/style/highlights.
+- Sources (1-3) as bullets: source name + URL.
 
-D) Playlist-naam ideeën (5)
-- 5 originele playlistnamen passend bij vibe/genre/energie.
-- Per naam: 1 toelichting (max. 12 woorden).
+D) Playlist name ideas (5)
+- 5 original playlist names matching the vibe/genre/energy.
+- For each name: 1 explanation (max. 12 words).
 
-E) Beste match uit mijn bestaande playlists
-- Kies EXACT 1 playlist uit [PLAYLISTS] waar dit nummer het beste in past.
-- Motiveer in 3 bullets o.b.v. genre, energie/tempo, sfeer/onderwerp, gebruiksmoment.
-- Als geen enkele playlist past: “Geen goede match” + 1 nieuwe playlistnaam.
+E) Best match from my existing playlists
+- Pick EXACTLY 1 playlist from [PLAYLISTS] where this track fits best.
+- Justify it in 3 bullets based on genre, energy/tempo, mood/topic, and listening moment.
+- If no playlist fits: “No strong match” + 1 new playlist name.
 
-FORMATREGELS
-- Gebruik Markdown met duidelijke kopjes en bullets.
-- Totaal max. ~550 woorden (excl. bronnenlinks).
-- Geen irrelevante uitweidingen, geen herhaling.`;
+FORMAT RULES
+- Use Markdown with clear headings and bullets.
+- Total max. ~550 words (excluding source links).
+- No irrelevant tangents, no repetition.`;
 
 export function fillChatGptPrompt(
   template: string,
@@ -115,7 +115,7 @@ export function fillChatGptPrompt(
     popularity?: number | null;
   }
 ) {
-  const url = trackUrl || "Onbekend";
+  const url = trackUrl || "Unknown";
   const emojiStart =
     /^[\s\u200B-\u200D\u200E\u200F\u2060\uFEFF]*(?:\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)/u;
   const calendarStart = /^[\s\u200B-\u200D\u200E\u200F\u2060\uFEFF]*📆/u;
@@ -126,33 +126,33 @@ export function fillChatGptPrompt(
   const meta = trackMeta?.trim() ? trackMeta.trim() : "—";
   const explicitValue =
     metaTokens?.explicit === true || metaTokens?.explicit === 1
-      ? "ja"
+      ? "yes"
       : metaTokens?.explicit === false || metaTokens?.explicit === 0
-      ? "nee"
-      : "Onbekend";
+      ? "no"
+      : "Unknown";
   const popularityValue =
     metaTokens?.popularity === null || metaTokens?.popularity === undefined
-      ? "Onbekend"
+      ? "Unknown"
       : String(metaTokens.popularity);
   const replacements: Record<string, string> = {
     "[TRACK_URL]": url,
     "[PLAYLISTS]": list,
     "[TRACK_META]": meta,
-    "[TRACK_ID]": metaTokens?.id ?? "Onbekend",
-    "[TRACK_NAME]": metaTokens?.name ?? "Onbekend",
+    "[TRACK_ID]": metaTokens?.id ?? "Unknown",
+    "[TRACK_NAME]": metaTokens?.name ?? "Unknown",
     "[ARTIST_IDS]": metaTokens?.artistIds?.length
       ? metaTokens.artistIds.join(", ")
-      : "Onbekend",
+      : "Unknown",
     "[ARTIST_NAMES]": metaTokens?.artistNames?.length
       ? metaTokens.artistNames.join(", ")
-      : "Onbekend",
-    "[ALBUM_ID]": metaTokens?.albumId ?? "Onbekend",
-    "[ALBUM_RELEASE_DATE]": metaTokens?.albumReleaseDate ?? "Onbekend",
+      : "Unknown",
+    "[ALBUM_ID]": metaTokens?.albumId ?? "Unknown",
+    "[ALBUM_RELEASE_DATE]": metaTokens?.albumReleaseDate ?? "Unknown",
     "[DURATION_MS]":
       metaTokens?.durationMs === null || metaTokens?.durationMs === undefined
-        ? "Onbekend"
+        ? "Unknown"
         : String(metaTokens.durationMs),
-    "[ISRC]": metaTokens?.isrc ?? "Onbekend",
+    "[ISRC]": metaTokens?.isrc ?? "Unknown",
     "[EXPLICIT]": explicitValue,
     "[POPULARITY]": popularityValue,
   };

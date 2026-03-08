@@ -6,18 +6,18 @@ export type ApiErrorResult = {
 export function mapSpotifyApiError(status: number, fallback: string): ApiErrorResult {
   if (status === 401 || status === 403) {
     return {
-      message: "Je bent nog niet verbonden met Spotify.",
+      message: "You are not connected to Spotify yet.",
       authRequired: true,
     };
   }
   if (status === 429) {
     return {
-      message: "Je hebt even te veel aanvragen gedaan. Probeer het zo opnieuw.",
+      message: "Too many requests. Please try again shortly.",
     };
   }
   if (status >= 500) {
     return {
-      message: "Spotify is tijdelijk niet bereikbaar. Probeer het later opnieuw.",
+      message: "Spotify is temporarily unavailable. Try again later.",
     };
   }
   return { message: fallback };

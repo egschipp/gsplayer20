@@ -2,7 +2,7 @@ import { readFile, readdir, stat } from "fs/promises";
 import path from "path";
 import { resolveAppVersion } from "@/lib/version/resolveAppVersion";
 
-type FileTypeStat = {
+export type FileTypeStat = {
   type: string;
   files: number;
   lines: number;

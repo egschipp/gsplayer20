@@ -63,7 +63,7 @@ async function fetchLiveTracks(limit: number, offset: number) {
       return {
         id: trackId,
         trackId,
-        name: track?.name ?? "Onbekend nummer",
+        name: track?.name ?? "Unknown track",
         artists: Array.isArray(track?.artists)
           ? track.artists
               .map((artist) => {

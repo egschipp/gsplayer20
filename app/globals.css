@@ -89,6 +89,7 @@ a:hover {
 .settings-page {
   background: rgba(15, 20, 18, 0.6);
   border-radius: 16px;
+  padding-top: 4px;
 }
 
 .shell {
@@ -577,6 +578,7 @@ a:focus-visible {
 }
 
 .about-page {
+  padding-top: 4px;
   display: grid;
   gap: 16px;
 }
@@ -602,6 +604,19 @@ a:focus-visible {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px;
+}
+
+.about-filetypes-dock {
+  margin-top: 16px;
+}
+
+.about-filetypes-body {
+  max-height: 0;
+}
+
+.about-filetypes-body.open {
+  max-height: 960px;
+  padding-bottom: 14px;
 }
 
 .about-metric {

@@ -45,29 +45,29 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
   const userMessage =
     effectiveUserStatus === "OK"
       ? userName
-        ? `Verbonden als ${userName}.`
-        : "Verbonden met Spotify."
+        ? `Connected as ${userName}.`
+        : "Connected to Spotify."
       : effectiveUserStatus === "ERROR_SCOPES"
-      ? "Toestemmingen ontbreken. Verbind opnieuw."
+      ? "Required permissions are missing. Reconnect."
       : effectiveUserStatus === "ERROR_REVOKED"
-      ? "Spotify‑toegang is ingetrokken. Verbind opnieuw."
+      ? "Spotify access was revoked. Reconnect."
       : effectiveUserStatus === "LOGGED_OUT"
-      ? "Nog niet verbonden."
+      ? "Not connected yet."
       : effectiveUserStatus === "ERROR_RATE_LIMIT"
-      ? "Status-check te vaak opgevraagd. Even wachten."
+      ? "Status check requested too often. Please wait."
       : effectiveUserStatus === "ERROR_NETWORK"
-      ? "Spotify is tijdelijk niet bereikbaar."
-      : "Status wordt gecontroleerd.";
+      ? "Spotify is temporarily unavailable."
+      : "Checking status.";
   const appMessage =
     appStatus?.status === "OK"
-      ? "Spotify‑koppeling werkt."
+      ? "Spotify app connection is healthy."
       : appStatus?.status === "ERROR_MISSING_ENV"
-      ? "App mist configuratie."
+      ? "App configuration is incomplete."
       : appStatus?.status === "ERROR_AUTH"
-      ? "App kan niet authenticeren."
+      ? "App authentication failed."
       : appStatus?.status === "ERROR_NETWORK"
-      ? "Spotify is tijdelijk niet bereikbaar."
-      : "Status wordt gecontroleerd.";
+      ? "Spotify is temporarily unavailable."
+      : "Checking status.";
 
   const refreshStatus = useCallback(async () => {
     if (Date.now() < authRateLimitedUntilRef.current) return;
@@ -152,7 +152,7 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
 
   return (
     <section style={{ marginTop: 24 }}>
-      <h2 className="heading-2">Spotify‑koppeling</h2>
+      <h2 className="heading-2">Spotify connection</h2>
       {showBadges ? (
         <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Badge
@@ -177,7 +177,7 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
             window.location.href = "/api/auth/login";
           }}
         >
-          Spotify verbinden
+          Connect Spotify
         </button>
         <button
           type="button"
@@ -186,7 +186,7 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
             window.location.href = "/api/auth/logout";
           }}
         >
-          Spotify loskoppelen
+          Disconnect Spotify
         </button>
       </div>
     </section>

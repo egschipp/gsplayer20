@@ -14,32 +14,32 @@ export type TrackMetaInput = {
 export function formatTrackMeta(meta: TrackMetaInput) {
   const explicitValue =
     meta.explicit === true || meta.explicit === 1
-      ? "ja"
+      ? "yes"
       : meta.explicit === false || meta.explicit === 0
-      ? "nee"
-      : "Onbekend";
+      ? "no"
+      : "Unknown";
   const popularityValue =
     meta.popularity === null || meta.popularity === undefined
-      ? "Onbekend"
+      ? "Unknown"
       : String(meta.popularity);
   return [
-    `Primaire verificatie-ID: ${meta.id ?? "Onbekend"}`,
-    `Tracknaam validatie: ${meta.name ?? "Onbekend"}`,
-    `Unieke artiest-ID validatie: ${
-      meta.artistIds?.length ? meta.artistIds.join(", ") : "Onbekend"
+    `Primary verification ID: ${meta.id ?? "Unknown"}`,
+    `Track name validation: ${meta.name ?? "Unknown"}`,
+    `Unique artist ID validation: ${
+      meta.artistIds?.length ? meta.artistIds.join(", ") : "Unknown"
     }`,
-    `Cross-check met verwachte artiest: ${
-      meta.artistNames?.length ? meta.artistNames.join(", ") : "Onbekend"
+    `Cross-check with expected artist: ${
+      meta.artistNames?.length ? meta.artistNames.join(", ") : "Unknown"
     }`,
-    `Albumvalidatie: ${meta.albumId ?? "Onbekend"}`,
-    `Chronologische verificatie: ${meta.albumReleaseDate ?? "Onbekend"}`,
-    `Exacte technische verificatie: ${
+    `Album validation: ${meta.albumId ?? "Unknown"}`,
+    `Chronological validation: ${meta.albumReleaseDate ?? "Unknown"}`,
+    `Exact technical validation: ${
       meta.durationMs === null || meta.durationMs === undefined
-        ? "Onbekend"
+        ? "Unknown"
         : `${meta.durationMs}`
     }`,
-    `Sterke unieke identificator (indien aanwezig): ${meta.isrc ?? "Onbekend"}`,
-    `Consistentiecontrole: ${explicitValue}`,
-    `Plausibiliteitscontrole: ${popularityValue}`,
+    `Strong unique identifier (if available): ${meta.isrc ?? "Unknown"}`,
+    `Consistency check: ${explicitValue}`,
+    `Plausibility check: ${popularityValue}`,
   ].join("\n");
 }

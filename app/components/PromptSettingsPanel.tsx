@@ -21,7 +21,7 @@ const TOKEN_GROUPS = [
     tokens: ["[TRACK_URL]", "[TRACK_ID]", "[TRACK_NAME]", "[DURATION_MS]"],
   },
   {
-    label: "Artiest & album",
+    label: "Artist & album",
     tokens: [
       "[ARTIST_IDS]",
       "[ARTIST_NAMES]",
@@ -54,7 +54,7 @@ function buildTokenGroups() {
 
 export default function PromptSettingsPanel({
   title = "AI / ChatGPT prompt",
-  description = "Beheer exact dezelfde prompt-template die vanuit de muziekbibliotheek naar ChatGPT wordt gekopieerd.",
+  description = "Manage the exact same prompt template that gets copied to ChatGPT from the music library.",
 }: PromptSettingsPanelProps) {
   const [promptTemplate, setPromptTemplate] = useState(() => {
     if (typeof window === "undefined") {
@@ -74,7 +74,7 @@ export default function PromptSettingsPanel({
       (match) => !(CHATGPT_PROMPT_TOKENS as readonly string[]).includes(match)
     );
     if (unknown?.length) {
-      setPromptWarning(`Onbekende variabelen verwijderd: ${unknown.join(", ")}`);
+      setPromptWarning(`Removed unknown variables: ${unknown.join(", ")}`);
     } else {
       setPromptWarning(null);
     }
@@ -135,7 +135,7 @@ export default function PromptSettingsPanel({
           ) : null}
 
           <label className="ops-prompt-editor">
-            <span className="ops-prompt-label">Prompt-template</span>
+            <span className="ops-prompt-label">Prompt template</span>
             <textarea
               className="input ops-prompt-textarea"
               value={promptTemplate}
@@ -145,24 +145,24 @@ export default function PromptSettingsPanel({
 
           <div className="ops-inline-actions">
             <button type="button" className="btn btn-outline-green" onClick={savePrompt}>
-              Opslaan
+              Save
             </button>
             <button type="button" className="btn btn-secondary" onClick={resetPrompt}>
-              Herstellen
+              Reset
             </button>
             {promptSaved === "saved" ? (
-              <span className="text-subtle">Opgeslagen in deze browser</span>
+              <span className="text-subtle">Saved in this browser</span>
             ) : promptSaved === "error" ? (
-              <span className="text-subtle">Opslaan mislukt</span>
+              <span className="text-subtle">Save failed</span>
             ) : (
-              <span className="text-subtle">Gebruik exact dezelfde promptflow als in My Music.</span>
+              <span className="text-subtle">Uses the exact same prompt flow as My Music.</span>
             )}
           </div>
         </div>
 
         <aside className="ops-prompt-side">
           <div className="ops-prompt-card">
-            <strong className="ops-prompt-card-title">Beschikbare variabelen</strong>
+            <strong className="ops-prompt-card-title">Available variables</strong>
             <div className="ops-prompt-token-groups">
               {tokenGroups.map((group) => (
                 <div key={group.label} className="ops-prompt-token-group">
@@ -181,12 +181,12 @@ export default function PromptSettingsPanel({
           </div>
 
           <div className="ops-prompt-card">
-            <strong className="ops-prompt-card-title">Gebruik in de app</strong>
+            <strong className="ops-prompt-card-title">How it is used</strong>
             <ol className="ops-prompt-usage-list">
-              <li>Selecteer een track in My Music.</li>
-              <li>De ChatGPT-knop leest deze template uit `localStorage`.</li>
-              <li>Track metadata wordt verrijkt via `/api/spotify/tracks/meta`.</li>
-              <li>De prompt wordt gevuld, gekopieerd en ChatGPT opent in een nieuw tabblad.</li>
+              <li>Select a track in My Music.</li>
+              <li>The ChatGPT button reads this template from `localStorage`.</li>
+              <li>Track metadata is enriched through `/api/spotify/tracks/meta`.</li>
+              <li>The prompt is filled, copied, and ChatGPT opens in a new tab.</li>
             </ol>
           </div>
         </aside>

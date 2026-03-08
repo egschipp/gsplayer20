@@ -75,21 +75,21 @@ function findQueueIndexByTrackIds(
 function mapPlaybackError(error: unknown) {
   const candidate = error as Partial<PlaybackApiError>;
   if (typeof candidate?.status === "number") {
-    if (candidate.status === 401) return "Spotify-sessie verlopen. Log opnieuw in.";
-    if (candidate.status === 403) return "Ontbrekende Spotify-rechten voor playback.";
-    if (candidate.status === 404) return "Geen actieve Spotify player gevonden.";
+    if (candidate.status === 401) return "Spotify session expired. Sign in again.";
+    if (candidate.status === 403) return "Missing Spotify playback permissions.";
+    if (candidate.status === 404) return "No active Spotify player found.";
     if (candidate.status === 429) {
       const retryAfter =
         typeof candidate.retryAfterSec === "number" && candidate.retryAfterSec > 0
           ? candidate.retryAfterSec
           : 1;
-      return `Spotify is druk. Probeer opnieuw over ${retryAfter}s.`;
+      return `Spotify is busy. Try again in ${retryAfter}s.`;
     }
   }
   const message =
     typeof (error as { message?: string })?.message === "string"
       ? (error as { message: string }).message
-      : "Queue playback kon niet uitgevoerd worden.";
+      : "Queue playback could not be completed.";
   return message;
 }
 
@@ -170,7 +170,7 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     ) => {
       const item = snapshot.items[targetIndex];
       if (!item) return;
-      if (!api) throw new Error("Spotify Web Playback SDK is nog niet klaar.");
+      if (!api) throw new Error("Spotify Web Playback SDK is not ready yet.");
       if (captureFallback && snapshot.mode !== "queue") {
         await captureFallbackContext();
       }

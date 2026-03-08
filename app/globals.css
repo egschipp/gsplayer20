@@ -682,7 +682,7 @@ a:focus-visible {
 }
 
 .library-sticky {
-  position: static;
+  position: relative;
   top: auto;
   z-index: 40;
   padding: 16px 20px;
@@ -700,6 +700,19 @@ a:focus-visible {
 .library-sticky.is-logo-only {
   padding-top: 14px;
   padding-bottom: 14px;
+}
+
+.player-runtime-slot.is-route-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .library-logo {

@@ -727,6 +727,7 @@ export default function SpotifyPlayer({
   const trackPlaylistWasOpenRef = useRef(false);
   const lastSdkStateRef = useRef<any>(null);
   const playPauseOptimisticTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playPauseOptimisticPausedRef = useRef<boolean | null>(null);
   const liveTrackUiGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastIsPlayingRef = useRef(false);
   const playerStateRef = useRef<typeof playerState>(null);
@@ -1083,6 +1084,7 @@ export default function SpotifyPlayer({
       clearTimeout(playPauseOptimisticTimerRef.current);
       playPauseOptimisticTimerRef.current = null;
     }
+    playPauseOptimisticPausedRef.current = null;
     setPlayPauseOptimisticPaused(null);
   }, []);
 
@@ -1090,11 +1092,36 @@ export default function SpotifyPlayer({
     if (playPauseOptimisticTimerRef.current) {
       clearTimeout(playPauseOptimisticTimerRef.current);
     }
+    playPauseOptimisticPausedRef.current = paused;
     setPlayPauseOptimisticPaused(paused);
     playPauseOptimisticTimerRef.current = setTimeout(() => {
       playPauseOptimisticTimerRef.current = null;
+      playPauseOptimisticPausedRef.current = null;
       setPlayPauseOptimisticPaused(null);
     }, 1800);
+  }, []);
+
+  const shouldPlaybackBeActive = useCallback(() => {
+    const optimisticPaused = playPauseOptimisticPausedRef.current;
+    if (typeof optimisticPaused === "boolean") {
+      return !optimisticPaused;
+    }
+    const snapshot = playerStateRef.current;
+    if (snapshot && typeof snapshot.paused === "boolean") {
+      return !snapshot.paused;
+    }
+    return Boolean(lastIsPlayingRef.current);
+  }, []);
+
+  const applyConfirmedPlaybackPausedState = useCallback((paused: boolean) => {
+    lastIsPlayingRef.current = !paused;
+    setPlayerState((prev) => {
+      if (!prev || prev.paused === paused) return prev;
+      return {
+        ...prev,
+        paused,
+      };
+    });
   }, []);
 
   const postCrossTabEvent = useCallback((payload: Record<string, unknown>) => {
@@ -2283,6 +2310,53 @@ export default function SpotifyPlayer({
     [enqueueCommand]
   );
 
+  const readActiveDeviceSnapshot = useCallback(async () => {
+    try {
+      const currentRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
+      if (currentRes?.ok) {
+        const current = await readJsonSafely<any>(currentRes);
+        const currentDeviceId =
+          typeof current?.device?.id === "string" ? current.device.id : null;
+        if (currentDeviceId) {
+          return {
+            id: currentDeviceId,
+            name:
+              typeof current?.device?.name === "string" ? current.device.name : null,
+            source: "player" as const,
+          };
+        }
+      }
+    } catch {
+      // ignore and fall through to devices endpoint
+    }
+
+    try {
+      const devicesRes = await spotifyApiFetch(
+        "https://api.spotify.com/v1/me/player/devices"
+      );
+      if (devicesRes?.ok) {
+        const payload = await readJsonSafely<{ devices?: Array<any> }>(devicesRes);
+        const activeDevice = Array.isArray(payload?.devices)
+          ? payload.devices.find((device) => Boolean(device?.is_active))
+          : null;
+        const activeDeviceId =
+          typeof activeDevice?.id === "string" ? activeDevice.id : null;
+        if (activeDeviceId) {
+          return {
+            id: activeDeviceId,
+            name:
+              typeof activeDevice?.name === "string" ? activeDevice.name : null,
+            source: "devices" as const,
+          };
+        }
+      }
+    } catch {
+      // ignore device snapshot failures
+    }
+
+    return null;
+  }, [spotifyApiFetch]);
+
   async function ensureActiveDevice(
     targetId: string,
     token: string,
@@ -2298,18 +2372,14 @@ export default function SpotifyPlayer({
       setDeviceReady(true);
       return true;
     }
-    try {
-      const currentRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
-      if (currentRes?.ok) {
-        const current = await readJsonSafely(currentRes);
-        if (current?.device?.id === targetId) {
-          lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
-          setDeviceReady(true);
-          return true;
-        }
+    const currentDeviceSnapshot = await readActiveDeviceSnapshot();
+    if (currentDeviceSnapshot?.id === targetId) {
+      lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
+      setDeviceReady(true);
+      if (currentDeviceSnapshot.name) {
+        setActiveDevice(targetId, currentDeviceSnapshot.name);
       }
-    } catch {
-      // ignore
+      return true;
     }
 
     const transferred = await transferPlayback(
@@ -2330,18 +2400,14 @@ export default function SpotifyPlayer({
     }
     const delays = [250, 500, 900, 1400, 2000];
     for (let attempt = 0; attempt < delays.length; attempt += 1) {
-      try {
-        const res = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
-        if (res?.ok) {
-          const data = await readJsonSafely(res);
-          if (data?.device?.id === targetId) {
-            lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
-            setDeviceReady(true);
-            return true;
-          }
+      const currentSnapshot = await readActiveDeviceSnapshot();
+      if (currentSnapshot?.id === targetId) {
+        lastConfirmedActiveDeviceRef.current = { id: targetId, at: Date.now() };
+        setDeviceReady(true);
+        if (currentSnapshot.name) {
+          setActiveDevice(targetId, currentSnapshot.name);
         }
-      } catch {
-        // ignore
+        return true;
       }
       await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
     }
@@ -5488,9 +5554,7 @@ export default function SpotifyPlayer({
       const sdkDeviceId = sdkDeviceIdRef.current;
       const activeDevice = activeDeviceIdRef.current || deviceIdRef.current;
       if (!sdkDeviceId || activeDevice !== sdkDeviceId) return;
-      const shouldBePlaying = Boolean(
-        lastIsPlayingRef.current || (playerStateRef.current && !playerStateRef.current.paused)
-      );
+      const shouldBePlaying = shouldPlaybackBeActive();
       if (!shouldBePlaying) return;
 
       try {
@@ -5543,6 +5607,7 @@ export default function SpotifyPlayer({
   }, [
     refreshClientAccessToken,
     refreshDevices,
+    shouldPlaybackBeActive,
     syncPlaybackState,
   ]);
 
@@ -5563,9 +5628,7 @@ export default function SpotifyPlayer({
         typeof document !== "undefined" && document.visibilityState === "hidden";
       const sdkDeviceId = sdkDeviceIdRef.current;
       const selectedDeviceId = activeDeviceIdRef.current || deviceIdRef.current || null;
-      const shouldBePlaying = Boolean(
-        lastIsPlayingRef.current || (playerStateRef.current && !playerStateRef.current.paused)
-      );
+      const shouldBePlaying = shouldPlaybackBeActive();
       const hasPendingPlaybackIntent = Boolean(
         pendingPlayIntentRef.current || pendingPlayIntentProcessingRef.current
       );
@@ -5665,6 +5728,7 @@ export default function SpotifyPlayer({
     refreshDevices,
     sessionStatus,
     setActiveDevice,
+    shouldPlaybackBeActive,
     shouldOwnPlaybackSync,
   ]);
 
@@ -6001,7 +6065,12 @@ export default function SpotifyPlayer({
     }
     if (!token || !currentDevice) {
       try {
-        await playerRef.current?.togglePlay?.();
+        if (targetPaused) {
+          await (playerRef.current?.pause?.() ?? playerRef.current?.togglePlay?.());
+        } else {
+          await (playerRef.current?.resume?.() ?? playerRef.current?.togglePlay?.());
+        }
+        applyConfirmedPlaybackPausedState(targetPaused);
       } catch {
         setPlayPauseOptimisticState(currentPausedSnapshot);
       }
@@ -6012,7 +6081,12 @@ export default function SpotifyPlayer({
       if (currentDevice === sdkDeviceIdRef.current) {
         try {
           await playerRef.current?.activateElement?.();
-          await playerRef.current?.togglePlay?.();
+          if (targetPaused) {
+            await (playerRef.current?.pause?.() ?? playerRef.current?.togglePlay?.());
+          } else {
+            await (playerRef.current?.resume?.() ?? playerRef.current?.togglePlay?.());
+          }
+          applyConfirmedPlaybackPausedState(targetPaused);
         } catch {
           setPlayPauseOptimisticState(currentPausedSnapshot);
           setError("Local web player could not execute play/pause.");
@@ -6058,6 +6132,7 @@ export default function SpotifyPlayer({
         setPlayPauseOptimisticState(currentPausedSnapshot);
         return;
       }
+      applyConfirmedPlaybackPausedState(targetPaused);
       schedulePlaybackVerify(220, "api_verify", operationEpoch);
     });
   }

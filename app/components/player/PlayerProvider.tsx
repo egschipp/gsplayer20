@@ -529,7 +529,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                   className="library-logo"
                   priority
                 />
-                {showPlayerShell ? (
+                <div
+                  className={`player-runtime-slot${showPlayerShell ? "" : " is-route-hidden"}`}
+                  aria-hidden={!showPlayerShell}
+                >
                   <SpotifyPlayer
                     onReady={setApi}
                     onPlaybackFocusChange={setPlaybackFocus}
@@ -537,7 +540,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                     onControllerHandlersChange={setControllerHandlers}
                     onControllerRuntimeChange={setControllerRuntimeFromPlayer}
                   />
-                ) : null}
+                </div>
                 {showLibraryDock ? (
                   <div
                     id="player-library-dock-slot"

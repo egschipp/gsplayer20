@@ -1,6 +1,6 @@
 {
   "name": "gsplayer20",
-  "version": "3.0.18",
+  "version": "3.0.19",
   "private": true,
   "scripts": {
     "prepare": "node scripts/setup-hooks.mjs",

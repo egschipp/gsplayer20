@@ -4732,8 +4732,8 @@ export default function PlaylistBrowser() {
                     className="track-selection-select-all-btn"
                     onClick={selectAllVisibleTracks}
                     disabled={!visibleTracksBySelectionKey.size || allVisibleTracksSelected}
-                    title="Selecteer alle zichtbare tracks"
-                    aria-label="Selecteer alle zichtbare tracks"
+                    title="Select all visible tracks"
+                    aria-label="Select all visible tracks"
                   >
                     <svg
                       aria-hidden="true"
@@ -4766,22 +4766,22 @@ export default function PlaylistBrowser() {
                       className="track-selection-clear-btn"
                       onClick={clearTrackSelection}
                     >
-                      Selectie wissen ({selectedTrackCount})
+                      Clear selection ({selectedTrackCount})
                     </button>
                   ) : (
-                    <span>Selectie</span>
+                    <span>Selection</span>
                   )}
                 </div>
               </div>
               <div>Track</div>
-              {!compactTrackLayout ? <div className="track-col-year">Jaar</div> : null}
+              {!compactTrackLayout ? <div className="track-col-year">Year</div> : null}
               {!compactTrackLayout ? (
                 <div className="track-col-playlists">Playlists</div>
               ) : null}
               {!compactTrackLayout ? (
-                <div className="track-col-duration">Duur</div>
+                <div className="track-col-duration">Duration</div>
               ) : null}
-              <div className="track-col-actions">Acties</div>
+              <div className="track-col-actions">Actions</div>
             </div>
           ) : null}
           {tracks.length ? (
@@ -4863,8 +4863,8 @@ export default function PlaylistBrowser() {
                     className="track-selection-select-all-btn"
                     onClick={selectAllVisibleTracks}
                     disabled={!visibleTracksBySelectionKey.size || allVisibleTracksSelected}
-                    title="Selecteer alle zichtbare tracks"
-                    aria-label="Selecteer alle zichtbare tracks"
+                    title="Select all visible tracks"
+                    aria-label="Select all visible tracks"
                   >
                     <svg
                       aria-hidden="true"
@@ -4897,22 +4897,22 @@ export default function PlaylistBrowser() {
                       className="track-selection-clear-btn"
                       onClick={clearTrackSelection}
                     >
-                      Selectie wissen ({selectedTrackCount})
+                      Clear selection ({selectedTrackCount})
                     </button>
                   ) : (
-                    <span>Selectie</span>
+                    <span>Selection</span>
                   )}
                 </div>
               </div>
               <div>Track</div>
-              {!compactTrackLayout ? <div className="track-col-year">Jaar</div> : null}
+              {!compactTrackLayout ? <div className="track-col-year">Year</div> : null}
               {!compactTrackLayout ? (
                 <div className="track-col-playlists">Playlists</div>
               ) : null}
               {!compactTrackLayout ? (
-                <div className="track-col-duration">Duur</div>
+                <div className="track-col-duration">Duration</div>
               ) : null}
-              <div className="track-col-actions">Acties</div>
+              <div className="track-col-actions">Actions</div>
             </div>
           ) : null}
           {localFilteredTrackItems.length ? (

@@ -2304,6 +2304,9 @@ export default function SpotifyPlayer({
     return false;
   }
 
+  const ensureActiveDeviceRef = useRef(ensureActiveDevice);
+  ensureActiveDeviceRef.current = ensureActiveDevice;
+
   async function waitForKnownDeviceId(timeoutMs = 1200) {
     const start = Date.now();
     let candidate =
@@ -5871,6 +5874,126 @@ export default function SpotifyPlayer({
     refreshClientAccessToken,
     refreshDevices,
     syncPlaybackState,
+  ]);
+
+  useEffect(() => {
+    if (sessionStatus !== "authenticated") return;
+    if (!accessToken) return;
+
+    let cancelled = false;
+
+    async function restoreSelectedPlaybackDeviceIfNeeded() {
+      if (cancelled) return;
+      const token = accessTokenRef.current;
+      if (!token) return;
+
+      const now = Date.now();
+      const hidden =
+        typeof document !== "undefined" && document.visibilityState === "hidden";
+      const sdkDeviceId = sdkDeviceIdRef.current;
+      const selectedDeviceId = activeDeviceIdRef.current || deviceIdRef.current || null;
+      const shouldBePlaying = Boolean(
+        lastIsPlayingRef.current || (playerStateRef.current && !playerStateRef.current.paused)
+      );
+      const hasPendingPlaybackIntent = Boolean(
+        pendingPlayIntentRef.current || pendingPlayIntentProcessingRef.current
+      );
+      const selectedSdkDevice =
+        Boolean(sdkDeviceId) &&
+        Boolean(selectedDeviceId) &&
+        selectedDeviceId === sdkDeviceId;
+      const keepaliveRelevant =
+        shouldBePlaying ||
+        hasPendingPlaybackIntent ||
+        selectedSdkDevice ||
+        (preferSdkDeviceRef.current && Boolean(sdkDeviceId));
+
+      if (!keepaliveRelevant || commandBusy) return;
+
+      if (sdkDeviceId && (preferSdkDeviceRef.current || selectedSdkDevice)) {
+        setActiveDevice(sdkDeviceId, localWebplayerName);
+        if (!sdkReadyRef.current || !playerRef.current) {
+          void kickstartLocalPlayer();
+        } else {
+          try {
+            await playerRef.current?.activateElement?.();
+          } catch {
+            // keepalive continues with device verification
+          }
+          try {
+            await playerRef.current?.connect?.();
+          } catch {
+            // ignore; ensureActiveDevice path below will verify actual state
+          }
+        }
+      }
+
+      const targetDeviceId =
+        selectedDeviceId ||
+        (preferSdkDeviceRef.current ? sdkDeviceId ?? null : null);
+      if (!targetDeviceId) return;
+
+      const lastConfirmedAt = lastConfirmedActiveDeviceRef.current?.at ?? 0;
+      const needsDeviceVerification =
+        !deviceReady ||
+        now - lastConfirmedAt > (hidden ? 10_000 : 7_000) ||
+        hasPendingPlaybackIntent;
+      if (needsDeviceVerification) {
+        const ready = await ensureActiveDeviceRef.current(
+          targetDeviceId,
+          token,
+          shouldBePlaying || hasPendingPlaybackIntent
+        );
+        if (cancelled) return;
+        setDeviceReady(ready);
+        if (!ready) {
+          void refreshDevices(true);
+          return;
+        }
+        setActiveDevice(
+          targetDeviceId,
+          targetDeviceId === sdkDeviceId ? localWebplayerName : activeDeviceNameRef.current
+        );
+      }
+
+      if (shouldBePlaying || hasPendingPlaybackIntent) {
+        try {
+          await ensurePlaybackStartedRef.current(
+            targetDeviceId,
+            currentTrackIdRef.current ?? lastTrackIdRef.current ?? null
+          );
+        } catch {
+          void syncPlaybackStateRef.current("api_verify").catch(() => undefined);
+        }
+      } else if (!hidden) {
+        void syncPlaybackStateRef.current("api_sync").catch(() => undefined);
+      }
+    }
+
+    const runKeepalive = () => {
+      void restoreSelectedPlaybackDeviceIfNeeded();
+    };
+
+    const intervalMs =
+      typeof document !== "undefined" && document.visibilityState === "hidden"
+        ? 9_000
+        : 6_000;
+    const interval = window.setInterval(runKeepalive, intervalMs);
+    runKeepalive();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [
+    accessToken,
+    commandBusy,
+    deviceReady,
+    kickstartLocalPlayer,
+    localWebplayerName,
+    refreshDevices,
+    sessionStatus,
+    setActiveDevice,
   ]);
 
   useEffect(() => {

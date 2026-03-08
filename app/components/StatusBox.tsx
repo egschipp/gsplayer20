@@ -4,9 +4,10 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CHATGPT_PROMPT_TEMPLATE,
-  CHATGPT_PROMPT_TOKENS,
   CHATGPT_PROMPT_TOKEN_LABELS,
+  finalizePromptTemplate,
   normalizePromptTemplate,
+  sanitizePromptTemplateInput,
 } from "@/lib/chatgpt/prompt";
 
 type AppStatus = { status: string } | null;
@@ -350,23 +351,13 @@ export default function StatusBox({
   }, []);
 
   function enforceTokens(value: string) {
-    let next = value ?? "";
-    const unknown = next.match(/\[[^\]]+\]/g)?.filter(
-      (match) => !(CHATGPT_PROMPT_TOKENS as readonly string[]).includes(match)
-    );
+    const { template, unknownTokens: unknown } = sanitizePromptTemplateInput(value);
     if (unknown?.length) {
       setPromptWarning(`Onbekende variabelen verwijderd: ${unknown.join(", ")}`);
     } else {
       setPromptWarning(null);
     }
-    // Remove any bracketed text that isn't a known token.
-    next = next.replace(/\[[^\]]+\]/g, (match) => {
-      if ((CHATGPT_PROMPT_TOKENS as readonly string[]).includes(match)) {
-        return match;
-      }
-      return match.replace("[", "").replace("]", "");
-    });
-    return normalizePromptTemplate(next);
+    return template;
   }
 
   function handlePromptChange(value: string) {
@@ -376,8 +367,10 @@ export default function StatusBox({
 
   function savePrompt() {
     try {
+      const next = finalizePromptTemplate(promptTemplate);
+      setPromptTemplate(next);
       if (typeof window !== "undefined") {
-        window.localStorage.setItem("gs_chatgpt_prompt", promptTemplate);
+        window.localStorage.setItem("gs_chatgpt_prompt", next);
       }
       setPromptSaved("saved");
     } catch {

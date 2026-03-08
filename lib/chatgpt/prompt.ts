@@ -97,6 +97,40 @@ FORMAT RULES
 - Total max. ~550 words (excluding source links).
 - No irrelevant tangents, no repetition.`;
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function repairPromptTokenFragments(value: string) {
+  let next = value ?? "";
+  for (const token of CHATGPT_PROMPT_TOKENS) {
+    const missingClosingBracketPattern = new RegExp(
+      `${escapeRegExp(token.slice(0, -1))}(?!\\])`,
+      "g"
+    );
+    next = next.replace(missingClosingBracketPattern, token);
+  }
+  return next;
+}
+
+function stripUnknownPromptTokens(value: string) {
+  let next = value ?? "";
+  const unknownTokens =
+    next.match(/\[[^\]]+\]/g)?.filter(
+      (match) => !(CHATGPT_PROMPT_TOKENS as readonly string[]).includes(match)
+    ) ?? [];
+  next = next.replace(/\[[^\]]+\]/g, (match) => {
+    if ((CHATGPT_PROMPT_TOKENS as readonly string[]).includes(match)) {
+      return match;
+    }
+    return match.replace("[", "").replace("]", "");
+  });
+  return {
+    template: next,
+    unknownTokens,
+  };
+}
+
 export function fillChatGptPrompt(
   template: string,
   trackUrl: string | null,
@@ -164,11 +198,24 @@ export function fillChatGptPrompt(
 }
 
 export function normalizePromptTemplate(value: string) {
-  let next = value ?? "";
+  let next = repairPromptTokenFragments(value ?? "").trim();
+  if (!next) {
+    return CHATGPT_PROMPT_TEMPLATE;
+  }
   for (const token of CHATGPT_PROMPT_TOKENS) {
     if (!next.includes(token)) {
-      next = `${next.trim()}\n\n${token}`;
+      next = next.trim() ? `${next.trim()}\n\n${token}` : token;
     }
   }
   return next;
+}
+
+export function sanitizePromptTemplateInput(value: string) {
+  return stripUnknownPromptTokens(value);
+}
+
+export function finalizePromptTemplate(value: string) {
+  const repaired = repairPromptTokenFragments(value ?? "");
+  const { template } = stripUnknownPromptTokens(repaired);
+  return normalizePromptTemplate(template);
 }

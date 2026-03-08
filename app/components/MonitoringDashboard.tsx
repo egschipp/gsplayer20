@@ -264,6 +264,20 @@ const ENDPOINT_LABEL_MAP: Record<string, { label: string; description: string }>
   },
 };
 
+const ACTIVITY_LABEL_MAP: Record<string, string> = {
+  me_player_get_raw_state: "Player state refresh",
+  me_player_get_state: "Player state sync",
+  me_player_devices: "Device discovery",
+  me_player_transfer: "Device handoff",
+  me_player_command: "Playback command",
+  me_tracks: "Liked Songs",
+  me_playlists: "Playlist overview",
+  playlists_items: "Playlist tracks",
+  artists: "Artist lookup",
+  tracks: "Track lookup",
+  v1_me: "Account profile",
+};
+
 function clamp01(value: number) {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));
@@ -330,6 +344,38 @@ function formatImpactLevel(value: "low" | "medium" | "high" | null | undefined) 
   if (value === "high") return "high";
   if (value === "medium") return "medium";
   return "low";
+}
+
+function formatLatencyHealthLabel(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "Waiting for enough samples";
+  if (value <= 450) return "User-facing requests feel healthy";
+  if (value <= 900) return "User-facing requests are slightly elevated";
+  return "User-facing requests feel slow";
+}
+
+function formatMonitoringActivityLabel(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "No hotspot";
+  const mapped = ACTIVITY_LABEL_MAP[raw.toLowerCase()];
+  if (mapped) return mapped;
+
+  const normalized = raw
+    .replace(/^me_player_/i, "player ")
+    .replace(/^me_/i, "account ")
+    .replace(/^v1_/i, "")
+    .replace(/_/g, " ")
+    .replace(/\braw\b/gi, "live")
+    .replace(/\bget\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) return raw;
+
+  return normalized
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 async function copyTextToClipboard(value: string) {
@@ -1152,6 +1198,12 @@ export default function MonitoringDashboard() {
   const topResponsivenessImpactActivities =
     summary?.rateLimits.activityLog?.negativeResponsivenessActivities ?? [];
   const topSlowActivity = summary?.apiHealth.slowActivities?.topActivities?.[0] ?? null;
+  const topSlowActivityLabel = topSlowActivity
+    ? formatMonitoringActivityLabel(topSlowActivity.label)
+    : null;
+  const responsivenessSummary = topSlowActivityLabel
+    ? `${formatLatencyHealthLabel(foregroundLatencyP95)}. Current hotspot: ${topSlowActivityLabel}.`
+    : "Foreground actions and background jobs are measured separately.";
   const hasRecentRateLimitEvents = rateLimitCount > 0;
   const lastRateTriggeredAgoSec = summary?.rateLimits.lastTriggeredAt
     ? Math.max(0, Math.floor((clockNowMs - summary.rateLimits.lastTriggeredAt) / 1000))
@@ -1732,16 +1784,22 @@ export default function MonitoringDashboard() {
                     <KpiCard
                       title="Responsiveness"
                       value={`${foregroundLatencyP95} ms`}
-                      subtitle={
-                        topSlowActivity
-                          ? `Slowest activity: ${topSlowActivity.label} (${topSlowActivity.count})`
-                          : "Foreground and background are measured separately"
-                      }
+                      subtitle={responsivenessSummary}
                       tone={latencyTone}
                       meter={1 - clamp01(foregroundLatencyP95 / 1800)}
                       details={[
-                        { label: "Foreground p95", value: `${foregroundLatencyP95} ms` },
+                        { label: "User actions p95", value: `${foregroundLatencyP95} ms` },
                         { label: "Background p95", value: `${backgroundLatencyP95} ms` },
+                        {
+                          label: "Current hotspot",
+                          value: topSlowActivityLabel ?? "No hotspot",
+                        },
+                        {
+                          label: "Observed",
+                          value: topSlowActivity
+                            ? `${fmtCount(topSlowActivity.count)} samples`
+                            : `${metricsWindowLabel} window`,
+                        },
                       ]}
                       hint="Shows foreground request latency for UX, with background latency as context."
                       featured

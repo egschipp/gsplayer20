@@ -4581,6 +4581,16 @@ details[open] > .details-summary::after {
   gap: 14px;
 }
 
+.ops-kpi-featured .ops-kpi-subtitle {
+  min-height: 0;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.ops-kpi-featured .ops-kpi-details {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
 .ops-kpi-head {
   display: flex;
   align-items: center;
@@ -4653,6 +4663,7 @@ details[open] > .details-summary::after {
   font-weight: 800;
   color: #fff;
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .ops-kpi-meter {

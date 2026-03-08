@@ -3627,6 +3627,13 @@ export default function SpotifyPlayer({
       ) {
         return;
       }
+      const snapshotAgeMs = nowMs - lastPlaybackSnapshotAtRef.current;
+      const hasFreshPlaybackSnapshot =
+        (source === "api_sync" && snapshotAgeMs < 1_200) ||
+        (source === "api_bootstrap" && snapshotAgeMs < 1_800);
+      if (hasFreshPlaybackSnapshot) {
+        return;
+      }
       if (syncInFlightRef.current) {
         return;
       }
@@ -4413,20 +4420,7 @@ export default function SpotifyPlayer({
     let playbackState: any = null;
     const direct = await spotifyApiFetch("https://api.spotify.com/v1/me/player/devices");
     if (direct?.ok) {
-      data = await direct.json().catch(() => null);
-    }
-    if (!data) {
-      try {
-        const proxyRes = await fetch("/api/spotify/me/player/devices", {
-          cache: "no-store",
-          credentials: "include",
-        });
-        if (proxyRes.ok) {
-          data = await proxyRes.json().catch(() => null);
-        }
-      } catch {
-        // ignore proxy fallback issues
-      }
+      data = await readJsonSafely(direct);
     }
     const shouldFetchPlaybackForDeviceMerge =
       force &&

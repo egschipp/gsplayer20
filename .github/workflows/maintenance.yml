@@ -1,4 +1,9 @@
 name: Maintenance
+run-name: >-
+  ${{
+    github.event_name == 'workflow_dispatch' && format('Run maintenance manually by {0}', github.actor) ||
+    'Run scheduled maintenance'
+  }}
 
 on:
   schedule:
@@ -7,6 +12,7 @@ on:
 
 jobs:
   prune:
+    name: Prune Docker Artifacts
     runs-on: ubuntu-latest
     steps:
       - name: Prune Docker artifacts on Pi

@@ -1,4 +1,9 @@
 name: Automated Release
+run-name: >-
+  ${{
+    github.event_name == 'workflow_dispatch' && format('Create release manually by {0}', github.actor) ||
+    format('Create release from {0}', github.sha)
+  }}
 
 on:
   push:
@@ -15,7 +20,8 @@ permissions:
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'chore(release):')
+    name: Tag And Publish Release
+    if: github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -66,7 +72,7 @@ jobs:
           npm install --package-lock-only --ignore-scripts
           if ! git diff --quiet -- package.json package-lock.json .release-please-manifest.json; then
             git add package.json package-lock.json .release-please-manifest.json
-            git commit -m "chore(release): v${VERSION}"
+            git commit -m "release: v${VERSION}"
             git push origin HEAD:main
           fi
           git tag -a "${TAG}" -m "Release ${TAG}"

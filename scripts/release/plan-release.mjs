@@ -44,6 +44,7 @@ function readCommitsSince(tag) {
 function classifyCommit(subject, body) {
   if (!subject) return null;
   if (/^chore\(release\):/i.test(subject)) return null;
+  if (/^release:/i.test(subject)) return null;
   if (/^merge\b/i.test(subject)) return null;
   if (/(^|[a-z]+(\([^)]+\))?)!:/i.test(subject) || /BREAKING CHANGE:/i.test(body)) {
     return "major";

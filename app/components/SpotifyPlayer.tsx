@@ -3628,15 +3628,29 @@ export default function SpotifyPlayer({
         source === "api_bootstrap"
           ? 0
           : source === "api_verify"
-          ? 900
+          ? 1_500
           : source === "api_sync"
           ? 1_400
           : source === "api_poll"
-          ? 2_200
+          ? 4_200
           : 1_200;
       if (
         source !== "api_bootstrap" &&
         nowMs - lastSyncStartedAtRef.current < minSyncIntervalMs
+      ) {
+        return;
+      }
+      const streamFresh =
+        enablePlaybackStream &&
+        shouldRunPlaybackStream &&
+        nowMs - lastStreamSnapshotAtRef.current < 6_500;
+      const inDeviceSwitchBoostWindow =
+        nowMs < deviceSwitchSyncBoostUntilRef.current;
+      if (
+        streamFresh &&
+        (source === "api_poll" || source === "api_verify") &&
+        !pendingSeekRef.current &&
+        !inDeviceSwitchBoostWindow
       ) {
         return;
       }
@@ -3691,9 +3705,11 @@ export default function SpotifyPlayer({
       }
     },
     [
+      enablePlaybackStream,
       emitPlaybackMetric,
       getMonotonicNow,
       ingestApiSnapshot,
+      shouldRunPlaybackStream,
       spotifyApiFetch,
     ]
   );
@@ -5866,9 +5882,9 @@ export default function SpotifyPlayer({
         if (enablePlaybackStream && streamFresh && playbackFresh) {
           const isPlaying = !playerStateRef.current?.paused;
           if (remoteDeviceActive) {
-            scheduleNext(isPlaying, isPlaying ? 2200 : 3200);
+            scheduleNext(isPlaying, isPlaying ? 7_500 : 10_000);
           } else {
-            scheduleNext(isPlaying, isPlaying ? 8500 : 13000);
+            scheduleNext(isPlaying, isPlaying ? 12_000 : 16_000);
           }
           return;
         }
@@ -5963,9 +5979,9 @@ export default function SpotifyPlayer({
         effectiveType === "3g";
       let baseDelay = isPlaying ? 3000 : 9000;
       if (remoteDeviceActive) {
-        baseDelay = streamFresh ? (isPlaying ? 2200 : 3200) : isPlaying ? 1200 : 1800;
+        baseDelay = streamFresh ? (isPlaying ? 7_500 : 10_000) : isPlaying ? 1800 : 2600;
       } else if (enablePlaybackStream && streamFresh) {
-        baseDelay = isPlaying ? 6500 : 11000;
+        baseDelay = isPlaying ? 12_000 : 16_000;
       }
       if (inDeviceSwitchBoostWindow) {
         baseDelay = Math.min(baseDelay, isPlaying ? 900 : 1500);

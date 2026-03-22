@@ -51,7 +51,7 @@ function resolveCachePolicy(args: {
       return { cacheTtlMs: 800, dedupeWindowMs: 700 };
     }
     if (path.startsWith("/v1/me/player")) {
-      return { cacheTtlMs: 0, dedupeWindowMs: 200 };
+      return { cacheTtlMs: 0, dedupeWindowMs: 1_000 };
     }
     if (path.startsWith("/v1/me/tracks") || path.startsWith("/v1/me/playlists")) {
       return { cacheTtlMs: 6000, dedupeWindowMs: 1200 };

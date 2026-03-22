@@ -2840,7 +2840,7 @@ export default function PlaylistBrowser() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-      const res = await fetch(`/api/spotify/artists/${artistId}`, {
+      const res = await fetch(`/api/spotify/artists/${encodeURIComponent(artistId)}?fresh=1`, {
         cache: "no-store",
         signal: controller.signal,
       });

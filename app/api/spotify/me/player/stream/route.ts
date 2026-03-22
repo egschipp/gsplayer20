@@ -9,14 +9,14 @@ export const runtime = "nodejs";
 const STREAM_MAX_PER_USER = 3;
 const STREAM_COUNTER_TTL_MS = 130_000;
 const STREAM_POLL_PLAYING_MS = Math.max(
-  700,
-  Number(process.env.SPOTIFY_PLAYER_STREAM_PLAYING_POLL_MS || "1400")
+  1_500,
+  Number(process.env.SPOTIFY_PLAYER_STREAM_PLAYING_POLL_MS || "2500")
 );
 const STREAM_POLL_IDLE_MS = Math.max(
   STREAM_POLL_PLAYING_MS,
-  Number(process.env.SPOTIFY_PLAYER_STREAM_IDLE_POLL_MS || "2200")
+  Number(process.env.SPOTIFY_PLAYER_STREAM_IDLE_POLL_MS || "5000")
 );
-const STREAM_POLL_RATE_LIMIT_FALLBACK_MS = 2_500;
+const STREAM_POLL_RATE_LIMIT_FALLBACK_MS = 5_000;
 
 type SpotifyPlayerResponse = {
   timestamp?: number;
@@ -144,7 +144,7 @@ export async function GET(req: Request) {
             correlationId,
             priority: "foreground",
             cacheTtlMs: 0,
-            dedupeWindowMs: 200,
+            dedupeWindowMs: 1_000,
           });
           lastIsPlaying = Boolean(data?.is_playing);
           writeEvent("snapshot", normalizeSnapshot(data ?? null, userId));

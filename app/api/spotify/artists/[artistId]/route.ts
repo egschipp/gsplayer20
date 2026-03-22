@@ -1,10 +1,11 @@
 import { getDb } from "@/lib/db/client";
 import { artists, trackArtists } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
-import { requireAppUser, jsonPrivateCache } from "@/lib/api/guards";
+import { requireAppUser, jsonNoStore, jsonPrivateCache } from "@/lib/api/guards";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { upsertArtist } from "@/lib/db/queries";
+import type { SpotifyRequestPriority } from "@/lib/spotify/requestPriority";
 
 export const runtime = "nodejs";
 
@@ -34,13 +35,17 @@ function parseStoredGenres(raw: string | null | undefined) {
   }
 }
 
-async function fetchArtistFromSpotify(artistId: string) {
+async function fetchArtistFromSpotify(
+  artistId: string,
+  options?: { priority?: SpotifyRequestPriority; bypassCache?: boolean }
+) {
   const data = (await spotifyFetch<SpotifyArtistPayload>({
     url: `https://api.spotify.com/v1/artists/${encodeURIComponent(artistId)}`,
     userLevel: false,
-    priority: "background",
+    priority: options?.priority ?? "background",
     cacheTtlMs: 30_000,
     dedupeWindowMs: 2_000,
+    bypassCache: Boolean(options?.bypassCache),
   })) as SpotifyArtistPayload | undefined;
   if (!data) return null;
   const name = typeof data?.name === "string" ? data.name.trim() : "";
@@ -89,36 +94,44 @@ function isRetryableFetchError(error: unknown) {
   );
 }
 
-async function fetchArtistWithOneRetry(artistId: string) {
+async function fetchArtistWithOneRetry(
+  artistId: string,
+  options?: { priority?: SpotifyRequestPriority; bypassCache?: boolean }
+) {
   try {
-    return await fetchArtistFromSpotify(artistId);
+    return await fetchArtistFromSpotify(artistId, options);
   } catch (error) {
     if (!isRetryableFetchError(error)) return null;
     await new Promise((resolve) => setTimeout(resolve, 400));
     try {
-      return await fetchArtistFromSpotify(artistId);
+      return await fetchArtistFromSpotify(artistId, options);
     } catch {
       return null;
     }
   }
 }
 
-async function enrichArtistIfNeeded(artistId: string) {
+async function enrichArtistIfNeeded(
+  artistId: string,
+  options?: { priority?: SpotifyRequestPriority; bypassCache?: boolean }
+) {
   try {
-    return await fetchArtistWithOneRetry(artistId);
+    return await fetchArtistWithOneRetry(artistId, options);
   } catch {
     return null;
   }
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ artistId: string }> }
 ) {
   const { response } = await requireAppUser();
   if (response) return response;
 
   const { artistId } = await ctx.params;
+  const url = new URL(req.url);
+  const forceFresh = url.searchParams.get("fresh") === "1";
   if (!artistId) {
     return jsonPrivateCache({ error: "MISSING_ARTIST" }, 400);
   }
@@ -159,10 +172,18 @@ export async function GET(
   let imageUrl = row?.imageUrl ?? null;
   let updatedAt = row?.updatedAt ?? null;
   const needsEnrichment =
-    !row || genres.length === 0 || popularity === null || followersTotal === null;
+    forceFresh ||
+    !row ||
+    genres.length === 0 ||
+    popularity === null ||
+    followersTotal === null ||
+    !imageUrl;
 
   if (needsEnrichment) {
-    const live = await enrichArtistIfNeeded(artistId);
+    const live = await enrichArtistIfNeeded(artistId, {
+      priority: forceFresh ? "foreground" : "background",
+      bypassCache: forceFresh,
+    });
     if (live) {
       resolvedArtistId = live.artistId;
       name = live.name;
@@ -186,7 +207,7 @@ export async function GET(
     return jsonPrivateCache({ error: "NOT_FOUND" }, 404);
   }
 
-  return jsonPrivateCache({
+  const payload = {
     artistId: resolvedArtistId,
     name,
     genres,
@@ -198,5 +219,7 @@ export async function GET(
     spotifyUrl: resolvedArtistId
       ? `https://open.spotify.com/artist/${resolvedArtistId}`
       : null,
-  });
+  };
+
+  return forceFresh ? jsonNoStore(payload) : jsonPrivateCache(payload);
 }

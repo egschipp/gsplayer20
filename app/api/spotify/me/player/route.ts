@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
       correlationId,
       priority: "foreground",
       cacheTtlMs: 0,
-      dedupeWindowMs: 200,
+      dedupeWindowMs: 1_000,
     });
 
     if (!data) {

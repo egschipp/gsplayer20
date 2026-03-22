@@ -198,14 +198,9 @@ export function fillChatGptPrompt(
 }
 
 export function normalizePromptTemplate(value: string) {
-  let next = repairPromptTokenFragments(value ?? "").trim();
+  const next = repairPromptTokenFragments(value ?? "").trim();
   if (!next) {
     return CHATGPT_PROMPT_TEMPLATE;
-  }
-  for (const token of CHATGPT_PROMPT_TOKENS) {
-    if (!next.includes(token)) {
-      next = next.trim() ? `${next.trim()}\n\n${token}` : token;
-    }
   }
   return next;
 }
@@ -217,5 +212,6 @@ export function sanitizePromptTemplateInput(value: string) {
 export function finalizePromptTemplate(value: string) {
   const repaired = repairPromptTokenFragments(value ?? "");
   const { template } = stripUnknownPromptTokens(repaired);
-  return normalizePromptTemplate(template);
+  const normalized = template.trim();
+  return normalized ? normalized : CHATGPT_PROMPT_TEMPLATE;
 }

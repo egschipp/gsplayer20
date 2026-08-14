@@ -1,4 +1,4 @@
-import type { PlaybackFocus } from "@/app/components/player/playbackFocus";
+import type { PlaybackFocus } from "./playbackFocus";
 import type { PlaybackSnapshot } from "./playbackState";
 import type {
   PlayerCommandType,
@@ -70,11 +70,11 @@ export function derivePlaybackViewModel(input: {
     source: input.snapshot.source,
     reason: input.snapshot.reason,
     updatedAt: Math.max(0, Number(input.snapshot.updatedAt) || 0),
-    error: input.controllerError || input.runtime.lastError || input.snapshot.errorMessage,
+    error:
+      input.controllerError || input.runtime.lastError || input.snapshot.errorMessage,
     controllerStatus: input.controllerStatus,
     pendingCommand: input.pendingCommand,
     runtime: input.runtime,
   };
   return model;
 }
-

@@ -11,16 +11,12 @@ import {
   artists,
   trackArtists,
 } from "@/lib/db/schema";
-import { encryptToken, decryptToken } from "@/lib/crypto";
+import { decryptToken, encryptStoredToken, encryptToken } from "@/lib/crypto";
 
 export async function getOrCreateUser(spotifyUserId: string) {
   const db = getDb();
   const id = cryptoRandomId();
-  await db
-    .insert(users)
-    .values({ id, spotifyUserId })
-    .onConflictDoNothing()
-    .run();
+  await db.insert(users).values({ id, spotifyUserId }).onConflictDoNothing().run();
   const row = await db
     .select()
     .from(users)
@@ -38,6 +34,7 @@ export async function upsertTokens(params: {
   accessToken?: string;
   accessExpiresAt?: number;
   scope?: string;
+  refreshExpiresAt?: number;
 }) {
   const db = getDb();
   const encrypted = encryptToken(params.refreshToken);
@@ -47,7 +44,8 @@ export async function upsertTokens(params: {
     .values({
       userId: params.userId,
       refreshTokenEnc: encrypted.payload,
-      accessToken: params.accessToken ?? null,
+      refreshExpiresAt: params.refreshExpiresAt ?? Date.now() + 180 * 24 * 60 * 60 * 1000,
+      accessToken: params.accessToken ? encryptStoredToken(params.accessToken) : null,
       accessExpiresAt: params.accessExpiresAt ?? null,
       scope: params.scope ?? null,
       encKeyVersion: encrypted.keyVersion,
@@ -57,7 +55,9 @@ export async function upsertTokens(params: {
       target: oauthTokens.userId,
       set: {
         refreshTokenEnc: encrypted.payload,
-        accessToken: params.accessToken ?? null,
+        refreshExpiresAt:
+          params.refreshExpiresAt ?? Date.now() + 180 * 24 * 60 * 60 * 1000,
+        accessToken: params.accessToken ? encryptStoredToken(params.accessToken) : null,
         accessExpiresAt: params.accessExpiresAt ?? null,
         scope: params.scope ?? null,
         encKeyVersion: encrypted.keyVersion,
@@ -75,7 +75,7 @@ export async function getRefreshToken(userId: string) {
     .where(eq(oauthTokens.userId, userId))
     .get();
   if (!row) return null;
-  return decryptToken(row.refreshTokenEnc);
+  return decryptToken(row.refreshTokenEnc, row.encKeyVersion);
 }
 
 export async function deleteTokens(userId: string) {
@@ -139,8 +139,8 @@ export async function upsertTrack(params: {
         params.isLocal === null || params.isLocal === undefined
           ? null
           : params.isLocal
-          ? 1
-          : 0,
+            ? 1
+            : 0,
       restrictionsReason: params.restrictionsReason ?? null,
       linkedFromTrackId: params.linkedFromTrackId ?? null,
       albumId: params.albumId ?? null,
@@ -157,8 +157,8 @@ export async function upsertTrack(params: {
           params.isLocal === null || params.isLocal === undefined
             ? null
             : params.isLocal
-            ? 1
-            : 0,
+              ? 1
+              : 0,
         restrictionsReason: params.restrictionsReason ?? null,
         linkedFromTrackId: params.linkedFromTrackId ?? null,
         albumId: params.albumId ?? null,
@@ -205,11 +205,7 @@ export async function upsertArtist(params: {
 
 export async function upsertTrackArtist(trackId: string, artistId: string) {
   const db = getDb();
-  await db
-    .insert(trackArtists)
-    .values({ trackId, artistId })
-    .onConflictDoNothing()
-    .run();
+  await db.insert(trackArtists).values({ trackId, artistId }).onConflictDoNothing().run();
 }
 
 export async function upsertPlaylist(params: {
@@ -235,12 +231,7 @@ export async function upsertPlaylist(params: {
       description: params.description ?? null,
       imageUrl: params.imageUrl ?? null,
       isPublic: params.isPublic === null ? null : params.isPublic ? 1 : 0,
-      collaborative:
-        params.collaborative === null
-          ? null
-          : params.collaborative
-          ? 1
-          : 0,
+      collaborative: params.collaborative === null ? null : params.collaborative ? 1 : 0,
       snapshotId: params.snapshotId ?? null,
       tracksTotal: params.tracksTotal ?? null,
       updatedAt: Date.now(),
@@ -255,11 +246,7 @@ export async function upsertPlaylist(params: {
         imageUrl: params.imageUrl ?? null,
         isPublic: params.isPublic === null ? null : params.isPublic ? 1 : 0,
         collaborative:
-          params.collaborative === null
-            ? null
-            : params.collaborative
-            ? 1
-            : 0,
+          params.collaborative === null ? null : params.collaborative ? 1 : 0,
         snapshotId: params.snapshotId ?? null,
         tracksTotal: params.tracksTotal ?? null,
         updatedAt: Date.now(),

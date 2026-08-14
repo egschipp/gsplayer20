@@ -54,9 +54,7 @@ export default function ChatGptButton({
           ? data.artists.map((artist: { id?: string }) => artist.id).filter(Boolean)
           : undefined,
         artistNames: Array.isArray(data.artists)
-          ? data.artists
-              .map((artist: { name?: string }) => artist.name)
-              .filter(Boolean)
+          ? data.artists.map((artist: { name?: string }) => artist.name).filter(Boolean)
           : undefined,
         albumId: data.album?.id ?? null,
         albumReleaseDate: data.album?.release_date ?? null,
@@ -73,9 +71,7 @@ export default function ChatGptButton({
           ? data.artists.map((artist: { id?: string }) => artist.id).filter(Boolean)
           : undefined,
         artistNames: Array.isArray(data.artists)
-          ? data.artists
-              .map((artist: { name?: string }) => artist.name)
-              .filter(Boolean)
+          ? data.artists.map((artist: { name?: string }) => artist.name).filter(Boolean)
           : undefined,
         albumId: data.album?.id ?? null,
         albumReleaseDate: data.album?.release_date ?? null,

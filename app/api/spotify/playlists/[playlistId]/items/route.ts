@@ -132,10 +132,7 @@ export async function GET(
         position: playlistItems.position,
       })
       .from(playlistItems)
-      .innerJoin(
-        userPlaylists,
-        eq(userPlaylists.playlistId, playlistItems.playlistId)
-      )
+      .innerJoin(userPlaylists, eq(userPlaylists.playlistId, playlistItems.playlistId))
       .leftJoin(tracks, eq(tracks.trackId, playlistItems.trackId))
       .where(directWhere)
       .orderBy(asc(playlistItems.position), asc(playlistItems.itemId))
@@ -180,7 +177,9 @@ export async function GET(
       restrictionsReason: tracks.restrictionsReason,
       popularity: tracks.popularity,
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
-      artists: sql<string | null>`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,
+      artists: sql<
+        string | null
+      >`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,
       saved: sql<number>`max(${userSavedTracks.trackId} IS NOT NULL)`,
       addedAt: playlistItems.addedAt,
       addedBySpotifyUserId: playlistItems.addedBySpotifyUserId,
@@ -189,10 +188,7 @@ export async function GET(
       syncRunId: playlistItems.syncRunId,
     })
     .from(playlistItems)
-    .innerJoin(
-      userPlaylists,
-      eq(userPlaylists.playlistId, playlistItems.playlistId)
-    )
+    .innerJoin(userPlaylists, eq(userPlaylists.playlistId, playlistItems.playlistId))
     .leftJoin(tracks, eq(tracks.trackId, playlistItems.trackId))
     .leftJoin(trackArtists, eq(trackArtists.trackId, tracks.trackId))
     .leftJoin(artists, eq(artists.artistId, trackArtists.artistId))
@@ -223,6 +219,24 @@ export async function GET(
         items?: Array<{
           added_at?: string;
           added_by?: { id?: string };
+          item?: {
+            id?: string;
+            name?: string;
+            duration_ms?: number;
+            explicit?: boolean;
+            is_local?: boolean;
+            linked_from?: { id?: string | null };
+            restrictions?: { reason?: string | null };
+            popularity?: number;
+            album?: {
+              id?: string;
+              name?: string;
+              release_date?: string;
+              images?: Array<{ url?: string }>;
+            };
+            artists?: Array<{ name?: string }>;
+          };
+          /** @deprecated Compatibility with pre-February 2026 responses. */
           track?: {
             id?: string;
             name?: string;
@@ -246,14 +260,14 @@ export async function GET(
       }>({
         url: `https://api.spotify.com/v1/playlists/${encodeURIComponent(
           playlistId
-        )}/tracks?limit=${limit}&offset=${offset}`,
+        )}/items?limit=${limit}&offset=${offset}`,
         userLevel: true,
       });
 
       const now = Date.now();
       const mapped = (Array.isArray(liveResponse?.items) ? liveResponse.items : [])
         .map((item, index) => {
-          const track = item?.track;
+          const track = item?.item ?? item?.track;
           const trackId = typeof track?.id === "string" ? track.id : null;
           const releaseDate = track?.album?.release_date ?? null;
           const releaseYear =
@@ -276,14 +290,9 @@ export async function GET(
             releaseYear,
             albumImageUrl,
             coverUrl: albumImageUrl,
-            durationMs:
-              typeof track?.duration_ms === "number" ? track.duration_ms : null,
+            durationMs: typeof track?.duration_ms === "number" ? track.duration_ms : null,
             explicit:
-              typeof track?.explicit === "boolean"
-                ? track.explicit
-                  ? 1
-                  : 0
-                : null,
+              typeof track?.explicit === "boolean" ? (track.explicit ? 1 : 0) : null,
             isLocal:
               typeof track?.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
             linkedFromTrackId:
@@ -292,8 +301,7 @@ export async function GET(
               typeof track?.restrictions?.reason === "string"
                 ? track.restrictions.reason
                 : null,
-            popularity:
-              typeof track?.popularity === "number" ? track.popularity : null,
+            popularity: typeof track?.popularity === "number" ? track.popularity : null,
             artists: Array.isArray(track?.artists)
               ? track.artists
                   .map((artist) => artist?.name)
@@ -387,18 +395,13 @@ export async function GET(
   }
 
   const last = rows[rows.length - 1];
-  const nextCursor = last
-    ? encodeCursor(last.position ?? 0, last.itemId)
-    : null;
+  const nextCursor = last ? encodeCursor(last.position ?? 0, last.itemId) : null;
   const totalRow = await db
     .select({
       count: sql<number>`count(*)`,
     })
     .from(playlistItems)
-    .innerJoin(
-      userPlaylists,
-      eq(userPlaylists.playlistId, playlistItems.playlistId)
-    )
+    .innerJoin(userPlaylists, eq(userPlaylists.playlistId, playlistItems.playlistId))
     .where(baseWhere)
     .get();
   const totalCount =
@@ -436,12 +439,10 @@ export async function GET(
               },
             ]
           : []),
-        ...((row.trackId ? playlistsByTrack.get(row.trackId) : null) ?? []).map(
-          (pl) => ({
-            ...pl,
-            spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
-          })
-        ),
+        ...((row.trackId ? playlistsByTrack.get(row.trackId) : null) ?? []).map((pl) => ({
+          ...pl,
+          spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
+        })),
       ],
     })),
     nextCursor,
@@ -483,9 +484,7 @@ export async function POST(
 
   try {
     await spotifyFetch({
-      url: `https://api.spotify.com/v1/playlists/${encodeURIComponent(
-        playlistId
-      )}/tracks`,
+      url: `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/items`,
       method: "POST",
       body: { uris: [`spotify:track:${trackId}`] },
       userLevel: true,
@@ -499,7 +498,8 @@ export async function POST(
         .where(eq(playlistItems.playlistId, playlistId))
         .get();
       const nextPosition =
-        typeof maxPosRow?.maxPosition === "number" && Number.isFinite(maxPosRow.maxPosition)
+        typeof maxPosRow?.maxPosition === "number" &&
+        Number.isFinite(maxPosRow.maxPosition)
           ? Math.max(0, Math.floor(maxPosRow.maxPosition) + 1)
           : 0;
       await db.insert(playlistItems).values({
@@ -565,11 +565,9 @@ export async function DELETE(
 
   try {
     await spotifyFetch({
-      url: `https://api.spotify.com/v1/playlists/${encodeURIComponent(
-        playlistId
-      )}/tracks`,
+      url: `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/items`,
       method: "DELETE",
-      body: { tracks: [{ uri: `spotify:track:${trackId}` }] },
+      body: { items: [{ uri: `spotify:track:${trackId}` }] },
       userLevel: true,
       activity: "playlist_items_remove_track",
     });

@@ -1,18 +1,21 @@
 # Spotify Playback Refactor Testplan
 
 ## Doel
+
 - Verifieer consistente player-initialisatie en identiek gedrag voor:
   - globale play/pause-knop in de player
   - play-knop in de tracklijst
 - Verifieer dat UI-state, controller-state en daadwerkelijke Spotify playback synchroon blijven.
 
 ## Algemene Preconditions
+
 - Geldige Spotify Premium account.
 - App ingelogd met scopes voor playback.
 - Ten minste 1 actief Spotify Connect device beschikbaar.
 - Browser cache en storage getest in zowel schone als bestaande sessie.
 
 ## iPadOS Safari
+
 1. **Cold load + direct play uit tracklijst**
    - Open app in nieuwe tab.
    - Klik direct op play in tracklijst.
@@ -30,6 +33,7 @@
    - Verwacht: controller blijft bruikbaar, geen dubbele init of ghost listeners.
 
 ## macOS Safari/Chrome
+
 1. **Snel togglen**
    - Klik 10x snel op globale play/pause.
    - Verwacht: geen desync, geen vastlopen, uiteindelijke status klopt.
@@ -41,6 +45,7 @@
    - Verwacht: player blijft singleton; geen dubbele init.
 
 ## Windows 11 Edge/Chrome/Firefox
+
 1. **Cold load + global play**
    - Open app met lege cache.
    - Klik globale play.
@@ -53,6 +58,7 @@
    - Verwacht: state volgt actief device; play/pause werkt direct.
 
 ## Functionele regressies
+
 1. **Queue gedrag**
    - Voeg tracks toe aan queue en start vanuit queue.
    - Verwacht: queue-mode blijft werken.
@@ -64,6 +70,7 @@
    - Verwacht: auth-fout zichtbaar en herstel na nieuwe sessie.
 
 ## Acceptatie Checklist
+
 - Geen dubbele Spotify SDK initialisatie.
 - Geen dubbele event listeners over route transitions heen.
 - `controller.playTrack(...)` en `controller.toggle()` leveren stabiel gedrag op alle genoemde platformen.

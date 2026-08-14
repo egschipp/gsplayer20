@@ -65,4 +65,3 @@ export function useActiveTrackAutoScroll(input: UseActiveTrackAutoScrollInput) {
     input.trackKey,
   ]);
 }
-

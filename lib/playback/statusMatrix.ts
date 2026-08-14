@@ -1,4 +1,4 @@
-import type { PlaybackFocusStatus } from "@/app/components/player/playbackFocus";
+import type { PlaybackFocusStatus } from "./playbackFocus";
 
 export type PlaybackStatusMatrixInput = {
   status: PlaybackFocusStatus;
@@ -38,4 +38,3 @@ export function projectPlaybackStatusForUi(
 
   return input.status;
 }
-

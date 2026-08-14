@@ -10,9 +10,7 @@ type AboutFileTypesPanelProps = {
 const OPEN_KEY = "gs_about_filetypes_open_v1";
 const PIN_KEY = "gs_about_filetypes_pinned_v1";
 
-export default function AboutFileTypesPanel({
-  fileTypes,
-}: AboutFileTypesPanelProps) {
+export default function AboutFileTypesPanel({ fileTypes }: AboutFileTypesPanelProps) {
   const [manualOpen, setManualOpen] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -49,7 +47,10 @@ export default function AboutFileTypesPanel({
   }
 
   return (
-    <div className="about-filetypes-dock player-library-dock" data-open={open ? "true" : "false"}>
+    <div
+      className="about-filetypes-dock player-library-dock"
+      data-open={open ? "true" : "false"}
+    >
       <div className={`player-library-dock-toggle${open ? " open" : ""}`}>
         <span className="player-library-dock-label">File types</span>
         <span className="player-library-dock-value">
@@ -66,7 +67,10 @@ export default function AboutFileTypesPanel({
           aria-label={open ? "Collapse list" : "Expand list"}
           onClick={() => setManualOpen((prev) => !prev)}
         >
-          <span className={`player-library-dock-chevron${open ? " open" : ""}`} aria-hidden="true">
+          <span
+            className={`player-library-dock-chevron${open ? " open" : ""}`}
+            aria-hidden="true"
+          >
             ⌄
           </span>
         </button>

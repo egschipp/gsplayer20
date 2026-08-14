@@ -66,7 +66,7 @@ export async function GET(req: Request) {
     .groupBy(artists.artistId)
     .orderBy(artists.name);
 
-  const unique = new Map<string, typeof rows[number]>();
+  const unique = new Map<string, (typeof rows)[number]>();
   for (const row of rows) unique.set(row.artistId, row);
 
   return jsonPrivateCache({

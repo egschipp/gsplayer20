@@ -22,7 +22,10 @@ function normalizeBackoffMs(value: number): number {
   return Math.max(1000, Math.min(MAX_RECORDED_BACKOFF_MS, Math.floor(value)));
 }
 
-export function recordSpotifyRateLimitBackoff(retryAfterMs: number, now = Date.now()): void {
+export function recordSpotifyRateLimitBackoff(
+  retryAfterMs: number,
+  now = Date.now()
+): void {
   const waitMs = normalizeBackoffMs(retryAfterMs);
   const until = now + waitMs;
   state.backoffUntilTs = Math.max(state.backoffUntilTs, until);
@@ -41,7 +44,11 @@ export function getSpotifyRateLimitSnapshot(now = Date.now()) {
   }
   const backoffRemainingMs = Math.max(0, state.backoffUntilTs - now);
   const backoffState =
-    backoffRemainingMs > 0 ? "backoff_active" : state.lastTriggeredAt > 0 ? "cooldown" : "normal";
+    backoffRemainingMs > 0
+      ? "backoff_active"
+      : state.lastTriggeredAt > 0
+        ? "cooldown"
+        : "normal";
 
   return {
     backoffState,

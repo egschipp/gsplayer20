@@ -1,0 +1,6 @@
+.next
+.test-dist
+node_modules
+data
+public/gsworkflow.html
+package-lock.json

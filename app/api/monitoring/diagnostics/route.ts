@@ -1,19 +1,16 @@
 import crypto from "crypto";
-import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
+import { jsonNoStore, requireAdminUser } from "@/lib/api/guards";
 import { getRecentErrors } from "@/lib/observability/logger";
 import { counterTotal, histogramQuantiles } from "@/lib/observability/metrics";
 import { getRecentRateLimitActivities } from "@/lib/observability/rateLimitActivities";
 import { getRecentSlowActivities } from "@/lib/observability/slowActivities";
 import { getSpotifyRateLimiterSnapshot } from "@/lib/spotify/rateLimitManager";
-import {
-  createCorrelationId,
-  readCorrelationId,
-} from "@/lib/observability/correlation";
+import { createCorrelationId, readCorrelationId } from "@/lib/observability/correlation";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  const { session, response } = await requireAppUser();
+  const { session, response } = await requireAdminUser();
   if (response) return response;
 
   const correlationId = readCorrelationId(req.headers) || createCorrelationId();

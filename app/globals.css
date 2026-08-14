@@ -268,7 +268,7 @@ header.panel {
 
 .btn-ghost {
   color: var(--text-muted);
-  background: transparent;
+  background: var(--bg-elevated);
 }
 
 .btn-ghost:hover {
@@ -448,7 +448,8 @@ header.panel {
   display: grid;
   place-items: center;
   padding: 2rem;
-  background: radial-gradient(circle at top, rgba(18, 191, 162, 0.18), transparent 55%),
+  background:
+    radial-gradient(circle at top, rgba(18, 191, 162, 0.18), transparent 55%),
     linear-gradient(180deg, #0b0b0b 0%, #050505 100%);
 }
 
@@ -689,11 +690,11 @@ a:focus-visible {
   border-radius: 18px;
   border: 1px solid rgba(29, 185, 84, 0.12);
   background: linear-gradient(
-      180deg,
-      rgba(8, 12, 12, 0.85) 0%,
-      rgba(8, 12, 12, 0.55) 70%,
-      rgba(8, 12, 12, 0.1) 100%
-    );
+    180deg,
+    rgba(8, 12, 12, 0.85) 0%,
+    rgba(8, 12, 12, 0.55) 70%,
+    rgba(8, 12, 12, 0.1) 100%
+  );
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.24);
 }
 
@@ -746,7 +747,6 @@ a:focus-visible {
   display: grid;
   gap: 4px;
 }
-
 
 .track-list {
   display: grid;
@@ -1116,7 +1116,8 @@ a:focus-visible {
 .player-library-dock {
   border-radius: 16px;
   border: 1px solid rgba(29, 185, 84, 0.28);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(29, 185, 84, 0.14),
       rgba(29, 185, 84, 0.08),
@@ -1329,7 +1330,9 @@ a:focus-visible {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: transform 140ms ease, background 140ms ease;
+  transition:
+    transform 140ms ease,
+    background 140ms ease;
 }
 
 .player-library-combo-toggle:hover {
@@ -1551,7 +1554,10 @@ details[open] > .details-summary::after {
   line-height: 1;
   padding: 0;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 
 .track-action-link {
@@ -1641,11 +1647,7 @@ details[open] > .details-summary::after {
 
 .track-row-inner.playing.error {
   border-color: rgba(30, 215, 96, 0.62);
-  background: linear-gradient(
-    100deg,
-    rgba(29, 185, 84, 0.1),
-    rgba(18, 24, 21, 0.98) 24%
-  );
+  background: linear-gradient(100deg, rgba(29, 185, 84, 0.1), rgba(18, 24, 21, 0.98) 24%);
   box-shadow:
     inset 3px 0 0 rgba(30, 215, 96, 0.78),
     0 0 0 1px rgba(30, 215, 96, 0.24) inset;
@@ -1743,11 +1745,7 @@ details[open] > .details-summary::after {
 
 .queue-row-btn.active {
   border-color: rgba(30, 215, 96, 0.98);
-  background: linear-gradient(
-    135deg,
-    rgba(30, 215, 96, 0.62),
-    rgba(29, 185, 84, 0.46)
-  );
+  background: linear-gradient(135deg, rgba(30, 215, 96, 0.62), rgba(29, 185, 84, 0.46));
   color: #ffffff;
   box-shadow: 0 0 0 1px rgba(30, 215, 96, 0.55) inset;
 }
@@ -1819,13 +1817,11 @@ details[open] > .details-summary::after {
 .shuffle-btn.active {
   color: #ffffff;
   border-color: rgba(29, 185, 84, 0.9);
-  background: linear-gradient(
-      135deg,
-      rgba(29, 185, 84, 0.65),
-      rgba(19, 194, 161, 0.45)
-    ),
+  background:
+    linear-gradient(135deg, rgba(29, 185, 84, 0.65), rgba(19, 194, 161, 0.45)),
     rgba(0, 0, 0, 0.25);
-  box-shadow: 0 0 0 1px rgba(29, 185, 84, 0.5),
+  box-shadow:
+    0 0 0 1px rgba(29, 185, 84, 0.5),
     0 0 16px rgba(29, 185, 84, 0.45);
 }
 
@@ -2169,7 +2165,8 @@ details[open] > .details-summary::after {
   padding: 14px var(--content-inline-space);
   border-radius: 18px;
   border: 1px solid rgba(29, 185, 84, 0.24);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(29, 185, 84, 0.14),
       rgba(29, 185, 84, 0.08),
@@ -2220,7 +2217,8 @@ details[open] > .details-summary::after {
   width: min(100%, 380px);
   padding: 8px 10px;
   border-radius: 16px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(29, 185, 84, 0.13),
       rgba(29, 185, 84, 0.06),
@@ -2235,7 +2233,8 @@ details[open] > .details-summary::after {
   margin-top: 12px;
   padding: 12px;
   border-radius: 16px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(29, 185, 84, 0.13),
       rgba(29, 185, 84, 0.06),
@@ -2267,7 +2266,9 @@ details[open] > .details-summary::after {
   padding: 6px 8px;
   border-radius: 10px;
   border: 1px solid transparent;
-  transition: background-color 180ms ease, border-color 180ms ease;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease;
 }
 
 .player-queue-item.active {
@@ -2366,7 +2367,10 @@ details[open] > .details-summary::after {
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
-  transition: transform 0.08s ease, background 0.12s ease, border-color 0.12s ease;
+  transition:
+    transform 0.08s ease,
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .player-track-action-btn:hover:not(:disabled) {
@@ -2408,7 +2412,6 @@ details[open] > .details-summary::after {
   align-items: center;
   gap: 16px;
 }
-
 
 .player-progress {
   display: grid;
@@ -2482,7 +2485,9 @@ details[open] > .details-summary::after {
   background: #1db954;
   cursor: pointer;
   border: 2px solid rgba(0, 0, 0, 0.4);
-  transition: transform 120ms ease, background 120ms ease;
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
 }
 
 .player-slider::-moz-range-thumb {
@@ -2492,7 +2497,9 @@ details[open] > .details-summary::after {
   background: #1db954;
   cursor: pointer;
   border: 2px solid rgba(0, 0, 0, 0.4);
-  transition: transform 120ms ease, background 120ms ease;
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
 }
 
 .player-slider-seek.is-scrubbing::-webkit-slider-thumb,
@@ -2506,7 +2513,6 @@ details[open] > .details-summary::after {
   transform: scale(1.12);
   background: #1ed760;
 }
-
 
 .player-device-row {
   display: flex;
@@ -2585,7 +2591,10 @@ details[open] > .details-summary::after {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: transform 0.08s ease, color 0.08s ease, background 0.08s ease;
+  transition:
+    transform 0.08s ease,
+    color 0.08s ease,
+    background 0.08s ease;
 }
 
 .player-control:focus-visible {
@@ -2600,7 +2609,8 @@ details[open] > .details-summary::after {
 }
 
 .player-control-grad {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(29, 185, 84, 0.28),
       rgba(29, 185, 84, 0.16),
@@ -2633,7 +2643,8 @@ details[open] > .details-summary::after {
 }
 
 .player-control-play.player-control-grad {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(29, 185, 84, 0.55),
       rgba(29, 185, 84, 0.38),
@@ -2878,7 +2889,9 @@ details[open] > .details-summary::after {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
   opacity: 0;
   transform: translateY(-4px);
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
   pointer-events: none;
   white-space: normal;
 }
@@ -2914,31 +2927,22 @@ details[open] > .details-summary::after {
 
 .monitoring-tone-ok {
   border-color: rgba(29, 185, 84, 0.22);
-  background: linear-gradient(
-      145deg,
-      rgba(29, 185, 84, 0.1),
-      rgba(255, 255, 255, 0.02) 45%
-    ),
+  background:
+    linear-gradient(145deg, rgba(29, 185, 84, 0.1), rgba(255, 255, 255, 0.02) 45%),
     rgba(255, 255, 255, 0.015);
 }
 
 .monitoring-tone-warn {
   border-color: rgba(251, 146, 60, 0.24);
-  background: linear-gradient(
-      145deg,
-      rgba(251, 146, 60, 0.08),
-      rgba(255, 255, 255, 0.02) 45%
-    ),
+  background:
+    linear-gradient(145deg, rgba(251, 146, 60, 0.08), rgba(255, 255, 255, 0.02) 45%),
     rgba(255, 255, 255, 0.015);
 }
 
 .monitoring-tone-error {
   border-color: rgba(239, 68, 68, 0.24);
-  background: linear-gradient(
-      145deg,
-      rgba(239, 68, 68, 0.08),
-      rgba(255, 255, 255, 0.02) 45%
-    ),
+  background:
+    linear-gradient(145deg, rgba(239, 68, 68, 0.08), rgba(255, 255, 255, 0.02) 45%),
     rgba(255, 255, 255, 0.015);
 }
 
@@ -3473,7 +3477,9 @@ details[open] > .details-summary::after {
   opacity: 0;
   transform: translateY(-4px);
   pointer-events: none;
-  transition: opacity 0.14s ease, transform 0.14s ease;
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
 }
 
 .settings-help-tip:hover .settings-help-tip-popover,
@@ -3933,7 +3939,6 @@ details[open] > .details-summary::after {
 .player-badge-compact {
   min-width: 0;
 }
-
 
 @media (max-width: 860px) {
   .player-card {
@@ -4685,31 +4690,22 @@ details[open] > .details-summary::after {
 
 .ops-tone-ok {
   border-color: rgba(29, 185, 84, 0.28);
-  background: linear-gradient(
-      145deg,
-      rgba(29, 185, 84, 0.11),
-      rgba(255, 255, 255, 0.02) 44%
-    ),
+  background:
+    linear-gradient(145deg, rgba(29, 185, 84, 0.11), rgba(255, 255, 255, 0.02) 44%),
     rgba(255, 255, 255, 0.015);
 }
 
 .ops-tone-warn {
   border-color: rgba(251, 146, 60, 0.3);
-  background: linear-gradient(
-      145deg,
-      rgba(251, 146, 60, 0.11),
-      rgba(255, 255, 255, 0.02) 44%
-    ),
+  background:
+    linear-gradient(145deg, rgba(251, 146, 60, 0.11), rgba(255, 255, 255, 0.02) 44%),
     rgba(255, 255, 255, 0.015);
 }
 
 .ops-tone-error {
   border-color: rgba(239, 68, 68, 0.3);
-  background: linear-gradient(
-      145deg,
-      rgba(239, 68, 68, 0.11),
-      rgba(255, 255, 255, 0.02) 44%
-    ),
+  background:
+    linear-gradient(145deg, rgba(239, 68, 68, 0.11), rgba(255, 255, 255, 0.02) 44%),
     rgba(255, 255, 255, 0.015);
 }
 
@@ -4766,7 +4762,9 @@ details[open] > .details-summary::after {
   opacity: 0;
   transform: translateY(-4px);
   pointer-events: none;
-  transition: opacity 0.14s ease, transform 0.14s ease;
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
 }
 
 .ops-help-tip:hover .ops-help-tip-popover,
@@ -4948,7 +4946,9 @@ details[open] > .details-summary::after {
   padding: 7px 8px;
   color: inherit;
   cursor: pointer;
-  transition: border-color 0.16s ease, background-color 0.16s ease;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease;
 }
 
 .ops-mix-row-btn:hover {
@@ -5441,4 +5441,20 @@ details[open] > .details-summary::after {
   .ops-action-grid {
     grid-template-columns: 1fr;
   }
+}
+.skip-link {
+  position: fixed;
+  z-index: 10000;
+  top: 8px;
+  left: 8px;
+  padding: 10px 14px;
+  color: #08120f;
+  background: #ffffff;
+  border: 2px solid currentColor;
+  border-radius: 8px;
+  transform: translateY(-160%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
 }

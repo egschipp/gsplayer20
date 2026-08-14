@@ -1,4 +1,5 @@
 import { createPinSessionToken } from "./pin-session-token";
+import crypto from "crypto";
 import type {
   PinLockRepository,
   PinLoginUseCaseInput,
@@ -27,7 +28,11 @@ export async function executePinLoginUseCase(
     };
   }
 
-  if (!input.pin || input.pin !== input.expectedPin) {
+  const provided = Buffer.from(input.pin || "", "utf8");
+  const expected = Buffer.from(input.expectedPin, "utf8");
+  const pinMatches =
+    provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
+  if (!pinMatches) {
     await deps.pinLockRepository.recordFailure(input.ipKey);
     return {
       ok: false,

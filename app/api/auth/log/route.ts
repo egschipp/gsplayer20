@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAppUser, requireSameOrigin } from "@/lib/api/guards";
+import { requireAdminUser, requireSameOrigin } from "@/lib/api/guards";
 import { clearAuthLog, getAuthLog } from "@/lib/auth/authLog";
 
 export async function GET() {
@@ -7,7 +7,7 @@ export async function GET() {
     return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
   }
 
-  const { response } = await requireAppUser();
+  const { response } = await requireAdminUser();
   if (response) return response;
 
   return NextResponse.json(getAuthLog(), {
@@ -23,7 +23,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
   }
 
-  const { response } = await requireAppUser();
+  const { response } = await requireAdminUser();
   if (response) return response;
 
   clearAuthLog();

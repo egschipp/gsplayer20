@@ -60,14 +60,16 @@ function normalizeSnapshot(data: SpotifyPlayerResponse | null, userId: string) {
   return {
     device: data?.device ?? null,
     item: data?.item ?? null,
-    progress_ms: typeof data?.progress_ms === "number" ? Math.max(0, data.progress_ms) : 0,
+    progress_ms:
+      typeof data?.progress_ms === "number" ? Math.max(0, data.progress_ms) : 0,
     is_playing: Boolean(data?.is_playing),
     shuffle_state: Boolean(data?.shuffle_state),
     repeat_state:
       data?.repeat_state === "track" || data?.repeat_state === "context"
         ? data.repeat_state
         : "off",
-    timestamp: typeof data?.timestamp === "number" ? Math.max(0, data.timestamp) : Date.now(),
+    timestamp:
+      typeof data?.timestamp === "number" ? Math.max(0, data.timestamp) : Date.now(),
     currently_playing_type:
       data?.currently_playing_type === "track" ||
       data?.currently_playing_type === "episode" ||
@@ -93,17 +95,14 @@ export async function GET(req: Request) {
   const active = await ephemeralIncrWithTtl(streamCounterKey, STREAM_COUNTER_TTL_MS);
   if (active > STREAM_MAX_PER_USER) {
     await ephemeralDecr(streamCounterKey);
-    return new NextResponse(
-      JSON.stringify({ error: "RATE_LIMIT", retryAfter: 10 }),
-      {
-        status: 429,
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-store",
-          "Retry-After": "10",
-        },
-      }
-    );
+    return new NextResponse(JSON.stringify({ error: "RATE_LIMIT", retryAfter: 10 }), {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "Retry-After": "10",
+      },
+    });
   }
   const encoder = new TextEncoder();
   let closed = false;
@@ -156,12 +155,12 @@ export async function GET(req: Request) {
                 error.status === 401
                   ? "UNAUTHENTICATED"
                   : error.status === 403
-                  ? "FORBIDDEN"
-                  : error.status === 429
-                  ? "RATE_LIMIT"
-                  : error.status === 404
-                  ? "NO_ACTIVE_PLAYER"
-                  : "SPOTIFY_UPSTREAM",
+                    ? "FORBIDDEN"
+                    : error.status === 429
+                      ? "RATE_LIMIT"
+                      : error.status === 404
+                        ? "NO_ACTIVE_PLAYER"
+                        : "SPOTIFY_UPSTREAM",
               status: error.status,
               at: Date.now(),
             });
@@ -187,8 +186,8 @@ export async function GET(req: Request) {
           typeof delayMs === "number" && Number.isFinite(delayMs)
             ? Math.max(200, Math.floor(delayMs))
             : lastIsPlaying
-            ? STREAM_POLL_PLAYING_MS
-            : STREAM_POLL_IDLE_MS;
+              ? STREAM_POLL_PLAYING_MS
+              : STREAM_POLL_IDLE_MS;
         if (pollTimer) clearTimeout(pollTimer);
         pollTimer = setTimeout(async () => {
           if (closed) return;

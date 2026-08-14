@@ -18,12 +18,13 @@ import {
   getUserCacheVersion,
   setCachedValue,
 } from "@/lib/spotify/requestCache";
-import { inferSpotifyRequestPriority, type SpotifyRequestPriority } from "@/lib/spotify/requestPriority";
+import {
+  inferSpotifyRequestPriority,
+  type SpotifyRequestPriority,
+} from "@/lib/spotify/requestPriority";
 
 const RETRY_AFTER_MIN_MS = 1_000;
-const RETRY_AFTER_MAX_MS = Number(
-  process.env.SPOTIFY_RETRY_AFTER_MAX_MS || "120000"
-);
+const RETRY_AFTER_MAX_MS = Number(process.env.SPOTIFY_RETRY_AFTER_MAX_MS || "120000");
 const MIN_INTERVAL_ME_PLAYER_STATE_GET_MS = Number(
   process.env.SPOTIFY_MIN_INTERVAL_ME_PLAYER_STATE_GET_MS || "1500"
 );
@@ -48,9 +49,7 @@ const MIN_DEDUPE_ME_PLAYER_QUEUE_GET_MS = Number(
 const MIN_DEDUPE_CURRENTLY_PLAYING_GET_MS = Number(
   process.env.SPOTIFY_MIN_DEDUPE_CURRENTLY_PLAYING_GET_MS || "700"
 );
-const DEFAULT_FETCH_MAX_ATTEMPTS = Number(
-  process.env.SPOTIFY_FETCH_MAX_ATTEMPTS || "3"
-);
+const DEFAULT_FETCH_MAX_ATTEMPTS = Number(process.env.SPOTIFY_FETCH_MAX_ATTEMPTS || "3");
 const UPSTREAM_CIRCUIT_FAILURE_THRESHOLD = Number(
   process.env.SPOTIFY_UPSTREAM_CIRCUIT_FAILURE_THRESHOLD || "4"
 );
@@ -98,10 +97,7 @@ export class SpotifyApiError extends Error {
 
 function normalizeRetryAfterMs(valueMs: number | null): number | null {
   if (valueMs == null || !Number.isFinite(valueMs)) return null;
-  return Math.max(
-    RETRY_AFTER_MIN_MS,
-    Math.min(RETRY_AFTER_MAX_MS, Math.floor(valueMs))
-  );
+  return Math.max(RETRY_AFTER_MIN_MS, Math.min(RETRY_AFTER_MAX_MS, Math.floor(valueMs)));
 }
 
 function parseRetryAfterMs(res: Response): number | null {
@@ -135,10 +131,7 @@ function classifyCode(
     return "UNAUTHENTICATED";
   }
   if (status === 403) {
-    if (
-      isPlayerEndpoint &&
-      /restriction\s+violated/i.test(body)
-    ) {
+    if (isPlayerEndpoint && /restriction\s+violated/i.test(body)) {
       return "RESTRICTION_VIOLATED";
     }
     return "FORBIDDEN";
@@ -187,11 +180,7 @@ function isExpectedHttpCondition(args: {
   ) {
     return true;
   }
-  if (
-    status === 403 &&
-    isPlayerEndpoint &&
-    errorCode === "RESTRICTION_VIOLATED"
-  ) {
+  if (status === 403 && isPlayerEndpoint && errorCode === "RESTRICTION_VIOLATED") {
     return true;
   }
   return false;
@@ -199,11 +188,7 @@ function isExpectedHttpCondition(args: {
 
 function shouldRetryStatus(status: number): boolean {
   return (
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
+    status === 429 || status === 500 || status === 502 || status === 503 || status === 504
   );
 }
 
@@ -367,7 +352,11 @@ function getMinDedupeWindowMs(args: { group: string; method: string }): number {
 
 const pacingSlotByKey = new Map<string, number>();
 
-function reservePacingDelayMs(key: string, minIntervalMs: number, at = Date.now()): number {
+function reservePacingDelayMs(
+  key: string,
+  minIntervalMs: number,
+  at = Date.now()
+): number {
   if (!Number.isFinite(minIntervalMs) || minIntervalMs <= 0) return 0;
   const currentSlot = pacingSlotByKey.get(key) ?? 0;
   const scheduledAt = Math.max(at, currentSlot);
@@ -386,9 +375,7 @@ function stableStringify(value: unknown): string {
     const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
       a.localeCompare(b)
     );
-    return `{${entries
-      .map(([key, val]) => `${key}:${stableStringify(val)}`)
-      .join(",")}}`;
+    return `{${entries.map(([key, val]) => `${key}:${stableStringify(val)}`).join(",")}}`;
   }
   return String(value);
 }
@@ -469,7 +456,10 @@ function canServeStaleForError(error: unknown): {
     return { reason: error.code || "SPOTIFY_UPSTREAM", retryAfterMs: error.retryAfterMs };
   }
   if (error.status === 0) {
-    return { reason: error.code || "NETWORK_TRANSIENT", retryAfterMs: error.retryAfterMs };
+    return {
+      reason: error.code || "NETWORK_TRANSIENT",
+      retryAfterMs: error.retryAfterMs,
+    };
   }
   if (error.code === "UPSTREAM_CIRCUIT_OPEN" || error.code === "LOCAL_RATE_LIMIT") {
     return { reason: error.code, retryAfterMs: error.retryAfterMs };
@@ -493,6 +483,21 @@ export async function spotifyApiRequest<T>(params: {
   dedupeWindowMs?: number;
   bypassCache?: boolean;
 }): Promise<T | undefined> {
+  const upstreamUrl = new URL(params.url);
+  if (
+    upstreamUrl.protocol !== "https:" ||
+    upstreamUrl.hostname !== "api.spotify.com" ||
+    upstreamUrl.port ||
+    upstreamUrl.username ||
+    upstreamUrl.password
+  ) {
+    throw new SpotifyApiError({
+      status: 400,
+      code: "INVALID_SPOTIFY_UPSTREAM",
+      retryable: false,
+      correlationId: params.correlationId || createCorrelationId(),
+    });
+  }
   const correlationId = params.correlationId || createCorrelationId();
   const method = String(params.method || "GET").toUpperCase();
   const timeoutMs = params.timeoutMs ?? 15_000;
@@ -513,7 +518,8 @@ export async function spotifyApiRequest<T>(params: {
     group,
     path,
   });
-  const priority = params.priority || inferSpotifyRequestPriority({ method, url: params.url });
+  const priority =
+    params.priority || inferSpotifyRequestPriority({ method, url: params.url });
   const cacheTtlMs =
     typeof params.cacheTtlMs === "number"
       ? Math.max(0, Math.floor(params.cacheTtlMs))
@@ -529,9 +535,7 @@ export async function spotifyApiRequest<T>(params: {
   const minDedupeWindowMs = getMinDedupeWindowMs({ group, method });
   const effectiveDedupeWindowMs = Math.max(dedupeWindowMs, minDedupeWindowMs);
   const cacheVersion =
-    method === "GET" && !params.bypassCache
-      ? await getUserCacheVersion(userKey)
-      : 0;
+    method === "GET" && !params.bypassCache ? await getUserCacheVersion(userKey) : 0;
   const cacheKey = requestCacheKey({
     method,
     url: params.url,
@@ -838,8 +842,8 @@ export async function spotifyApiRequest<T>(params: {
             const networkCode = isAbort
               ? "NETWORK_TIMEOUT"
               : retryable
-              ? "NETWORK_TRANSIENT"
-              : "NETWORK_FATAL";
+                ? "NETWORK_TRANSIENT"
+                : "NETWORK_FATAL";
 
             logEvent({
               level: retryable ? "warn" : "error",

@@ -13,17 +13,20 @@ import {
   trackArtists,
 } from "@/lib/db/schema";
 import { sql, eq, isNotNull } from "drizzle-orm";
-import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
+import { requireAdminUser, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 const RUNNING_STALE_AFTER_MS = 120_000;
 
 function count(table: any, db: ReturnType<typeof getDb>) {
-  return db.select({ count: sql<number>`count(*)` }).from(table).get();
+  return db
+    .select({ count: sql<number>`count(*)` })
+    .from(table)
+    .get();
 }
 
 export async function GET() {
-  const { session, response } = await requireAppUser();
+  const { session, response } = await requireAdminUser();
   if (response) return response;
 
   const db = getDb();
@@ -80,8 +83,7 @@ export async function GET() {
   const staleRunning = syncRows.filter(
     (row) =>
       row.status === "running" &&
-      (typeof row.updatedAt !== "number" ||
-        now - row.updatedAt >= RUNNING_STALE_AFTER_MS)
+      (typeof row.updatedAt !== "number" || now - row.updatedAt >= RUNNING_STALE_AFTER_MS)
   ).length;
   const lastSuccessfulAt = syncRows
     .map((row) => row.lastSuccessfulAt || 0)

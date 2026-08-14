@@ -68,8 +68,8 @@ export function usePlaybackLeader(enabled = true) {
           const confirmed = readLease(storage);
           ownsLease = Boolean(
             confirmed &&
-              confirmed.ownerId === ownerId &&
-              confirmed.expiresAt >= written.expiresAt - LEASE_TTL_MS
+            confirmed.ownerId === ownerId &&
+            confirmed.expiresAt >= written.expiresAt - LEASE_TTL_MS
           );
         }
         if (active) {

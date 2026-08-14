@@ -1,4 +1,4 @@
-import type { PlaybackFocusStatus } from "@/app/components/player/playbackFocus";
+import type { PlaybackFocusStatus } from "./playbackFocus";
 import { projectPlaybackStatusForUi } from "./statusMatrix";
 
 export type QueueActivePresentationInput = {

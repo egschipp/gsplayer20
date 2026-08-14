@@ -5,5 +5,4 @@ export const TRACK_GRID_COLUMNS_FULL =
 
 export const TRACK_GRID_COLUMNS_COMPACT = "124px minmax(0, 1fr) 148px";
 
-export const QUEUE_GRID_COLUMNS =
-  "136px minmax(0, 1fr) minmax(120px, 0.6fr) 72px 124px";
+export const QUEUE_GRID_COLUMNS = "136px minmax(0, 1fr) minmax(120px, 0.6fr) 72px 124px";

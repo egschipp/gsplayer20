@@ -1,7 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { FixedSizeList as List, type ListChildComponentProps } from "react-window";
 import { usePlayer } from "./player/PlayerProvider";
@@ -200,7 +207,7 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
   const primaryArtistId =
     "artists" in track
       ? Array.isArray(track.artists)
-        ? track.artists.find((artist) => artist?.id && artist?.name)?.id ?? null
+        ? (track.artists.find((artist) => artist?.id && artist?.name)?.id ?? null)
         : null
       : null;
   const albumId =
@@ -209,36 +216,39 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
         ? track.album.id.trim()
         : null
       : typeof track.albumId === "string" && track.albumId.trim()
-      ? track.albumId.trim()
-      : null;
+        ? track.albumId.trim()
+        : null;
   const albumName =
     "album" in track
       ? typeof track.album?.name === "string" && track.album.name.trim()
         ? track.album.name.trim()
         : null
       : typeof track.albumName === "string" && track.albumName.trim()
-      ? track.albumName.trim()
-      : null;
+        ? track.albumName.trim()
+        : null;
   const artists =
     "artists" in track
       ? Array.isArray(track.artists)
         ? dedupeArtistText(
-            track.artists.map((artist) => artist?.name).filter(Boolean).join(", ")
+            track.artists
+              .map((artist) => artist?.name)
+              .filter(Boolean)
+              .join(", ")
           ) || "Unknown artist"
         : dedupeArtistText(track.artists || "") || "Unknown artist"
       : "Unknown artist";
   const artworkUrl =
     "album" in track
-      ? track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null
-      : track.coverUrl ?? track.albumImageUrl ?? null;
+      ? (track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null)
+      : (track.coverUrl ?? track.albumImageUrl ?? null);
   const explicitValueRaw =
     typeof track.explicit === "boolean"
       ? track.explicit
         ? 1
         : 0
       : typeof track.explicit === "number"
-      ? track.explicit
-      : null;
+        ? track.explicit
+        : null;
   const playlists =
     "playlists" in track && Array.isArray(track.playlists)
       ? sortPlaylistLinks(
@@ -268,8 +278,8 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
       explicitValueRaw === null || explicitValueRaw === undefined
         ? null
         : explicitValueRaw
-        ? 1
-        : 0,
+          ? 1
+          : 0,
     artworkUrl,
     playlists,
   };
@@ -309,8 +319,7 @@ function normalizeArtistOptions(options: ArtistOption[]) {
     unique.set(option.id, {
       id: option.id,
       name,
-      spotifyUrl:
-        option.spotifyUrl || `https://open.spotify.com/artist/${option.id}`,
+      spotifyUrl: option.spotifyUrl || `https://open.spotify.com/artist/${option.id}`,
     });
   }
   return Array.from(unique.values()).sort((a, b) =>
@@ -433,8 +442,8 @@ function normalizeAlbumOptions(items: TrackItem[]) {
       spotifyUrl: albumId
         ? `https://open.spotify.com/album/${albumId}`
         : track.id
-        ? `https://open.spotify.com/track/${track.id}`
-        : "https://open.spotify.com",
+          ? `https://open.spotify.com/track/${track.id}`
+          : "https://open.spotify.com",
       coverUrl,
     };
     const existing = unique.get(key);
@@ -491,8 +500,7 @@ function normalizePlaylistOptions(options: PlaylistOption[]) {
   }
   const sorted = Array.from(unique.values())
     .filter(
-      (option) =>
-        option.id !== LIKED_OPTION.id && option.id !== ALL_MY_MUSIC_OPTION.id
+      (option) => option.id !== LIKED_OPTION.id && option.id !== ALL_MY_MUSIC_OPTION.id
     )
     .sort((a, b) =>
       String(a.name ?? "").localeCompare(String(b.name ?? ""), "nl", {
@@ -516,16 +524,17 @@ function toPlaylistLink(option: PlaylistOption): PlaylistLink {
         spotifyUrl: "https://open.spotify.com/collection/tracks",
       }
     : option.type === "all_music"
-    ? {
-        id: option.id,
-        name: option.name,
-        spotifyUrl: option.spotifyUrl || "https://open.spotify.com",
-      }
-    : {
-        id: option.id,
-        name: option.name,
-        spotifyUrl: option.spotifyUrl || `https://open.spotify.com/playlist/${option.id}`,
-      };
+      ? {
+          id: option.id,
+          name: option.name,
+          spotifyUrl: option.spotifyUrl || "https://open.spotify.com",
+        }
+      : {
+          id: option.id,
+          name: option.name,
+          spotifyUrl:
+            option.spotifyUrl || `https://open.spotify.com/playlist/${option.id}`,
+        };
 }
 
 function safeReadStorage(storage: Storage, key: string) {
@@ -553,10 +562,7 @@ function safeRemoveStorageKey(storage: Storage, key: string) {
   }
 }
 
-function buildApiUrl(
-  path: string,
-  params?: Record<string, string | null | undefined>
-) {
+function buildApiUrl(path: string, params?: Record<string, string | null | undefined>) {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params ?? {})) {
     if (value == null || value === "") continue;
@@ -579,10 +585,7 @@ function parseRetryAfterMs(headers: Headers) {
 }
 
 type TrackPageLoadReason =
-  | "scroll"
-  | "auto_prefetch"
-  | "active_track_hydration"
-  | "active_track_retry";
+  "scroll" | "auto_prefetch" | "active_track_hydration" | "active_track_retry";
 
 type TrackPageLoadResult = {
   ok: boolean;
@@ -670,23 +673,19 @@ function mapTrackApiItems(items: TrackApiItem[]): TrackItem[] {
         ? track.explicit
           ? 1
           : 0
-        : track.explicit ?? null,
+        : (track.explicit ?? null),
     isLocal:
       typeof track.isLocal === "number"
         ? track.isLocal
         : typeof track.isLocal === "boolean"
-        ? track.isLocal
-          ? 1
-          : 0
-        : null,
+          ? track.isLocal
+            ? 1
+            : 0
+          : null,
     restrictionsReason:
-      typeof track.restrictionsReason === "string"
-        ? track.restrictionsReason
-        : null,
+      typeof track.restrictionsReason === "string" ? track.restrictionsReason : null,
     linkedFromTrackId:
-      typeof track.linkedFromTrackId === "string"
-        ? track.linkedFromTrackId
-        : null,
+      typeof track.linkedFromTrackId === "string" ? track.linkedFromTrackId : null,
     popularity: track.popularity ?? null,
     albumImageUrl: track.albumImageUrl ?? null,
     playlists: Array.isArray(track.playlists)
@@ -707,9 +706,7 @@ function mapTrackApiItems(items: TrackApiItem[]): TrackItem[] {
 
 function mapTrackItemToRow(track: TrackItem): TrackRow {
   const trackId =
-    typeof track.trackId === "string" && track.trackId
-      ? track.trackId
-      : track.id;
+    typeof track.trackId === "string" && track.trackId ? track.trackId : track.id;
   const artistsText =
     dedupeArtistText(
       (Array.isArray(track.artists) ? track.artists : [])
@@ -723,8 +720,8 @@ function mapTrackItemToRow(track: TrackItem): TrackRow {
     typeof track.releaseYear === "number"
       ? track.releaseYear
       : albumReleaseDate && /^\d{4}/.test(albumReleaseDate)
-      ? Number(albumReleaseDate.slice(0, 4))
-      : null;
+        ? Number(albumReleaseDate.slice(0, 4))
+        : null;
   return {
     trackId: trackId || null,
     name: track.name || null,
@@ -981,8 +978,12 @@ function mergeTrackItemArtists(
 
 function mergeTrackItems(existing: TrackItem, incoming: TrackItem): TrackItem {
   const mergedPlaylists = mergeTrackPlaylists(existing.playlists, incoming.playlists);
-  const existingAlbumImages = Array.isArray(existing.album?.images) ? existing.album.images : [];
-  const incomingAlbumImages = Array.isArray(incoming.album?.images) ? incoming.album.images : [];
+  const existingAlbumImages = Array.isArray(existing.album?.images)
+    ? existing.album.images
+    : [];
+  const incomingAlbumImages = Array.isArray(incoming.album?.images)
+    ? incoming.album.images
+    : [];
   return {
     ...existing,
     id: pickPreferredText(existing.id, incoming.id) ?? existing.id,
@@ -1114,17 +1115,17 @@ export default function PlaylistBrowser() {
   const [loadingTracksList, setLoadingTracksList] = useState(false);
   const [loadingTracks, setLoadingTracks] = useState(false);
   const [activeTrackHydrating, setActiveTrackHydrating] = useState(false);
-  const [activeTrackHydrationRetryAfterMs, setActiveTrackHydrationRetryAfterMs] = useState<
-    number | null
+  const [activeTrackHydrationRetryAfterMs, setActiveTrackHydrationRetryAfterMs] =
+    useState<number | null>(null);
+  const [activeTrackHydrationError, setActiveTrackHydrationError] = useState<
+    string | null
   >(null);
-  const [activeTrackHydrationError, setActiveTrackHydrationError] = useState<string | null>(
-    null
-  );
   const [selectedTrackDetail, setSelectedTrackDetail] = useState<TrackDetail | null>(
     null
   );
-  const [selectedArtistDetail, setSelectedArtistDetail] =
-    useState<ArtistDetail | null>(null);
+  const [selectedArtistDetail, setSelectedArtistDetail] = useState<ArtistDetail | null>(
+    null
+  );
   const [artistDetailLoading, setArtistDetailLoading] = useState(false);
   const [trackArtistsLoading, setTrackArtistsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1263,7 +1264,8 @@ export default function PlaylistBrowser() {
   }, [nextCursor]);
 
   useEffect(() => {
-    if (!activeTrackHydrationRetryAfterMs || activeTrackHydrationRetryAfterMs <= 0) return;
+    if (!activeTrackHydrationRetryAfterMs || activeTrackHydrationRetryAfterMs <= 0)
+      return;
     const interval = window.setInterval(() => {
       setActiveTrackHydrationRetryAfterMs((prev) => {
         if (!prev || prev <= 300) return null;
@@ -1558,10 +1560,7 @@ export default function PlaylistBrowser() {
         setNextCursor(nextCursorValue);
         nextCursorRef.current = nextCursorValue;
       }
-      if (
-        typeof parsed.playlistCursor === "string" ||
-        parsed.playlistCursor === null
-      ) {
+      if (typeof parsed.playlistCursor === "string" || parsed.playlistCursor === null) {
         setPlaylistCursor(parsed.playlistCursor ?? null);
       }
       if (typeof parsed.artistCursor === "string" || parsed.artistCursor === null) {
@@ -1686,18 +1685,16 @@ export default function PlaylistBrowser() {
         }
         const data = (await res.json()) as CursorResponse<PlaylistApiItem>;
         const items = Array.isArray(data.items) ? data.items : [];
-        const mappedItems = items.map(
-          (p): PlaylistOption => ({
-            id: p.playlistId,
-            name: p.name,
-            type: "playlist",
-            spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
-            tracksTotal: typeof p.tracksTotal === "number" ? p.tracksTotal : null,
-            ownerDisplayName: p.ownerDisplayName ?? null,
-            description: p.description ?? null,
-            imageUrl: p.imageUrl ?? null,
-          })
-        );
+        const mappedItems = items.map((p): PlaylistOption => ({
+          id: p.playlistId,
+          name: p.name,
+          type: "playlist",
+          spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
+          tracksTotal: typeof p.tracksTotal === "number" ? p.tracksTotal : null,
+          ownerDisplayName: p.ownerDisplayName ?? null,
+          description: p.description ?? null,
+          imageUrl: p.imageUrl ?? null,
+        }));
         if (!cancelled) {
           hasCachedPlaylistsRef.current = hasCachedPlaylists || mappedItems.length > 0;
           setPlaylistOptions((prev) =>
@@ -1745,7 +1742,10 @@ export default function PlaylistBrowser() {
           { cache: "no-store" }
         );
         if (!res.ok) {
-          const mapped = mapSpotifyApiError(res.status, "Unable to load artists right now.");
+          const mapped = mapSpotifyApiError(
+            res.status,
+            "Unable to load artists right now."
+          );
           if (!cancelled && !hasCachedArtists) {
             setAuthRequired(Boolean(mapped.authRequired));
             setError(mapped.message);
@@ -1754,13 +1754,11 @@ export default function PlaylistBrowser() {
         }
         const data = (await res.json()) as CursorResponse<ArtistApiItem>;
         const items = Array.isArray(data.items) ? data.items : [];
-        const mappedItems = items.map(
-          (artist): ArtistOption => ({
-            id: artist.artistId,
-            name: artist.name,
-            spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
-          })
-        );
+        const mappedItems = items.map((artist): ArtistOption => ({
+          id: artist.artistId,
+          name: artist.name,
+          spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
+        }));
         if (!cancelled) {
           artistsBootstrapDoneRef.current = true;
           setArtistOptions((prev) =>
@@ -1806,7 +1804,10 @@ export default function PlaylistBrowser() {
           cache: "no-store",
         });
         if (!res.ok) {
-          const mapped = mapSpotifyApiError(res.status, "Unable to load tracks right now.");
+          const mapped = mapSpotifyApiError(
+            res.status,
+            "Unable to load tracks right now."
+          );
           if (!cancelled && !hasCachedTrackOptions) {
             setAuthRequired(Boolean(mapped.authRequired));
             setError(mapped.message);
@@ -1917,28 +1918,28 @@ export default function PlaylistBrowser() {
     mode === "playlists"
       ? selectedPlaylist
       : mode === "artists"
-      ? selectedArtist
-      : mode === "tracks"
-      ? selectedTrack
-      : selectedAlbum;
+        ? selectedArtist
+        : mode === "tracks"
+          ? selectedTrack
+          : selectedAlbum;
 
   const selectorModeLabel =
     mode === "playlists"
       ? "Playlists"
       : mode === "artists"
-      ? "Artists"
-      : mode === "tracks"
-      ? "Tracks"
-      : "Albums";
+        ? "Artists"
+        : mode === "tracks"
+          ? "Tracks"
+          : "Albums";
   const selectorCurrentLabel = selectedOption?.name
     ? selectedOption.name
     : mode === "playlists"
-    ? "Choose playlist"
-    : mode === "artists"
-    ? "Choose artist"
-    : mode === "tracks"
-    ? "Choose track"
-    : "Choose album";
+      ? "Choose playlist"
+      : mode === "artists"
+        ? "Choose artist"
+        : mode === "tracks"
+          ? "Choose track"
+          : "Choose album";
 
   const selectPlaylistInMyMusic = useCallback((playlistId: string) => {
     if (!playlistId) return;
@@ -1958,9 +1959,7 @@ export default function PlaylistBrowser() {
       const detail =
         event && "detail" in event
           ? ((event as CustomEvent).detail as
-              | { playlistId?: string | null }
-              | null
-              | undefined)
+              { playlistId?: string | null } | null | undefined)
           : undefined;
       const playlistId = String(detail?.playlistId ?? "").trim();
       if (!playlistId) return;
@@ -2187,7 +2186,11 @@ export default function PlaylistBrowser() {
       );
     }
     const list =
-      mode === "artists" ? artistOptions : mode === "tracks" ? trackOptions : albumOptions;
+      mode === "artists"
+        ? artistOptions
+        : mode === "tracks"
+          ? trackOptions
+          : albumOptions;
     if (!term) return list;
     return list.filter((opt) => opt.name.toLowerCase().includes(term));
   }, [sortedPlaylists, artistOptions, trackOptions, albumOptions, debouncedQuery, mode]);
@@ -2215,10 +2218,10 @@ export default function PlaylistBrowser() {
 
   const selectedTrackDetailHasArtists = Boolean(selectedTrackDetail?.artists?.length);
   const selectedTrackDetailDialogKey = selectedTrackDetail
-    ? selectedTrackDetail.trackId ??
+    ? (selectedTrackDetail.trackId ??
       selectedTrackDetail.id ??
       selectedTrackDetail.itemId ??
-      `__track-detail__:${selectedTrackDetail.name ?? ""}`
+      `__track-detail__:${selectedTrackDetail.name ?? ""}`)
     : null;
   const selectedArtistDetailDialogKey = selectedArtistDetail
     ? selectedArtistDetail.artistId || "__artist-detail__"
@@ -2236,10 +2239,7 @@ export default function PlaylistBrowser() {
     mode === "tracks" ? filteredTrackItems : filteredAlbumTrackItems;
 
   const visibleTracksForSelection = useMemo<Array<TrackRow | TrackItem>>(
-    () =>
-      mode === "playlists" || mode === "artists"
-        ? tracks
-        : localFilteredTrackItems,
+    () => (mode === "playlists" || mode === "artists" ? tracks : localFilteredTrackItems),
     [localFilteredTrackItems, mode, tracks]
   );
 
@@ -2324,9 +2324,15 @@ export default function PlaylistBrowser() {
   const rawActiveTrackIdsOrdered = useMemo(
     () =>
       normalizeTrackIdCollection([
-        ...(Array.isArray(playbackView.activeTrackIds) ? playbackView.activeTrackIds : []),
-        ...(Array.isArray(playbackFocus.matchTrackIds) ? playbackFocus.matchTrackIds : []),
-        ...(Array.isArray(playbackState.matchTrackIds) ? playbackState.matchTrackIds : []),
+        ...(Array.isArray(playbackView.activeTrackIds)
+          ? playbackView.activeTrackIds
+          : []),
+        ...(Array.isArray(playbackFocus.matchTrackIds)
+          ? playbackFocus.matchTrackIds
+          : []),
+        ...(Array.isArray(playbackState.matchTrackIds)
+          ? playbackState.matchTrackIds
+          : []),
         playbackView.activeTrackId,
         playbackFocus.trackId,
         playbackState.currentTrackId,
@@ -2415,8 +2421,8 @@ export default function PlaylistBrowser() {
       activeTrackVisualStatusRef.current === "paused"
       ? activeTrackVisualStatusRef.current
       : playbackFocus.isPlaying === false
-      ? "paused"
-      : "playing"
+        ? "paused"
+        : "playing"
     : playbackState.status;
   const activeTrackStatus: PlaybackFocusStatus =
     activeTrackIdSet.size > 0 &&
@@ -2435,7 +2441,7 @@ export default function PlaylistBrowser() {
     activeTrackIdSet.size > 0
       ? Boolean(
           (playbackFocus.stale || playbackState.stale || activeTrackIsLatched) &&
-            !activeTrackInTransientGap
+          !activeTrackInTransientGap
         )
       : false;
   const activeTrackErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2537,16 +2543,12 @@ export default function PlaylistBrowser() {
       transient: activeTrackInTransientGap,
     });
     lastUiStatusRef.current = activeTrackStatusFinalForUi;
-  }, [
-    activeTrackInTransientGap,
-    activeTrackStatusFinalForUi,
-    playbackState.source,
-  ]);
+  }, [activeTrackInTransientGap, activeTrackStatusFinalForUi, playbackState.source]);
 
   const isContextSwitchLoading = Boolean(
     loadingTracks &&
-      pendingTracksContextKey &&
-      pendingTracksContextKey !== tracksContextKey
+    pendingTracksContextKey &&
+    pendingTracksContextKey !== tracksContextKey
   );
 
   const loadMorePlaylists = useCallback(async () => {
@@ -2564,19 +2566,16 @@ export default function PlaylistBrowser() {
       if (!res.ok) return;
       const data = (await res.json()) as CursorResponse<PlaylistApiItem>;
       const items = Array.isArray(data.items) ? data.items : [];
-      const mappedItems = items.map(
-        (p): PlaylistOption => ({
-          id: p.playlistId,
-          name: p.name,
-          type: "playlist",
-          spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
-          tracksTotal:
-            typeof p.tracksTotal === "number" ? p.tracksTotal : null,
-          ownerDisplayName: p.ownerDisplayName ?? null,
-          description: p.description ?? null,
-          imageUrl: p.imageUrl ?? null,
-        })
-      );
+      const mappedItems = items.map((p): PlaylistOption => ({
+        id: p.playlistId,
+        name: p.name,
+        type: "playlist",
+        spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
+        tracksTotal: typeof p.tracksTotal === "number" ? p.tracksTotal : null,
+        ownerDisplayName: p.ownerDisplayName ?? null,
+        description: p.description ?? null,
+        imageUrl: p.imageUrl ?? null,
+      }));
       setPlaylistOptions((prev) => {
         return normalizePlaylistOptions(prev.concat(mappedItems));
       });
@@ -2604,18 +2603,16 @@ export default function PlaylistBrowser() {
         if (!res.ok) break;
         const data = (await res.json()) as CursorResponse<PlaylistApiItem>;
         const items = Array.isArray(data.items) ? data.items : [];
-        const mappedItems = items.map(
-          (p): PlaylistOption => ({
-            id: p.playlistId,
-            name: p.name,
-            type: "playlist",
-            spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
-            tracksTotal: typeof p.tracksTotal === "number" ? p.tracksTotal : null,
-            ownerDisplayName: p.ownerDisplayName ?? null,
-            description: p.description ?? null,
-            imageUrl: p.imageUrl ?? null,
-          })
-        );
+        const mappedItems = items.map((p): PlaylistOption => ({
+          id: p.playlistId,
+          name: p.name,
+          type: "playlist",
+          spotifyUrl: `https://open.spotify.com/playlist/${p.playlistId}`,
+          tracksTotal: typeof p.tracksTotal === "number" ? p.tracksTotal : null,
+          ownerDisplayName: p.ownerDisplayName ?? null,
+          description: p.description ?? null,
+          imageUrl: p.imageUrl ?? null,
+        }));
         setPlaylistOptions((prev) => normalizePlaylistOptions(prev.concat(mappedItems)));
         cursor = data.nextCursor ?? null;
         setPlaylistCursor(cursor);
@@ -2639,13 +2636,11 @@ export default function PlaylistBrowser() {
       if (!res.ok) return;
       const data = (await res.json()) as CursorResponse<ArtistApiItem>;
       const items = Array.isArray(data.items) ? data.items : [];
-      const mappedItems = items.map(
-          (artist): ArtistOption => ({
-            id: artist.artistId,
-            name: artist.name,
-            spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
-          })
-        );
+      const mappedItems = items.map((artist): ArtistOption => ({
+        id: artist.artistId,
+        name: artist.name,
+        spotifyUrl: `https://open.spotify.com/artist/${artist.artistId}`,
+      }));
       setArtistOptions((prev) => normalizeArtistOptions(prev.concat(mappedItems)));
       setArtistCursor(data.nextCursor ?? null);
     } finally {
@@ -2757,7 +2752,6 @@ export default function PlaylistBrowser() {
     loadMoreTrackOptions,
   ]);
 
-
   function openDetailFromRow(track: TrackRow, trigger?: HTMLElement | null) {
     if (trigger) {
       trackDetailTriggerRef.current = trigger;
@@ -2840,10 +2834,13 @@ export default function PlaylistBrowser() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-      const res = await fetch(`/api/spotify/artists/${encodeURIComponent(artistId)}?fresh=1`, {
-        cache: "no-store",
-        signal: controller.signal,
-      });
+      const res = await fetch(
+        `/api/spotify/artists/${encodeURIComponent(artistId)}?fresh=1`,
+        {
+          cache: "no-store",
+          signal: controller.signal,
+        }
+      );
       if (!res.ok) {
         return;
       }
@@ -3000,8 +2997,7 @@ export default function PlaylistBrowser() {
           const recentData = await recentRes.json();
           const recentItems = Array.isArray(recentData?.items) ? recentData.items : [];
           const recentTrack = recentItems.find(
-            (item: any) =>
-              String(item?.trackId ?? "").trim() === String(trackId).trim()
+            (item: any) => String(item?.trackId ?? "").trim() === String(trackId).trim()
           );
           if (recentTrack?.playedAt) {
             const parsed = Number(recentTrack.playedAt);
@@ -3080,10 +3076,10 @@ export default function PlaylistBrowser() {
           ? `playlist:${selectedPlaylist.type}:${selectedPlaylist.id}`
           : null
         : mode === "artists"
-        ? selectedArtist?.id
-          ? `artist:${selectedArtist.id}`
-          : null
-        : null;
+          ? selectedArtist?.id
+            ? `artist:${selectedArtist.id}`
+            : null
+          : null;
     async function loadTracks() {
       const requestVersion = ++tracksLoadVersionRef.current;
       const forceLivePlaylistSource =
@@ -3105,17 +3101,12 @@ export default function PlaylistBrowser() {
           const seenTrackIds = new Set<string>();
           const collected: TrackItem[] = [];
           do {
-            const cursorQuery = cursor
-              ? `&cursor=${encodeURIComponent(cursor)}`
-              : "";
+            const cursorQuery = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
             const res = await fetch(`/api/spotify/tracks?limit=100${cursorQuery}`, {
               cache: "no-store",
             });
             if (!res.ok) {
-              const mapped = mapSpotifyApiError(
-                res.status,
-                "Tracks laden lukt nu niet."
-              );
+              const mapped = mapSpotifyApiError(res.status, "Tracks laden lukt nu niet.");
               if (!cancelled) {
                 setAuthRequired(Boolean(mapped.authRequired));
                 setError(mapped.message);
@@ -3123,7 +3114,9 @@ export default function PlaylistBrowser() {
               return;
             }
             const data = (await res.json()) as CursorResponse<TrackApiItem>;
-            const pageItems = mapTrackApiItems(Array.isArray(data.items) ? data.items : []);
+            const pageItems = mapTrackApiItems(
+              Array.isArray(data.items) ? data.items : []
+            );
             for (const track of pageItems) {
               const trackId = track.trackId || track.id;
               if (!trackId || seenTrackIds.has(trackId)) continue;
@@ -3163,8 +3156,8 @@ export default function PlaylistBrowser() {
             ? selectedPlaylist?.type === "liked"
               ? "/api/spotify/me/tracks?live=1"
               : forceLivePlaylistSource
-              ? `/api/spotify/playlists/${selectedPlaylist?.id}/items?live=1`
-              : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
+                ? `/api/spotify/playlists/${selectedPlaylist?.id}/items?live=1`
+                : `/api/spotify/playlists/${selectedPlaylist?.id}/items`
             : `/api/spotify/artists/${selectedArtist?.id}/tracks`;
         const connector = baseUrl.includes("?") ? "&" : "?";
         const res = await fetch(`${baseUrl}${connector}limit=${trackPageSizeParam}`, {
@@ -3175,8 +3168,8 @@ export default function PlaylistBrowser() {
           if (!cancelled) {
             const hasVisibleContextRows = Boolean(
               nextContextKey &&
-                nextContextKey === tracksContextKey &&
-                tracksRef.current.length > 0
+              nextContextKey === tracksContextKey &&
+              tracksRef.current.length > 0
             );
             setAuthRequired(Boolean(mapped.authRequired));
             if (!hasVisibleContextRows) {
@@ -3194,7 +3187,8 @@ export default function PlaylistBrowser() {
           items.length === 0
         ) {
           const now = Date.now();
-          const lastAttempt = playlistAutoSyncAttemptRef.current[selectedPlaylist.id] ?? 0;
+          const lastAttempt =
+            playlistAutoSyncAttemptRef.current[selectedPlaylist.id] ?? 0;
           if (now - lastAttempt > 30_000) {
             playlistAutoSyncAttemptRef.current[selectedPlaylist.id] = now;
             void fetch("/api/spotify/sync", {
@@ -3249,8 +3243,8 @@ export default function PlaylistBrowser() {
         if (!cancelled && requestVersion === tracksLoadVersionRef.current) {
           const hasVisibleContextRows = Boolean(
             nextContextKey &&
-              nextContextKey === tracksContextKey &&
-              tracksRef.current.length > 0
+            nextContextKey === tracksContextKey &&
+            tracksRef.current.length > 0
           );
           if (!hasVisibleContextRows) {
             setError("Tracks laden lukt nu niet.");
@@ -3288,9 +3282,7 @@ export default function PlaylistBrowser() {
     }
     const contextChanged = nextContextKey !== tracksContextKey;
     const hasCachedTracksForContext = Boolean(
-      nextContextKey &&
-        nextContextKey === tracksContextKey &&
-        tracks.length > 0
+      nextContextKey && nextContextKey === tracksContextKey && tracks.length > 0
     );
     const likedTotalMissing =
       mode === "playlists" &&
@@ -3362,10 +3354,7 @@ export default function PlaylistBrowser() {
   }, [mode, selectedArtist?.id, selectedPlaylist?.id, selectedPlaylist?.type]);
 
   const fetchTrackRowsPage = useCallback(
-    async (
-      cursor: string,
-      reason: TrackPageLoadReason
-    ): Promise<TrackPageLoadResult> => {
+    async (cursor: string, reason: TrackPageLoadReason): Promise<TrackPageLoadResult> => {
       const source = resolveTrackListSource();
       if (!source) {
         return {
@@ -3420,7 +3409,9 @@ export default function PlaylistBrowser() {
   );
 
   const loadMore = useCallback(
-    async (reason: TrackPageLoadReason = "scroll"): Promise<TrackPageLoadResult | null> => {
+    async (
+      reason: TrackPageLoadReason = "scroll"
+    ): Promise<TrackPageLoadResult | null> => {
       const cursor = nextCursorRef.current;
       if (!cursor || loadingMoreTracksRef.current) return null;
       if (mode === "playlists" && !selectedPlaylist?.id) return null;
@@ -3531,13 +3522,15 @@ export default function PlaylistBrowser() {
     if (!hydrationTargetTrackKey) {
       if (activeTrackHydrating) setActiveTrackHydrating(false);
       if (activeTrackHydrationError) setActiveTrackHydrationError(null);
-      if (activeTrackHydrationRetryAfterMs !== null) setActiveTrackHydrationRetryAfterMs(null);
+      if (activeTrackHydrationRetryAfterMs !== null)
+        setActiveTrackHydrationRetryAfterMs(null);
       return;
     }
     if (activeTrackIndexInRows >= 0) {
       if (activeTrackHydrating) setActiveTrackHydrating(false);
       if (activeTrackHydrationError) setActiveTrackHydrationError(null);
-      if (activeTrackHydrationRetryAfterMs !== null) setActiveTrackHydrationRetryAfterMs(null);
+      if (activeTrackHydrationRetryAfterMs !== null)
+        setActiveTrackHydrationRetryAfterMs(null);
       return;
     }
     if (loadingTracks) return;
@@ -3714,9 +3707,7 @@ export default function PlaylistBrowser() {
       const detail =
         event && "detail" in event
           ? ((event as CustomEvent).detail as
-              | { playlistId?: string | null }
-              | null
-              | undefined)
+              { playlistId?: string | null } | null | undefined)
           : undefined;
       const playlistId = String(detail?.playlistId ?? "").trim();
       if (!playlistId) return;
@@ -3851,28 +3842,31 @@ export default function PlaylistBrowser() {
           "artists" in track
             ? Array.isArray(track.artists)
               ? dedupeArtistText(
-                  track.artists.map((artist) => artist?.name).filter(Boolean).join(", ")
+                  track.artists
+                    .map((artist) => artist?.name)
+                    .filter(Boolean)
+                    .join(", ")
                 ) || null
               : dedupeArtistText(track.artists || "") || null
             : null;
         const albumName =
-          "album" in track ? track.album?.name ?? null : track.albumName ?? null;
+          "album" in track ? (track.album?.name ?? null) : (track.albumName ?? null);
         const albumReleaseDate =
           "album" in track
-            ? track.album?.release_date ?? null
-            : track.albumReleaseDate ?? null;
+            ? (track.album?.release_date ?? null)
+            : (track.albumReleaseDate ?? null);
         const releaseYear =
           "album" in track
             ? typeof track.releaseYear === "number"
               ? track.releaseYear
               : albumReleaseDate && /^\d{4}/.test(albumReleaseDate)
-              ? Number(albumReleaseDate.slice(0, 4))
-              : null
-            : track.releaseYear ?? null;
+                ? Number(albumReleaseDate.slice(0, 4))
+                : null
+            : (track.releaseYear ?? null);
         const coverUrl =
           "album" in track
-            ? track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null
-            : track.coverUrl ?? track.albumImageUrl ?? null;
+            ? (track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null)
+            : (track.coverUrl ?? track.albumImageUrl ?? null);
         const link = toPlaylistLink(target);
         const row: TrackRow = {
           itemId: `optimistic:${target.id}:${trackId}:${Date.now()}:${Math.random()
@@ -3882,11 +3876,14 @@ export default function PlaylistBrowser() {
           playlistId: target.id,
           name: track.name ?? null,
           artists: artistsText,
-          albumId: "album" in track ? track.album?.id ?? null : track.albumId ?? null,
+          albumId: "album" in track ? (track.album?.id ?? null) : (track.albumId ?? null),
           albumName,
           albumReleaseDate,
           releaseYear,
-          albumImageUrl: "album" in track ? track.albumImageUrl ?? null : track.albumImageUrl ?? null,
+          albumImageUrl:
+            "album" in track
+              ? (track.albumImageUrl ?? null)
+              : (track.albumImageUrl ?? null),
           coverUrl,
           durationMs: track.durationMs ?? null,
           explicit: track.explicit ?? null,
@@ -4013,8 +4010,8 @@ export default function PlaylistBrowser() {
                 ? "Track toevoegen aan Liked Songs lukt nu niet."
                 : "Track verwijderen uit Liked Songs lukt nu niet."
               : shouldInclude
-              ? "Track toevoegen aan playlist lukt nu niet."
-              : "Track verwijderen uit playlist lukt nu niet."
+                ? "Track toevoegen aan playlist lukt nu niet."
+                : "Track verwijderen uit playlist lukt nu niet."
           );
         }
       } finally {
@@ -4072,7 +4069,11 @@ export default function PlaylistBrowser() {
         throw new Error("PLAYLIST_MEMBERSHIP_PARTIAL_FAILURE");
       }
     },
-    [requestPlaylistItemsSync, setTrackPlaylistMembership, triggerSelectedPlaylistLiveRefresh]
+    [
+      requestPlaylistItemsSync,
+      setTrackPlaylistMembership,
+      triggerSelectedPlaylistLiveRefresh,
+    ]
   );
 
   const handleRemoveTrackFromPlaylist = useCallback(
@@ -4282,29 +4283,29 @@ export default function PlaylistBrowser() {
     mode === "tracks"
       ? Boolean(selectedTrackId)
       : mode === "albums"
-      ? Boolean(selectedAlbumId)
-      : mode === "playlists"
-      ? Boolean(selectedPlaylist?.id)
-      : Boolean(selectedArtist?.id);
+        ? Boolean(selectedAlbumId)
+        : mode === "playlists"
+          ? Boolean(selectedPlaylist?.id)
+          : Boolean(selectedArtist?.id);
   const playlistContextTotalCount =
     mode === "playlists"
       ? selectedPlaylist?.type === "liked"
         ? likedTracksTotal
         : selectedPlaylist?.type === "all_music"
-        ? allMyMusicTotal
-        : typeof selectedPlaylist?.tracksTotal === "number"
-        ? Math.max(0, selectedPlaylist.tracksTotal)
-        : null
+          ? allMyMusicTotal
+          : typeof selectedPlaylist?.tracksTotal === "number"
+            ? Math.max(0, selectedPlaylist.tracksTotal)
+            : null
       : null;
   const visibleTrackCount = hasTrackContext
     ? mode === "tracks"
       ? filteredTrackItems.length
       : mode === "albums"
-      ? filteredAlbumTrackItems.length
-      : mode === "playlists"
-      ? playlistContextTotalCount ??
-        (selectedPlaylist?.type === "all_music" ? 0 : tracks.length)
-      : tracks.length
+        ? filteredAlbumTrackItems.length
+        : mode === "playlists"
+          ? (playlistContextTotalCount ??
+            (selectedPlaylist?.type === "all_music" ? 0 : tracks.length))
+          : tracks.length
     : 0;
   const visibleTrackCountLabel = `${visibleTrackCount} ${
     visibleTrackCount === 1 ? "track" : "tracks"
@@ -4322,7 +4323,6 @@ export default function PlaylistBrowser() {
           .filter(Boolean)
           .join(" • ")
       : "";
-
 
   const selectorDock = (
     <div
@@ -4380,14 +4380,14 @@ export default function PlaylistBrowser() {
         }, 190);
       }}
     >
-      <div
-        className={`player-library-dock-toggle${selectorDockOpen ? " open" : ""}`}
-      >
+      <div className={`player-library-dock-toggle${selectorDockOpen ? " open" : ""}`}>
         <span className="player-library-dock-label">My Music selection</span>
         <span className="player-library-dock-value">
           <span className="text-subtle">{selectorModeLabel}</span>
           <strong>{selectorCurrentLabel}</strong>
-          <span className="player-badge player-badge-compact">{visibleTrackCountLabel}</span>
+          <span className="player-badge player-badge-compact">
+            {visibleTrackCountLabel}
+          </span>
           {selectedPlaylistMeta ? (
             <span className="player-library-dock-meta" title={selectedPlaylistMeta}>
               {selectedPlaylistMeta}
@@ -4399,7 +4399,9 @@ export default function PlaylistBrowser() {
           className="player-library-dock-chevron-btn"
           aria-controls="player-library-dock-body"
           aria-expanded={selectorDockOpen}
-          aria-label={selectorDockOpen ? "Collapse selection bar" : "Expand selection bar"}
+          aria-label={
+            selectorDockOpen ? "Collapse selection bar" : "Expand selection bar"
+          }
           onClick={() =>
             setSelectorDockManualOpen((prev) => {
               const next = !prev;
@@ -4444,7 +4446,11 @@ export default function PlaylistBrowser() {
         aria-hidden={!selectorDockOpen}
       >
         <div className="player-library-controls-row">
-          <div className="segmented segmented-integrated" role="tablist" aria-label="Library modes">
+          <div
+            className="segmented segmented-integrated"
+            role="tablist"
+            aria-label="Library modes"
+          >
             {(["playlists", "artists", "tracks", "albums"] as Mode[]).map((value) => (
               <button
                 key={value}
@@ -4457,10 +4463,10 @@ export default function PlaylistBrowser() {
                 {value === "playlists"
                   ? "Playlists"
                   : value === "artists"
-                  ? "Artists"
-                  : value === "tracks"
-                  ? "Tracks"
-                  : "Albums"}
+                    ? "Artists"
+                    : value === "tracks"
+                      ? "Tracks"
+                      : "Albums"}
               </button>
             ))}
           </div>
@@ -4503,17 +4509,17 @@ export default function PlaylistBrowser() {
                 mode === "playlists"
                   ? "Search playlists..."
                   : mode === "artists"
-                  ? "Search artists..."
-                  : mode === "tracks"
-                  ? "Search tracks..."
-                  : "Search albums..."
+                    ? "Search artists..."
+                    : mode === "tracks"
+                      ? "Search tracks..."
+                      : "Search albums..."
               }
               disabled={
                 mode === "playlists"
                   ? loadingPlaylists
                   : mode === "artists"
-                  ? loadingArtists
-                  : loadingTracksList
+                    ? loadingArtists
+                    : loadingTracksList
               }
             />
             <button
@@ -4611,8 +4617,8 @@ export default function PlaylistBrowser() {
                         mode === "playlists"
                           ? opt.id === selectedPlaylistId
                           : mode === "artists"
-                          ? opt.id === selectedArtistId
-                          : opt.id === selectedAlbumId
+                            ? opt.id === selectedArtistId
+                            : opt.id === selectedAlbumId
                       }
                       className={`combo-item${
                         (mode === "playlists" && opt.id === selectedPlaylistId) ||
@@ -4654,10 +4660,9 @@ export default function PlaylistBrowser() {
                                 ? ` • ${(opt as PlaylistOption).tracksTotal} tracks`
                                 : ""}
                               {(opt as PlaylistOption).description
-                                ? ` • ${String((opt as PlaylistOption).description).replace(
-                                    /<[^>]*>/g,
-                                    ""
-                                  )}`
+                                ? ` • ${String(
+                                    (opt as PlaylistOption).description
+                                  ).replace(/<[^>]*>/g, "")}`
                                 : ""}
                             </span>
                           </span>
@@ -4700,7 +4705,7 @@ export default function PlaylistBrowser() {
               type="button"
               className="btn btn-primary"
               onClick={() => {
-                window.location.href = "/api/auth/login";
+                window.open("/api/auth/login", "_self");
               }}
             >
               Connect Spotify
@@ -4731,7 +4736,9 @@ export default function PlaylistBrowser() {
                     type="button"
                     className="track-selection-select-all-btn"
                     onClick={selectAllVisibleTracks}
-                    disabled={!visibleTracksBySelectionKey.size || allVisibleTracksSelected}
+                    disabled={
+                      !visibleTracksBySelectionKey.size || allVisibleTracksSelected
+                    }
                     title="Select all visible tracks"
                     aria-label="Select all visible tracks"
                   >
@@ -4802,10 +4809,7 @@ export default function PlaylistBrowser() {
                 const playlistItemId = String(item.itemId ?? "").trim();
                 if (playlistItemId) return `item:${playlistItemId}`;
                 const keyBase =
-                  resolveTrackRowCanonicalId(item) ||
-                  item.trackId ||
-                  item.id ||
-                  "row";
+                  resolveTrackRowCanonicalId(item) || item.trackId || item.id || "row";
                 return `${keyBase}:${index}`;
               }}
               itemData={{
@@ -4862,7 +4866,9 @@ export default function PlaylistBrowser() {
                     type="button"
                     className="track-selection-select-all-btn"
                     onClick={selectAllVisibleTracks}
-                    disabled={!visibleTracksBySelectionKey.size || allVisibleTracksSelected}
+                    disabled={
+                      !visibleTracksBySelectionKey.size || allVisibleTracksSelected
+                    }
                     title="Select all visible tracks"
                     aria-label="Select all visible tracks"
                   >
@@ -4927,10 +4933,7 @@ export default function PlaylistBrowser() {
                 const item = data.items[index];
                 const itemId = String(item.id ?? "").trim();
                 const keyBase =
-                  resolveTrackItemCanonicalId(item) ||
-                  itemId ||
-                  item.trackId ||
-                  "item";
+                  resolveTrackItemCanonicalId(item) || itemId || item.trackId || "item";
                 return `${keyBase}:${index}`;
               }}
               itemData={{
@@ -4968,14 +4971,17 @@ export default function PlaylistBrowser() {
 
       <div style={{ marginTop: 12 }}>
         {mode === "tracks" || mode === "albums" ? (
-          !(mode === "tracks" ? selectedTrackId : selectedAlbumId) && loadingTracksList ? (
+          !(mode === "tracks" ? selectedTrackId : selectedAlbumId) &&
+          loadingTracksList ? (
             <span className="text-body">Tracks laden...</span>
           ) : null
         ) : loadingTracks || (loadingMoreTracks && tracks.length === 0) ? (
           <span className="text-body">Tracks laden...</span>
         ) : null}
         {activeTrackMissingInRows && activeTrackHydrating ? (
-          <div className="text-body">Loading active track for consistent highlighting…</div>
+          <div className="text-body">
+            Loading active track for consistent highlighting…
+          </div>
         ) : null}
         {activeTrackMissingInRows && activeTrackHydrationRetryAfterMs ? (
           <div className="text-subtle">
@@ -4983,7 +4989,9 @@ export default function PlaylistBrowser() {
             {Math.max(1, Math.ceil(activeTrackHydrationRetryAfterMs / 1000))}s.
           </div>
         ) : null}
-        {activeTrackMissingInRows && !activeTrackHydrating && activeTrackHydrationError ? (
+        {activeTrackMissingInRows &&
+        !activeTrackHydrating &&
+        activeTrackHydrationError ? (
           <div className="text-subtle">{activeTrackHydrationError}</div>
         ) : null}
       </div>
@@ -5028,25 +5036,30 @@ export default function PlaylistBrowser() {
                 </div>
                 <div>
                   <div className="text-subtle">Track details</div>
-                  <div id="track-detail-dialog-title" style={{ fontWeight: 700, fontSize: 20 }}>
+                  <div
+                    id="track-detail-dialog-title"
+                    style={{ fontWeight: 700, fontSize: 20 }}
+                  >
                     {selectedTrackDetail.name || "Unknown track"}
                   </div>
                   {selectedTrackDetail.artists?.length ? (
                     <div className="text-body">
-                      {selectedTrackDetail.artists.map((artist: { id: string; name: string }, index) => (
-                        <span key={artist.id}>
-                          <button
-                            type="button"
-                            className="artist-link"
-                            onClick={() => openArtistDetail(artist.id, artist.name)}
-                          >
-                            {artist.name}
-                          </button>
-                          {index < (selectedTrackDetail.artists?.length ?? 0) - 1
-                            ? ", "
-                            : ""}
-                        </span>
-                      ))}
+                      {selectedTrackDetail.artists.map(
+                        (artist: { id: string; name: string }, index) => (
+                          <span key={artist.id}>
+                            <button
+                              type="button"
+                              className="artist-link"
+                              onClick={() => openArtistDetail(artist.id, artist.name)}
+                            >
+                              {artist.name}
+                            </button>
+                            {index < (selectedTrackDetail.artists?.length ?? 0) - 1
+                              ? ", "
+                              : ""}
+                          </span>
+                        )
+                      )}
                     </div>
                   ) : selectedTrackDetail.artistsText ? (
                     <div className="text-body">{selectedTrackDetail.artistsText}</div>
@@ -5102,7 +5115,9 @@ export default function PlaylistBrowser() {
                     <div className="track-detail-field">
                       <div className="text-subtle">Top track (6 mo)</div>
                       <div>
-                        {selectedTrackDetail.topRank ? `#${selectedTrackDetail.topRank}` : "—"}
+                        {selectedTrackDetail.topRank
+                          ? `#${selectedTrackDetail.topRank}`
+                          : "—"}
                       </div>
                     </div>
                     <div className="track-detail-field">
@@ -5136,8 +5151,8 @@ export default function PlaylistBrowser() {
                         selectedTrackDetail.isLocal === undefined
                           ? "—"
                           : selectedTrackDetail.isLocal
-                          ? "Yes"
-                          : "No"}
+                            ? "Yes"
+                            : "No"}
                       </div>
                     </div>
                     <div className="track-detail-field">
@@ -5157,20 +5172,22 @@ export default function PlaylistBrowser() {
                     <div className="track-detail-field">
                       {selectedTrackDetail.artists?.length ? (
                         <div>
-                          {selectedTrackDetail.artists.map((artist: { id: string; name: string }) => (
-                            <div key={artist.id}>
-                              <button
-                                type="button"
-                                className="artist-link"
-                                onClick={() => openArtistDetail(artist.id, artist.name)}
-                              >
-                                {artist.name}
-                              </button>{" "}
-                              {artist.id ? (
-                                <span className="text-subtle">({artist.id})</span>
-                              ) : null}
-                            </div>
-                          ))}
+                          {selectedTrackDetail.artists.map(
+                            (artist: { id: string; name: string }) => (
+                              <div key={artist.id}>
+                                <button
+                                  type="button"
+                                  className="artist-link"
+                                  onClick={() => openArtistDetail(artist.id, artist.name)}
+                                >
+                                  {artist.name}
+                                </button>{" "}
+                                {artist.id ? (
+                                  <span className="text-subtle">({artist.id})</span>
+                                ) : null}
+                              </div>
+                            )
+                          )}
                         </div>
                       ) : trackArtistsLoading ? (
                         <div className="text-subtle">Loading artist info…</div>
@@ -5237,33 +5254,25 @@ export default function PlaylistBrowser() {
       {mode === "tracks" && !selectedTrackId ? (
         <div className="empty-state" style={{ marginTop: 16 }}>
           <div style={{ fontWeight: 600 }}>Choose a track</div>
-          <div className="text-body">
-            Select a track to view results.
-          </div>
+          <div className="text-body">Select a track to view results.</div>
         </div>
       ) : null}
       {mode === "albums" && !selectedAlbumId ? (
         <div className="empty-state" style={{ marginTop: 16 }}>
           <div style={{ fontWeight: 600 }}>Choose an album</div>
-          <div className="text-body">
-            Select an album to view results.
-          </div>
+          <div className="text-body">Select an album to view results.</div>
         </div>
       ) : null}
       {mode === "artists" && !selectedArtistId ? (
         <div className="empty-state" style={{ marginTop: 16 }}>
           <div style={{ fontWeight: 600 }}>Choose an artist</div>
-          <div className="text-body">
-            Select an artist to view results.
-          </div>
+          <div className="text-body">Select an artist to view results.</div>
         </div>
       ) : null}
       {mode === "playlists" && !selectedPlaylist?.id ? (
         <div className="empty-state" style={{ marginTop: 16 }}>
           <div style={{ fontWeight: 600 }}>Choose a playlist</div>
-          <div className="text-body">
-            Select a playlist to view results.
-          </div>
+          <div className="text-body">Select a playlist to view results.</div>
         </div>
       ) : null}
 
@@ -5299,7 +5308,10 @@ export default function PlaylistBrowser() {
                 </div>
                 <div>
                   <div className="text-subtle">Artist details</div>
-                  <div id="artist-detail-dialog-title" style={{ fontWeight: 700, fontSize: 20 }}>
+                  <div
+                    id="artist-detail-dialog-title"
+                    style={{ fontWeight: 700, fontSize: 20 }}
+                  >
                     {selectedArtistDetail.name || "Unknown artist"}
                   </div>
                   {selectedArtistDetail.genres?.length ? (
@@ -5362,7 +5374,9 @@ export default function PlaylistBrowser() {
                     <div className="track-detail-field">
                       <div className="text-subtle">Top artist (6 mo)</div>
                       <div>
-                        {selectedArtistDetail.topRank ? `#${selectedArtistDetail.topRank}` : "—"}
+                        {selectedArtistDetail.topRank
+                          ? `#${selectedArtistDetail.topRank}`
+                          : "—"}
                       </div>
                     </div>
                   </div>
@@ -5453,9 +5467,7 @@ type AddToPlaylistMenuProps = {
     tracks: Array<TrackRow | TrackItem>,
     payload: { toAdd: PlaylistOption[]; toRemove: PlaylistOption[] }
   ) => Promise<void>;
-  resolveTracksForApply?: (
-    track: TrackRow | TrackItem
-  ) => Array<TrackRow | TrackItem>;
+  resolveTracksForApply?: (track: TrackRow | TrackItem) => Array<TrackRow | TrackItem>;
   onOpen?: () => void;
 };
 
@@ -5674,14 +5686,14 @@ function ActiveTrackIndicator({
     status === "playing"
       ? "Now playing"
       : status === "paused"
-      ? "Gepauzeerd"
-      : status === "loading"
-      ? "Buffering"
-      : status === "ended"
-      ? "Track beëindigd"
-      : status === "error"
-      ? "Playback fout"
-      : "Active track";
+        ? "Gepauzeerd"
+        : status === "loading"
+          ? "Buffering"
+          : status === "ended"
+            ? "Track beëindigd"
+            : status === "error"
+              ? "Playback fout"
+              : "Active track";
   return (
     <span
       className={`playing-indicator ${status}${isStale ? " stale" : ""}`}
@@ -5807,7 +5819,9 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
       .filter(Boolean)[0] ?? "";
   const albumLine = String(track.albumName ?? "").trim();
   const isTrackActive = index === data.activeTrackIndex;
-  const rawTrackStatus: PlaybackFocusStatus = isTrackActive ? data.activeTrackStatus : "idle";
+  const rawTrackStatus: PlaybackFocusStatus = isTrackActive
+    ? data.activeTrackStatus
+    : "idle";
   const trackStatus: PlaybackFocusStatus =
     isTrackActive && data.suppressLoadingIndicator && rawTrackStatus === "loading"
       ? data.activeTrackIsPlaying === false
@@ -5932,7 +5946,9 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
           </div>
         ) : null}
         {showExtendedColumns ? (
-          <div className="text-subtle track-col-duration">{formatDuration(track.durationMs)}</div>
+          <div className="text-subtle track-col-duration">
+            {formatDuration(track.durationMs)}
+          </div>
         ) : null}
         <div className="track-col-actions track-actions-group">
           <AddToQueueButton
@@ -5940,9 +5956,9 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             onAdd={data.addTrackToQueue}
             active={Boolean(
               normalizeSpotifyTrackId(track.trackId ?? null) &&
-                data.queueTrackIds.has(
-                  normalizeSpotifyTrackId(track.trackId ?? null) as string
-                )
+              data.queueTrackIds.has(
+                normalizeSpotifyTrackId(track.trackId ?? null) as string
+              )
             )}
           />
           <AddToPlaylistMenu
@@ -6048,7 +6064,9 @@ function TrackItemRenderer({
   const isSelected = data.isTrackSelected(track);
   const showExtendedColumns = !data.compactTrackLayout;
   const isTrackActive = index === data.activeTrackIndex;
-  const rawTrackStatus: PlaybackFocusStatus = isTrackActive ? data.activeTrackStatus : "idle";
+  const rawTrackStatus: PlaybackFocusStatus = isTrackActive
+    ? data.activeTrackStatus
+    : "idle";
   const trackStatus: PlaybackFocusStatus =
     isTrackActive && data.suppressLoadingIndicator && rawTrackStatus === "loading"
       ? data.activeTrackIsPlaying === false
@@ -6196,9 +6214,9 @@ function TrackItemRenderer({
             onAdd={data.addTrackToQueue}
             active={Boolean(
               normalizeSpotifyTrackId(track.trackId ?? track.id ?? null) &&
-                data.queueTrackIds.has(
-                  normalizeSpotifyTrackId(track.trackId ?? track.id ?? null) as string
-                )
+              data.queueTrackIds.has(
+                normalizeSpotifyTrackId(track.trackId ?? track.id ?? null) as string
+              )
             )}
           />
           <AddToPlaylistMenu

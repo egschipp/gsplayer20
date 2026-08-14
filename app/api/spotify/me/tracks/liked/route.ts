@@ -1,4 +1,10 @@
-import { jsonError, jsonNoStore, rateLimitResponse, requireAppUser, requireSameOrigin } from "@/lib/api/guards";
+import {
+  jsonError,
+  jsonNoStore,
+  rateLimitResponse,
+  requireAppUser,
+  requireSameOrigin,
+} from "@/lib/api/guards";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { getDb } from "@/lib/db/client";
@@ -31,7 +37,9 @@ function normalizeTrackId(value: unknown) {
 
 async function getLikedState(trackId: string) {
   const data = await spotifyFetch<boolean[]>({
-    url: `https://api.spotify.com/v1/me/tracks/contains?ids=${encodeURIComponent(trackId)}`,
+    url: `https://api.spotify.com/v1/me/library/contains?uris=${encodeURIComponent(
+      `spotify:track:${trackId}`
+    )}`,
     userLevel: true,
     activity: "liked_contains_check",
   });
@@ -104,7 +112,9 @@ export async function POST(req: Request) {
 
   try {
     await spotifyFetch({
-      url: `https://api.spotify.com/v1/me/tracks?ids=${encodeURIComponent(trackId)}`,
+      url: `https://api.spotify.com/v1/me/library?uris=${encodeURIComponent(
+        `spotify:track:${trackId}`
+      )}`,
       method: "PUT",
       userLevel: true,
       activity: "liked_add_track",
@@ -135,8 +145,7 @@ export async function POST(req: Request) {
           durationMs:
             typeof track.duration_ms === "number" ? Math.max(0, track.duration_ms) : 0,
           explicit: Boolean(track.explicit),
-          isLocal:
-            typeof track.is_local === "boolean" ? track.is_local : null,
+          isLocal: typeof track.is_local === "boolean" ? track.is_local : null,
           linkedFromTrackId:
             typeof track.linked_from?.id === "string" ? track.linked_from.id : null,
           restrictionsReason:
@@ -187,7 +196,9 @@ export async function DELETE(req: Request) {
 
   try {
     await spotifyFetch({
-      url: `https://api.spotify.com/v1/me/tracks?ids=${encodeURIComponent(trackId)}`,
+      url: `https://api.spotify.com/v1/me/library?uris=${encodeURIComponent(
+        `spotify:track:${trackId}`
+      )}`,
       method: "DELETE",
       userLevel: true,
       activity: "liked_remove_track",

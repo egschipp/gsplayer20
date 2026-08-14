@@ -1,10 +1,5 @@
 export type PlaybackIngestSource =
-  | "sdk"
-  | "sse"
-  | "poll"
-  | "verify"
-  | "bootstrap"
-  | "command";
+  "sdk" | "sse" | "poll" | "verify" | "bootstrap" | "command";
 
 export type PlaybackSyncEvent = {
   source: PlaybackIngestSource;
@@ -58,8 +53,8 @@ export function clampEvent(event: PlaybackSyncEvent): PlaybackSyncEvent {
       typeof event.isPlaying === "boolean"
         ? event.isPlaying
         : event.isPlaying === null
-        ? null
-        : null,
+          ? null
+          : null,
     force: event.force === true,
   };
 }
@@ -95,11 +90,7 @@ export function shouldApplyPlaybackEvent(
     if (event.atMs + 350 < state.lastAtMs && nextPriority <= currentPriority) {
       return { apply: false, reason: "older_time_lower_or_equal_priority" };
     }
-    if (
-      hasStateSeq &&
-      event.atMs <= state.lastAtMs &&
-      nextPriority < currentPriority
-    ) {
+    if (hasStateSeq && event.atMs <= state.lastAtMs && nextPriority < currentPriority) {
       return { apply: false, reason: "unsequenced_lower_priority" };
     }
   }

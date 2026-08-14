@@ -13,7 +13,9 @@ function endpointPath(url: string): string {
   }
 }
 
-export function inferSpotifyRequestPriority(input: PriorityInput): SpotifyRequestPriority {
+export function inferSpotifyRequestPriority(
+  input: PriorityInput
+): SpotifyRequestPriority {
   const method = String(input.method || "GET").toUpperCase();
   const path = endpointPath(input.url);
 

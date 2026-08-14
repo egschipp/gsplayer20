@@ -40,6 +40,7 @@ const RECENT_EVENT_MAX_COUNT = Number(
 const RECENT_EVENT_PRUNE_INTERVAL_MS = 5000;
 const counters = new Map<string, CounterEntry>();
 const histograms = new Map<string, HistogramEntry>();
+const MAX_METRIC_SERIES = Number(process.env.OBSERVABILITY_MAX_SERIES || "2000");
 const counterEvents: CounterEvent[] = [];
 const histogramEvents: HistogramEvent[] = [];
 let lastRecentEventPruneAt = 0;
@@ -111,7 +112,9 @@ export function incCounter(name: string, labels: Labels = {}, delta = 1): void {
     pruneRecentEvents(now);
     return;
   }
-  counters.set(key, { name, labels: norm, value: delta });
+  if (counters.size < MAX_METRIC_SERIES) {
+    counters.set(key, { name, labels: norm, value: delta });
+  }
   counterEvents.push({ name, labels: norm, value: delta, at: now });
   pruneRecentEvents(now);
 }
@@ -127,6 +130,7 @@ export function observeHistogram(
   const now = Date.now();
   let entry = histograms.get(key);
   if (!entry) {
+    if (histograms.size >= MAX_METRIC_SERIES) return;
     entry = {
       name,
       labels: norm,
@@ -252,7 +256,10 @@ export function histogramQuantilesWindow(
   samples.sort((a, b) => a - b);
 
   function quantile(q: number): number {
-    const idx = Math.max(0, Math.min(samples.length - 1, Math.ceil(samples.length * q) - 1));
+    const idx = Math.max(
+      0,
+      Math.min(samples.length - 1, Math.ceil(samples.length * q) - 1)
+    );
     return Math.round(samples[idx]);
   }
 

@@ -1,8 +1,5 @@
 export type PlaybackAuthorityMode =
-  | "local_primary"
-  | "remote_primary"
-  | "handoff_pending"
-  | "degraded";
+  "local_primary" | "remote_primary" | "handoff_pending" | "degraded";
 
 export type ResolvePlaybackAuthorityInput = {
   activeDeviceId: string | null;

@@ -7,7 +7,10 @@ const END_MARKER = "<!-- README:AUTO:END -->";
 
 function safeExec(command) {
   try {
-    return execSync(command, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return execSync(command, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
   } catch {
     return "";
   }
@@ -15,11 +18,18 @@ function safeExec(command) {
 
 function readPackageVersion() {
   const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-  return String(pkg.version || "0.0.0").replace(/^v/i, "").trim() || "0.0.0";
+  return (
+    String(pkg.version || "0.0.0")
+      .replace(/^v/i, "")
+      .trim() || "0.0.0"
+  );
 }
 
 function getLatestTag() {
-  return safeExec("git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1") || "none";
+  return (
+    safeExec("git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1") ||
+    "none"
+  );
 }
 
 function getBranch() {

@@ -6,10 +6,7 @@ import { requireAppUser } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
-export async function GET(
-  _req: Request,
-  ctx: { params: Promise<{ trackId: string }> }
-) {
+export async function GET(_req: Request, ctx: { params: Promise<{ trackId: string }> }) {
   const { session, response } = await requireAppUser();
   if (response) return response;
 
@@ -34,10 +31,7 @@ export async function GET(
     const ownsPlaylist = await db
       .select({ id: playlistItems.trackId })
       .from(playlistItems)
-      .innerJoin(
-        userPlaylists,
-        eq(userPlaylists.playlistId, playlistItems.playlistId)
-      )
+      .innerJoin(userPlaylists, eq(userPlaylists.playlistId, playlistItems.playlistId))
       .where(
         and(
           eq(userPlaylists.userId, session.appUserId as string),
@@ -72,7 +66,22 @@ export async function GET(
   }
 
   if (track?.url) {
-    return NextResponse.redirect(track.url);
+    try {
+      const imageUrl = new URL(track.url);
+      const allowedHost =
+        imageUrl.hostname === "i.scdn.co" || imageUrl.hostname.endsWith(".scdn.co");
+      if (
+        imageUrl.protocol === "https:" &&
+        !imageUrl.port &&
+        !imageUrl.username &&
+        !imageUrl.password &&
+        allowedHost
+      ) {
+        return NextResponse.redirect(imageUrl);
+      }
+    } catch {
+      // Treat invalid legacy database values as unavailable.
+    }
   }
 
   return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });

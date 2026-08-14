@@ -1,51 +1,38 @@
-# Pipeline configuratie (Next.js, snel en simpel)
+# CI/CD pipeline
 
-## 1) Triggers & scope
-- Workflow: `.github/workflows/deploy.yml`
-- Triggers:
-  - `pull_request` voor snelle CI-checks (lint/typecheck/test)
-  - `push` naar `main` en `workflow_dispatch` voor build + deploy
-- Paths-filter bevat app-, infra- en buildbestanden, inclusief `components/**`.
-- Efficiëntie: docs-only commits triggeren geen build/deploy.
+## Validation
 
-## 2) CI op PR
-- `npm ci --no-audit --no-fund` + lint/typecheck/test.
-- Efficiëntie: snelle feedback, minimale overhead.
+Pull requests and changes on `main` use Node 22 and run formatting, linting, TypeScript,
+unit/integration tests, Chromium desktop/mobile accessibility tests, and an npm audit.
+CodeQL runs on pull requests, `main`, and weekly. Dependabot checks npm, Docker, and
+GitHub Actions weekly.
 
-## 3) Build op main
-- Build draait op `ubuntu-latest` met Buildx + GHA cache.
-- Docker build pushed direct twee tags in één stap:
-  - immutable: `${GITHUB_SHA}`
-  - convenience: `latest`
-- Efficiëntie: geen extra `imagetools` stap meer nodig.
+## Container publication
 
-## 4) Dockerfile optimalisatie
-- Multi-stage build met cache mounts.
-- Productie dependencies komen uit `npm prune --omit=dev` i.p.v. een tweede `npm ci`.
-- Efficiëntie: minder netwerk/download en snellere image build.
+The multi-stage Docker build targets ARM64, uses an immutable Node base-image digest,
+and publishes only the commit-SHA candidate first. BuildKit exports an SBOM and signed
+provenance attestation. Trivy then blocks high or critical fixed vulnerabilities. Only a
+passing candidate is promoted to `latest`; deployment always references the immutable
+SHA.
 
-## 5) Deploy op Pi (SSH)
-- Deploy gebruikt immutable image-tag (`IMAGE_TAG=${GITHUB_SHA}`).
-- `.env` wordt atomisch geschreven (`tmp` + `mv`) met `chmod 600`.
-- Deploy-lock met `flock` voorkomt parallelle deploys.
-- Runtime update:
-  - `docker compose pull web worker`
-  - `docker compose up -d --remove-orphans --wait`
-- Efficiëntie: alleen pull + restart op Pi, geen lokale build.
+All third-party Actions are pinned to commit SHAs. Dependabot proposes updates so those
+pins remain reviewable and reproducible.
 
-## 6) Runtime image selectie
-- `infra/docker-compose.yml` gebruikt:
-  - `image: ${IMAGE_NAME}:${IMAGE_TAG:-latest}`
-- Efficiëntie/robuustheid: reproduceerbare deploy op SHA-tag, snelle rollback via vorige tag.
+## Raspberry Pi deployment
 
-## 7) Healthcheck en fail-fast
-- `/api/health` route is aanwezig en compose wacht op health met `--wait`.
-- `APP_ENCRYPTION_KEY` wordt gevalideerd vóór deploy.
-- Efficiëntie: misconfiguratie faalt vroeg en voorkomt langzame debug-cycli.
+The self-hosted ARM runner validates the 32-byte token-encryption key before making any
+changes. A `flock` prevents concurrent deployments and `.env` is written atomically with
+mode 0600. Compose pulls both services and starts the worker only after the web service,
+including migrations, is healthy.
 
-## 8) Belangrijkste snelheidswinsten
-1. Eén Docker push stap voor `sha + latest`.
-2. `npm prune --omit=dev` vervangt tweede install.
-3. BuildKit/GHA caching blijft actief.
-4. Paths-filter voorkomt onnodige CI/CD runs.
-5. Pi doet alleen image pull + container update.
+Both services run with the host deployment UID/GID, no Linux capabilities,
+`no-new-privileges`, a read-only root filesystem, an init process, and a bounded `/tmp`
+tmpfs. The SQLite `/data` bind mount is the only persistent writable location. The web
+port is bound to loopback and the trusted reverse proxy supplies the external route.
+
+## Maintenance and rollback
+
+Weekly maintenance creates a SQLite online backup before pruning Docker artifacts and
+retains 30 days. See `docs/backup-and-restore.md` for verification and restore steps.
+Rollback consists of setting `IMAGE_TAG` to a previously scanned commit SHA and running
+Compose again; never use `latest` as the rollback identifier.

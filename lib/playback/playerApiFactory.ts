@@ -23,10 +23,7 @@ type PlayerInstanceLike = {
   connect?: () => Promise<unknown>;
 };
 
-type PlaybackMetricTags = Record<
-  string,
-  string | number | boolean | null | undefined
->;
+type PlaybackMetricTags = Record<string, string | number | boolean | null | undefined>;
 
 type CommandIngestEvent = {
   source: "command";
@@ -81,10 +78,7 @@ export type PlayerApiFactoryDeps = {
   waitForKnownDeviceId: () => Promise<string | null>;
   waitForPlayableDevice: (timeoutMs?: number) => Promise<string | null>;
   queueDeferredPlayIntent: (intent: PlayerDeferredPlayIntent) => void;
-  getIndexFromTrackId: (
-    uris: string[],
-    trackId: string | null | undefined
-  ) => number;
+  getIndexFromTrackId: (uris: string[], trackId: string | null | undefined) => number;
   applyProgressPosition: (positionMs: number) => void;
   ensureActiveDevice: (
     deviceId: string,
@@ -100,25 +94,16 @@ export type PlayerApiFactoryDeps = {
   spotifyApiFetch: (input: string, init?: RequestInit) => Promise<Response | null>;
   withDeviceId: (input: string, deviceId: string) => string;
   refreshDevices: (force?: boolean) => Promise<void>;
-  readJsonSafely: <T = unknown>(
-    res: Response | null | undefined
-  ) => Promise<T | null>;
+  readJsonSafely: <T = unknown>(res: Response | null | undefined) => Promise<T | null>;
   resolveTrackIdFromUri: (uri: string | null | undefined) => string | null;
-  shouldApplyIngest: (
-    event: CommandIngestEvent,
-    meta: CommandIngestMeta
-  ) => boolean;
+  shouldApplyIngest: (event: CommandIngestEvent, meta: CommandIngestMeta) => boolean;
   readSyncServerSeq: (payload: unknown) => number;
   readSyncServerTime: (payload: unknown) => number;
   getMonotonicNow: () => number;
   ensurePlaybackStartedWithRetry: (
     options: PlaybackStartRetryOptions
   ) => Promise<boolean>;
-  emitPlaybackMetric: (
-    name: string,
-    value: number,
-    tags?: PlaybackMetricTags
-  ) => void;
+  emitPlaybackMetric: (name: string, value: number, tags?: PlaybackMetricTags) => void;
   buildShuffleOrder: (length: number, startIndex: number) => number[];
   schedulePlaybackVerify: (
     delayMs: number,
@@ -220,7 +205,9 @@ export function createPlayerApiHandlers({
     const details = await readJsonSafely<{ error?: string; message?: string }>(
       res.clone()
     );
-    const errorCode = String(details?.error ?? "").trim().toUpperCase();
+    const errorCode = String(details?.error ?? "")
+      .trim()
+      .toUpperCase();
     return (
       errorCode === "RESTRICTION_VIOLATED" ||
       String(details?.message ?? "")
@@ -248,8 +235,7 @@ export function createPlayerApiHandlers({
 
     if (!playIntentReplayRef.current) {
       if (restrictionViolation) {
-        playbackRestrictionUntilRef.current =
-          Date.now() + playbackRestrictionCooldownMs;
+        playbackRestrictionUntilRef.current = Date.now() + playbackRestrictionCooldownMs;
         setActiveDeviceRestricted(true);
         setError(
           "Spotify is temporarily blocking playback on this device. Retrying automatically."
@@ -269,11 +255,7 @@ export function createPlayerApiHandlers({
         "Spotify is temporarily blocking playback on this device. Switch device or try again."
       );
     }
-    raisePlaybackCommandError(
-      404,
-      "NO_ACTIVE_DEVICE",
-      "No active Spotify player found."
-    );
+    raisePlaybackCommandError(404, "NO_ACTIVE_DEVICE", "No active Spotify player found.");
   };
 
   return {
@@ -504,9 +486,7 @@ export function createPlayerApiHandlers({
             );
           }
           if (playResponse.status === 429) {
-            const retryAfterRaw = Number(
-              playResponse.headers.get("Retry-After") ?? "1"
-            );
+            const retryAfterRaw = Number(playResponse.headers.get("Retry-After") ?? "1");
             const retryAfter = Number.isFinite(retryAfterRaw)
               ? Math.min(retryAfterRaw, retryAfterMaxMs / 1000)
               : 1;

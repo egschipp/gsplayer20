@@ -67,14 +67,13 @@ async function fetchArtistFromSpotify(
       ? Math.max(0, Math.floor(followersRaw))
       : null;
   const imageCandidate = Array.isArray(data?.images)
-    ? data.images.find(
+    ? (data.images.find(
         (image): image is { url: string } => typeof image?.url === "string"
-      ) ?? null
+      ) ?? null)
     : null;
   const imageUrl = imageCandidate?.url ?? null;
   return {
-    artistId:
-      typeof data?.id === "string" && data.id.trim() ? data.id : artistId,
+    artistId: typeof data?.id === "string" && data.id.trim() ? data.id : artistId,
     name,
     genres,
     popularity,
@@ -122,10 +121,7 @@ async function enrichArtistIfNeeded(
   }
 }
 
-export async function GET(
-  req: Request,
-  ctx: { params: Promise<{ artistId: string }> }
-) {
+export async function GET(req: Request, ctx: { params: Promise<{ artistId: string }> }) {
   const { response } = await requireAppUser();
   if (response) return response;
 

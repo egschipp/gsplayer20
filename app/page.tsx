@@ -10,7 +10,7 @@ const PlaylistBrowser = dynamic(() => import("./components/PlaylistBrowser"), {
 
 export default function HomePage() {
   return (
-    <main className="page page-mymusic">
+    <main id="main-content" tabIndex={-1} className="page page-mymusic">
       <PlaylistBrowser />
     </main>
   );

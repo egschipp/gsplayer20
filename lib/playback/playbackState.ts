@@ -3,11 +3,8 @@ import {
   type PlaybackFocus,
   type PlaybackFocusSource,
   type PlaybackFocusStatus,
-} from "@/app/components/player/playbackFocus";
-import type {
-  PlayerCommandType,
-  PlayerPlaybackStatus,
-} from "./playerControllerTypes";
+} from "./playbackFocus";
+import type { PlayerCommandType, PlayerPlaybackStatus } from "./playerControllerTypes";
 
 const STABLE_TRACK_SNAPSHOT_GRACE_MS = 15_000;
 
@@ -18,11 +15,7 @@ export type PlaybackSnapshot = {
   uiStatus: "empty" | "loading" | "ready" | "error";
   verifiedPlayable: boolean;
   reason:
-    | "ok"
-    | "no_track"
-    | "missing_match"
-    | "controller_initializing"
-    | "controller_error";
+    "ok" | "no_track" | "missing_match" | "controller_initializing" | "controller_error";
   stale: boolean;
   source: PlaybackFocusSource;
   updatedAt: number;
@@ -103,12 +96,15 @@ export function derivePlaybackSnapshot({
     lastStableFocus.trackId,
     lastStableFocus.matchTrackIds
   );
-  const hasStableTrack = Boolean(lastStableFocus.trackId && stableMatchTrackIds.length > 0);
+  const hasStableTrack = Boolean(
+    lastStableFocus.trackId && stableMatchTrackIds.length > 0
+  );
   const stableUpdatedAt = Number.isFinite(lastStableFocus.updatedAt)
     ? lastStableFocus.updatedAt
     : 0;
   const stableAgeMs = Math.max(0, now - stableUpdatedAt);
-  const stableTrackFresh = hasStableTrack && stableAgeMs <= STABLE_TRACK_SNAPSHOT_GRACE_MS;
+  const stableTrackFresh =
+    hasStableTrack && stableAgeMs <= STABLE_TRACK_SNAPSHOT_GRACE_MS;
   const initializing =
     pendingCommand === "play" ||
     pendingCommand === "toggle" ||
@@ -161,8 +157,8 @@ export function derivePlaybackSnapshot({
       status = initializing
         ? "loading"
         : lastStableFocus.isPlaying === false
-        ? "paused"
-        : "loading";
+          ? "paused"
+          : "loading";
       uiStatus = status === "loading" ? "loading" : "ready";
       verifiedPlayable = true;
       reason = initializing ? "controller_initializing" : "missing_match";
@@ -209,6 +205,10 @@ export function derivePlaybackSnapshot({
       verifiedPlayable = false;
       currentId = null;
       matchTrackIds = [];
+    } else if (initializing && status !== "playing") {
+      status = "loading";
+      uiStatus = "loading";
+      reason = "controller_initializing";
     } else if (status === "loading") {
       uiStatus = "loading";
     } else if (stale) {

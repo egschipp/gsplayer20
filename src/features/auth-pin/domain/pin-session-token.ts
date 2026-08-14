@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { PIN_COOKIE_MAX_AGE_SEC } from "../types/pin-auth.types";
 
 function base64Url(input: Buffer) {
   return input
@@ -17,13 +18,19 @@ function sign(payload: string, secret: string) {
   return base64Url(sig);
 }
 
+const PIN_SESSION_MAX_AGE_MS = PIN_COOKIE_MAX_AGE_SEC * 1000;
+
 export function createPinSessionToken(args: {
   secret: string;
   userAgent: string;
   issuedAtMs?: number;
 }) {
+  const issuedAt = args.issuedAtMs ?? Date.now();
   const payload = JSON.stringify({
-    iat: args.issuedAtMs ?? Date.now(),
+    v: 1,
+    aud: "gsplayer-pin-session",
+    iat: issuedAt,
+    exp: issuedAt + PIN_SESSION_MAX_AGE_MS,
     ua: sha256(args.userAgent),
   });
 

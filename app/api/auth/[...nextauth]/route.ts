@@ -24,8 +24,7 @@ type AuthRouteContext = {
 async function authHandler(req: NextRequest, ctx: AuthRouteContext) {
   const params = await ctx.params;
   if (!process.env.NEXTAUTH_URL) {
-    process.env.NEXTAUTH_URL =
-      process.env.AUTH_URL || new URL(req.url).origin;
+    process.env.NEXTAUTH_URL = process.env.AUTH_URL || new URL(req.url).origin;
   }
   const missing: string[] = [];
   if (!process.env.SPOTIFY_CLIENT_ID) missing.push("SPOTIFY_CLIENT_ID");
@@ -86,10 +85,7 @@ async function authHandler(req: NextRequest, ctx: AuthRouteContext) {
         data: { message: (error as Error)?.message ?? "Unknown error" },
       });
     }
-    return NextResponse.json(
-      { error: "NEXTAUTH_HANDLER_FAILED" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "NEXTAUTH_HANDLER_FAILED" }, { status: 500 });
   }
 }
 

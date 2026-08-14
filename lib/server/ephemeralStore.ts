@@ -6,6 +6,7 @@ type MemoryEntry = {
 };
 
 const memoryStore = new Map<string, MemoryEntry>();
+const MAX_MEMORY_ENTRIES = 10_000;
 let lastMemoryCleanupAt = 0;
 
 function getRedis() {
@@ -58,6 +59,10 @@ export async function ephemeralSetJson(
     }
   }
   cleanupMemory();
+  if (!memoryStore.has(key) && memoryStore.size >= MAX_MEMORY_ENTRIES) {
+    const oldestKey = memoryStore.keys().next().value as string | undefined;
+    if (oldestKey) memoryStore.delete(oldestKey);
+  }
   memoryStore.set(key, {
     value,
     expiresAt: Date.now() + safeTtlMs,
@@ -104,6 +109,10 @@ export async function ephemeralIncrWithTtl(key: string, ttlMs: number): Promise<
       ? Number(entry.value)
       : 0;
   const next = current + 1;
+  if (!memoryStore.has(key) && memoryStore.size >= MAX_MEMORY_ENTRIES) {
+    const oldestKey = memoryStore.keys().next().value as string | undefined;
+    if (oldestKey) memoryStore.delete(oldestKey);
+  }
   memoryStore.set(key, { value: next, expiresAt: now + safeTtlMs });
   return next;
 }

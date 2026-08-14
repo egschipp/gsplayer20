@@ -1,25 +1,4 @@
 /** @type {import('next').NextConfig} */
-const isProd = process.env.NODE_ENV === "production";
-const scriptSrc = isProd
-  ? "script-src 'self' 'unsafe-inline' https://sdk.scdn.co"
-  : "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://sdk.scdn.co";
-
-const contentSecurityPolicy = [
-  "default-src 'self'",
-  "base-uri 'self'",
-  "frame-ancestors 'none'",
-  "object-src 'none'",
-  scriptSrc,
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https:",
-  "font-src 'self' data:",
-  "media-src 'self' https:",
-  "connect-src 'self' https://api.spotify.com https://accounts.spotify.com https://api-partner.spotify.com https://*.spotify.com https://*.scdn.co wss://*.spotify.com wss://*.scdn.co",
-  "worker-src 'self' blob:",
-  "child-src 'self' blob: https://sdk.scdn.co https://*.scdn.co",
-  "frame-src 'self' https://open.spotify.com https://*.spotify.com https://sdk.scdn.co https://*.scdn.co",
-].join("; ");
-
 const nextConfig = {
   output: "standalone",
   async headers() {
@@ -27,10 +6,6 @@ const nextConfig = {
       {
         source: "/(.*)",
         headers: [
-          {
-            key: "Content-Security-Policy",
-            value: contentSecurityPolicy,
-          },
           {
             key: "Referrer-Policy",
             value: "strict-origin-when-cross-origin",
@@ -45,8 +20,7 @@ const nextConfig = {
           },
           {
             key: "Permissions-Policy",
-            value:
-              "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+            value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
           },
           {
             key: "Strict-Transport-Security",

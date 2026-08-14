@@ -5,15 +5,8 @@ import { tracks, userRecentlyPlayed } from "@/lib/db/schema";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { incCounter } from "@/lib/observability/metrics";
-import {
-  jsonNoStore,
-  rateLimitResponse,
-  requireAppUser,
-} from "@/lib/api/guards";
-import {
-  buildDataSourceMeta,
-  getSpotifyResourcePolicy,
-} from "@/lib/spotify/cachePolicy";
+import { jsonNoStore, rateLimitResponse, requireAppUser } from "@/lib/api/guards";
+import { buildDataSourceMeta, getSpotifyResourcePolicy } from "@/lib/spotify/cachePolicy";
 import {
   upsertArtist,
   upsertRecentlyPlayed,
@@ -126,9 +119,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const limitRaw = Number(searchParams.get("limit") ?? "30");
   const limit =
-    Number.isFinite(limitRaw) && limitRaw > 0
-      ? Math.min(Math.floor(limitRaw), 50)
-      : 30;
+    Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 50) : 30;
   const trackIdFilterRaw = searchParams.get("trackId");
   const trackIdFilter =
     trackIdFilterRaw && TRACK_ID_REGEX.test(trackIdFilterRaw) ? trackIdFilterRaw : null;
@@ -205,7 +196,9 @@ export async function GET(req: Request) {
                   const name = typeof artist?.name === "string" ? artist.name : "";
                   return artistId && name ? { id: artistId, name } : null;
                 })
-                .filter((artist): artist is { id: string; name: string } => Boolean(artist))
+                .filter((artist): artist is { id: string; name: string } =>
+                  Boolean(artist)
+                )
             : [],
         };
       })
@@ -328,7 +321,8 @@ export async function GET(req: Request) {
             asOf: Date.now(),
             staleSec: null,
             degraded: true,
-            degradeReason: error.status === 429 ? "live_rate_limited" : "live_spotify_upstream",
+            degradeReason:
+              error.status === 429 ? "live_rate_limited" : "live_spotify_upstream",
           }),
         });
       }

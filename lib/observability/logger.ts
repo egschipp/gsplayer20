@@ -86,4 +86,3 @@ export function getRecentErrors(limit = 20): LogRecord[] {
 export function clearRecentErrors(): void {
   errorBuffer.length = 0;
 }
-

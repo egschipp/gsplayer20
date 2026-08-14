@@ -47,7 +47,10 @@ function normalizeTrackId(value: string | null | undefined) {
   return embedded?.[0] ?? null;
 }
 
-function collectQueueItemTrackIds(item: { trackId?: string | null; uri?: string | null }) {
+function collectQueueItemTrackIds(item: {
+  trackId?: string | null;
+  uri?: string | null;
+}) {
   const out: string[] = [];
   const seen = new Set<string>();
   const push = (value: string | null | undefined) => {
@@ -238,14 +241,17 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
         const normalized = normalizeTrackId(value);
         if (normalized) activeTrackIds.add(normalized);
       }
-      const currentIndexByTrackId = findQueueIndexByTrackIds(snapshot.items, activeTrackIds);
+      const currentIndexByTrackId = findQueueIndexByTrackIds(
+        snapshot.items,
+        activeTrackIds
+      );
       const currentIndexByMatchIds = currentIndexByTrackId;
       const currentIndex =
         currentIndexByQueueId >= 0
           ? currentIndexByQueueId
           : currentIndexByTrackId >= 0
-          ? currentIndexByTrackId
-          : currentIndexByMatchIds;
+            ? currentIndexByTrackId
+            : currentIndexByMatchIds;
       const nextIndex = currentIndex + 1;
 
       if (nextIndex < 0 || nextIndex >= snapshot.items.length) {
@@ -291,16 +297,19 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
         const normalized = normalizeTrackId(value);
         if (normalized) activeTrackIds.add(normalized);
       }
-      const currentIndexByTrackId = findQueueIndexByTrackIds(snapshot.items, activeTrackIds);
+      const currentIndexByTrackId = findQueueIndexByTrackIds(
+        snapshot.items,
+        activeTrackIds
+      );
       const currentIndexByMatchIds = currentIndexByTrackId;
       const currentIndex =
         currentIndexByQueueId >= 0
           ? currentIndexByQueueId
           : currentIndexByTrackId >= 0
-          ? currentIndexByTrackId
-          : currentIndexByMatchIds >= 0
-          ? currentIndexByMatchIds
-          : 0;
+            ? currentIndexByTrackId
+            : currentIndexByMatchIds >= 0
+              ? currentIndexByMatchIds
+              : 0;
       const previousIndex = Math.max(0, currentIndex - 1);
       await playQueueAtIndex(snapshot, previousIndex);
     }).catch((err) => {
@@ -309,7 +318,13 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       setStartingQueueId(null);
       setError(mapPlaybackError(err));
     });
-  }, [currentTrackId, playbackState.matchTrackIds, playQueueAtIndex, runCommand, startingQueueId]);
+  }, [
+    currentTrackId,
+    playbackState.matchTrackIds,
+    playQueueAtIndex,
+    runCommand,
+    startingQueueId,
+  ]);
 
   useEffect(() => {
     if (queue.mode !== "queue") {
@@ -349,11 +364,10 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
     const preferredMatches = preferredItem ? collectQueueItemTrackIds(preferredItem) : [];
     const preferredMatchesCurrent = preferredMatches.some((id) => matchIds.has(id));
     const resolvedByMatchIndex = findQueueIndexByTrackIds(queue.items, matchIds);
-    const resolvedQueueId =
-      preferredMatchesCurrent
-        ? preferredItem?.queueId ?? null
-        : resolvedByMatchIndex >= 0
-        ? queue.items[resolvedByMatchIndex]?.queueId ?? null
+    const resolvedQueueId = preferredMatchesCurrent
+      ? (preferredItem?.queueId ?? null)
+      : resolvedByMatchIndex >= 0
+        ? (queue.items[resolvedByMatchIndex]?.queueId ?? null)
         : null;
     if (!resolvedQueueId) return;
 
@@ -377,7 +391,10 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
       void resumeFallbackContext();
       return;
     }
-    if (queue.currentQueueId && queue.items.some((item) => item.queueId === queue.currentQueueId)) {
+    if (
+      queue.currentQueueId &&
+      queue.items.some((item) => item.queueId === queue.currentQueueId)
+    ) {
       return;
     }
     const first = queue.items[0];
@@ -411,7 +428,9 @@ export function QueuePlaybackProvider({ children }: { children: React.ReactNode 
   );
 
   return (
-    <QueuePlaybackContext.Provider value={value}>{children}</QueuePlaybackContext.Provider>
+    <QueuePlaybackContext.Provider value={value}>
+      {children}
+    </QueuePlaybackContext.Provider>
   );
 }
 

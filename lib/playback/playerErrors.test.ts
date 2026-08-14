@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  getPlayerErrorMessage,
-  normalizePlayerError,
-} from "./playerErrors";
+import { getPlayerErrorMessage, normalizePlayerError } from "./playerErrors";
 
 test("normalizes spotify status codes into typed player errors", () => {
   const details = normalizePlayerError({
@@ -35,8 +32,5 @@ test("recognizes explicit player-not-ready messages", () => {
 });
 
 test("provides a stable fallback for unknown errors", () => {
-  assert.equal(
-    getPlayerErrorMessage("UNKNOWN"),
-    "Playback is unavailable right now."
-  );
+  assert.equal(getPlayerErrorMessage("UNKNOWN"), "Playback is unavailable right now.");
 });

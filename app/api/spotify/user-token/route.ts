@@ -1,9 +1,6 @@
 import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
 import { getValidAccessTokenForUser } from "@/lib/spotify/tokenManager";
-import {
-  createCorrelationId,
-  readCorrelationId,
-} from "@/lib/observability/correlation";
+import { createCorrelationId, readCorrelationId } from "@/lib/observability/correlation";
 
 export const runtime = "nodejs";
 

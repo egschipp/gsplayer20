@@ -21,4 +21,3 @@ export function ensureCorrelationId(headers: Headers): string {
   headers.set(CORRELATION_HEADER, generated);
   return generated;
 }
-

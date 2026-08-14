@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { oauthTokens } from "@/lib/db/schema";
-import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
+import { jsonNoStore, requireAdminUser } from "@/lib/api/guards";
 import {
   counterEntriesWindow,
   counterTotalWindow,
@@ -19,7 +19,9 @@ export const runtime = "nodejs";
 const METRICS_WINDOW_MS = Number(process.env.MONITORING_METRICS_WINDOW_MS || "600000");
 
 function isPlayerEndpoint(endpoint: string) {
-  const value = String(endpoint ?? "").trim().toLowerCase();
+  const value = String(endpoint ?? "")
+    .trim()
+    .toLowerCase();
   return value === "me_player" || value.startsWith("me_player_");
 }
 
@@ -29,7 +31,7 @@ function normalizeMetricsWindowMs() {
 }
 
 export async function GET() {
-  const { session, response } = await requireAppUser();
+  const { session, response } = await requireAdminUser();
   if (response) return response;
 
   const db = getDb();
@@ -105,8 +107,7 @@ export async function GET() {
   for (const row of requestCounters) {
     const statusClass = String(row.labels.status_class || "").toLowerCase();
     const endpoint = String(row.labels.endpoint || "unknown").trim() || "unknown";
-    const endpointPath =
-      String(row.labels.endpoint_path || endpoint).trim() || endpoint;
+    const endpointPath = String(row.labels.endpoint_path || endpoint).trim() || endpoint;
     const statusCode = String(row.labels.status_code || "").trim();
     const isExpectedPlayer404 =
       statusCode === "404" &&
@@ -179,11 +180,7 @@ export async function GET() {
     now
   );
   const rateLimitSnapshot = getSpotifyRateLimitSnapshot(now);
-  const rateLimitActivitySummary = getRateLimitActivitySummary(
-    metricsWindowMs,
-    8,
-    now
-  );
+  const rateLimitActivitySummary = getRateLimitActivitySummary(metricsWindowMs, 8, now);
   const slowActivitySummary = getSlowActivitySummary(metricsWindowMs, 8, now);
   const hasActiveBackoff = (rateLimitSnapshot.backoffRemainingMs ?? 0) > 0;
 
@@ -191,23 +188,20 @@ export async function GET() {
     typeof tokenRow?.accessExpiresAt === "number" && tokenRow.accessExpiresAt > 0
       ? Math.max(0, Math.floor((tokenRow.accessExpiresAt - now) / 1000))
       : null;
-  const userTokenStatus =
-    !tokenRow
-      ? "MISSING"
-      : expiresInSec == null
+  const userTokenStatus = !tokenRow
+    ? "MISSING"
+    : expiresInSec == null
       ? "MISSING_ACCESS"
       : expiresInSec <= 0
-      ? "EXPIRED"
-      : expiresInSec <= 120
-      ? "EXPIRING"
-      : refreshInvalidGrant > 0
-      ? "REAUTH_REQUIRED"
-      : "VALID";
+        ? "EXPIRED"
+        : expiresInSec <= 120
+          ? "EXPIRING"
+          : refreshInvalidGrant > 0
+            ? "REAUTH_REQUIRED"
+            : "VALID";
 
   const scopes =
-    typeof tokenRow?.scope === "string"
-      ? tokenRow.scope.split(" ").filter(Boolean)
-      : [];
+    typeof tokenRow?.scope === "string" ? tokenRow.scope.split(" ").filter(Boolean) : [];
 
   const errors = getRecentErrors(25).map((entry, index) => ({
     id: `${entry.ts}-${index}`,
@@ -276,11 +270,11 @@ export async function GET() {
     },
     authStatus: {
       status:
-        !session?.accessToken || !tokenRow
+        !session?.appUserId || !tokenRow
           ? "DISCONNECTED"
           : refreshInvalidGrant > 0
-          ? "REAUTH_REQUIRED"
-          : "CONNECTED",
+            ? "REAUTH_REQUIRED"
+            : "CONNECTED",
       scopes,
       userId: session.spotifyUserId ?? null,
       appUserId: session.appUserId ?? null,
@@ -326,8 +320,7 @@ export async function GET() {
         total: slowActivitySummary.total,
         topActivities: slowActivitySummary.byActivity,
         topEndpointPaths: slowActivitySummary.byEndpointPath,
-        negativeReliabilityActivities:
-          slowActivitySummary.negativeReliabilityActivities,
+        negativeReliabilityActivities: slowActivitySummary.negativeReliabilityActivities,
         negativeResponsivenessActivities:
           slowActivitySummary.negativeResponsivenessActivities,
       },
@@ -338,8 +331,8 @@ export async function GET() {
       status: hasActiveBackoff
         ? "active_backoff"
         : (count429 || 0) > 0
-        ? "recent_events"
-        : "clear",
+          ? "recent_events"
+          : "clear",
       backoffState: rateLimitSnapshot.backoffState,
       backoffRemainingMs: rateLimitSnapshot.backoffRemainingMs,
       backoffUntilTs: rateLimitSnapshot.backoffUntilTs,
@@ -369,16 +362,10 @@ export async function GET() {
         8,
         metricsWindowMs,
         now
-      ).map(
-        (row) => ({
-          endpoint: row.label,
-          rpm: Number(
-            (
-              row.value / Math.max(1, metricsWindowMs / 60000)
-            ).toFixed(1)
-          ),
-        })
-      ),
+      ).map((row) => ({
+        endpoint: row.label,
+        rpm: Number((row.value / Math.max(1, metricsWindowMs / 60000)).toFixed(1)),
+      })),
       topEndpointPaths: topCounterByLabelWindow(
         "spotify_api_requests_total",
         "endpoint_path",

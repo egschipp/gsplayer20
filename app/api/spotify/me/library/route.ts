@@ -64,19 +64,14 @@ export async function GET(req: Request) {
       position: playlistItems.position,
     })
     .from(playlistItems)
-    .innerJoin(
-      userPlaylists,
-      eq(userPlaylists.playlistId, playlistItems.playlistId)
-    )
+    .innerJoin(userPlaylists, eq(userPlaylists.playlistId, playlistItems.playlistId))
     .leftJoin(tracks, eq(tracks.trackId, playlistItems.trackId))
     .where(whereClause)
     .orderBy(desc(playlistItems.position), desc(playlistItems.itemId))
     .limit(limit);
 
   const last = rows[rows.length - 1];
-  const nextCursor = last
-    ? encodeCursor(last.position ?? 0, last.itemId)
-    : null;
+  const nextCursor = last ? encodeCursor(last.position ?? 0, last.itemId) : null;
 
   const sync = await db
     .select()

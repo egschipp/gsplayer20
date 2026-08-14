@@ -1,10 +1,5 @@
 export type SpotifyResourceKey =
-  | "player"
-  | "devices"
-  | "tracks"
-  | "playlists"
-  | "playlist_items"
-  | "recently_played";
+  "player" | "devices" | "tracks" | "playlists" | "playlist_items" | "recently_played";
 
 type SpotifyResourcePolicy = {
   cacheTtlMs: number;
@@ -56,7 +51,10 @@ export function getSpotifyResourcePolicy(resource: SpotifyResourceKey) {
   return RESOURCE_POLICY[resource];
 }
 
-export function computeStaleSec(lastSuccessfulAt: number | null | undefined, now = Date.now()) {
+export function computeStaleSec(
+  lastSuccessfulAt: number | null | undefined,
+  now = Date.now()
+) {
   if (!lastSuccessfulAt || !Number.isFinite(lastSuccessfulAt)) return null;
   return Math.max(0, Math.floor((now - lastSuccessfulAt) / 1000));
 }

@@ -1,6 +1,11 @@
 import crypto from "crypto";
 import { getSqlite } from "@/lib/db/client";
-import { decryptToken, encryptToken } from "@/lib/crypto";
+import {
+  decryptStoredToken,
+  decryptToken,
+  encryptStoredToken,
+  encryptToken,
+} from "@/lib/crypto";
 import { refreshAccessToken } from "@/lib/spotify/tokens";
 import { incCounter, observeHistogram } from "@/lib/observability/metrics";
 import { logEvent } from "@/lib/observability/logger";
@@ -21,6 +26,7 @@ type TokenResult =
       ok: false;
       code:
         | "MISSING_REFRESH_TOKEN"
+        | "REFRESH_EXPIRED"
         | "LOCK_TIMEOUT"
         | "INVALID_GRANT"
         | "REFRESH_FAILED";
@@ -86,14 +92,16 @@ function getOauthRow(userId: string) {
   const db = getSqlite();
   return db
     .prepare(
-      "SELECT refresh_token_enc, access_token, access_expires_at, scope FROM oauth_tokens WHERE user_id=?"
+      "SELECT refresh_token_enc, refresh_expires_at, access_token, access_expires_at, scope, enc_key_version FROM oauth_tokens WHERE user_id=?"
     )
     .get(userId) as
     | {
         refresh_token_enc: string;
+        refresh_expires_at: number | null;
         access_token: string | null;
         access_expires_at: number | null;
         scope: string | null;
+        enc_key_version: number;
       }
     | undefined;
 }
@@ -118,7 +126,7 @@ function storeOauthRow(args: {
       WHERE user_id=?`
   ).run(
     encrypted.payload,
-    args.accessToken,
+    encryptStoredToken(args.accessToken),
     args.accessExpiresAt,
     args.scope,
     encrypted.keyVersion,
@@ -130,6 +138,13 @@ function storeOauthRow(args: {
 function clearOauthRow(userId: string) {
   const db = getSqlite();
   db.prepare("DELETE FROM oauth_tokens WHERE user_id=?").run(userId);
+}
+
+function migrateLegacyAccessToken(userId: string, stored: string | null, token: string) {
+  if (!stored || stored.startsWith("enc:v")) return;
+  getSqlite()
+    .prepare("UPDATE oauth_tokens SET access_token=?, updated_at=? WHERE user_id=?")
+    .run(encryptStoredToken(token), Date.now(), userId);
 }
 
 function accessTokenStillValid(
@@ -155,11 +170,13 @@ export async function getValidAccessTokenForUser(args: {
 
   if (
     !args.forceRefresh &&
-    accessTokenStillValid(row.access_token, row.access_expires_at)
+    accessTokenStillValid(decryptStoredToken(row.access_token), row.access_expires_at)
   ) {
+    const accessToken = decryptStoredToken(row.access_token)!;
+    migrateLegacyAccessToken(args.userId, row.access_token, accessToken);
     return {
       ok: true,
-      accessToken: row.access_token,
+      accessToken,
       accessExpiresAt: row.access_expires_at,
       scope: row.scope,
     };
@@ -175,11 +192,9 @@ export async function getValidAccessTokenForUser(args: {
     await sleep(LOCK_POLL_MS);
   }
 
-  observeHistogram(
-    "spotify_refresh_lock_wait_ms",
-    Date.now() - lockWaitStarted,
-    { source: "token_manager" }
-  );
+  observeHistogram("spotify_refresh_lock_wait_ms", Date.now() - lockWaitStarted, {
+    source: "token_manager",
+  });
 
   try {
     row = getOauthRow(args.userId);
@@ -187,23 +202,30 @@ export async function getValidAccessTokenForUser(args: {
       return { ok: false, code: "MISSING_REFRESH_TOKEN" };
     }
 
+    if (row.refresh_expires_at && row.refresh_expires_at <= Date.now()) {
+      clearOauthRow(args.userId);
+      return { ok: false, code: "REFRESH_EXPIRED" };
+    }
+
     if (
       !args.forceRefresh &&
-      accessTokenStillValid(row.access_token, row.access_expires_at)
+      accessTokenStillValid(decryptStoredToken(row.access_token), row.access_expires_at)
     ) {
+      const accessToken = decryptStoredToken(row.access_token)!;
+      migrateLegacyAccessToken(args.userId, row.access_token, accessToken);
       return {
         ok: true,
-        accessToken: row.access_token,
+        accessToken,
         accessExpiresAt: row.access_expires_at,
         scope: row.scope,
       };
     }
 
-    const refreshToken = decryptToken(row.refresh_token_enc);
+    const refreshToken = decryptToken(row.refresh_token_enc, row.enc_key_version);
     const started = Date.now();
     const refreshed = await refreshAccessToken({
       refreshToken,
-      accessToken: row.access_token ?? undefined,
+      accessToken: decryptStoredToken(row.access_token) ?? undefined,
       accessTokenExpires: row.access_expires_at ?? undefined,
       scope: row.scope ?? undefined,
     });
@@ -261,4 +283,3 @@ export async function getValidAccessTokenForUser(args: {
     releaseRefreshLock(args.userId, ownerId);
   }
 }
-

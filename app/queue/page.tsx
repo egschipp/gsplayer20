@@ -10,7 +10,7 @@ const QueuePageClient = dynamic(() => import("@/components/queue/QueuePageClient
 
 export default function QueuePage() {
   return (
-    <main className="page page-queue">
+    <main id="main-content" tabIndex={-1} className="page page-queue">
       <QueuePageClient />
     </main>
   );

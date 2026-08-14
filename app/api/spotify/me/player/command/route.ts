@@ -10,10 +10,7 @@ import {
   requireAppUser,
   requireSameOrigin,
 } from "@/lib/api/guards";
-import {
-  ephemeralGetJson,
-  ephemeralSetJson,
-} from "@/lib/server/ephemeralStore";
+import { ephemeralGetJson, ephemeralSetJson } from "@/lib/server/ephemeralStore";
 
 export const runtime = "nodejs";
 
@@ -164,17 +161,15 @@ export async function POST(req: NextRequest) {
   });
   if (rl) return rl;
 
-  const body = (await req.json().catch(() => null)) as
-    | {
-        method?: string;
-        endpoint?: string;
-        search?: string;
-        payload?: unknown;
-        commandId?: string;
-        expectedDeviceId?: string;
-        intentSeq?: number;
-      }
-    | null;
+  const body = (await req.json().catch(() => null)) as {
+    method?: string;
+    endpoint?: string;
+    search?: string;
+    payload?: unknown;
+    commandId?: string;
+    expectedDeviceId?: string;
+    intentSeq?: number;
+  } | null;
 
   const method = String(body?.method ?? "GET").toUpperCase();
   const endpoint = String(body?.endpoint ?? "");
@@ -214,7 +209,9 @@ export async function POST(req: NextRequest) {
 
   if (isMutatingCommand && expectedDeviceId && !hasExplicitDeviceTarget) {
     try {
-      const current = await spotifyFetch<{ device?: { id?: string | null } | null } | undefined>({
+      const current = await spotifyFetch<
+        { device?: { id?: string | null } | null } | undefined
+      >({
         url: "https://api.spotify.com/v1/me/player",
         userLevel: true,
         activity: "me_player_command_device_conflict_check",

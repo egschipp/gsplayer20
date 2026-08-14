@@ -31,8 +31,8 @@ async function withEnv(temp: Partial<NodeJS.ProcessEnv>, fn: () => Promise<void>
 test("health use-case reports healthy payload when required env and probe are valid", async () => {
   await withEnv(
     {
-      AUTH_SECRET: "secret",
-      APP_PIN: "1234",
+      AUTH_SECRET: "0123456789abcdef0123456789abcdef",
+      APP_PIN: "123456",
       TOKEN_ENCRYPTION_KEY: Buffer.alloc(32).toString("base64"),
       SPOTIFY_CLIENT_ID: "spotify-client-id",
       SPOTIFY_CLIENT_SECRET: "spotify-client-secret",
@@ -81,16 +81,13 @@ test("health use-case reports missing env and db failure", async () => {
       assert.equal(result.db, "ERROR");
       assert.equal(result.worker, "UNKNOWN");
       assert.equal(result.now, 456);
-      assert.deepEqual(
-        result.missing,
-        [
-          "AUTH_SECRET/NEXTAUTH_SECRET",
-          "APP_PIN/PIN_CODE",
-          "SPOTIFY_CLIENT_ID",
-          "SPOTIFY_CLIENT_SECRET",
-          "TOKEN_ENCRYPTION_KEY_INVALID_LENGTH",
-        ]
-      );
+      assert.deepEqual(result.missing, [
+        "AUTH_SECRET/NEXTAUTH_SECRET",
+        "APP_PIN/PIN_CODE",
+        "SPOTIFY_CLIENT_ID",
+        "SPOTIFY_CLIENT_SECRET",
+        "TOKEN_ENCRYPTION_KEY_INVALID_LENGTH",
+      ]);
     }
   );
 });

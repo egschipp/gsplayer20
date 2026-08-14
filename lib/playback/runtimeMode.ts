@@ -1,9 +1,5 @@
 export type PlaybackExecutionMode =
-  | "idle"
-  | "local_sdk"
-  | "remote_connect"
-  | "handoff_pending"
-  | "degraded";
+  "idle" | "local_sdk" | "remote_connect" | "handoff_pending" | "degraded";
 
 type ResolvePlaybackSyncOwnershipInput = {
   executionMode: PlaybackExecutionMode;
@@ -56,9 +52,7 @@ export function resolvePlaybackExecutionMode(
   return "degraded";
 }
 
-export function resolvePlaybackSyncOwnership(
-  input: ResolvePlaybackSyncOwnershipInput
-) {
+export function resolvePlaybackSyncOwnership(input: ResolvePlaybackSyncOwnershipInput) {
   const activeDeviceId = normalizeId(input.activeDeviceId);
   const sdkDeviceId = normalizeId(input.sdkDeviceId);
   const isLeader = input.isLeader === true;

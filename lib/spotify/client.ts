@@ -4,10 +4,7 @@ import { getAuthOptions } from "@/lib/auth/options";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { createCorrelationId } from "@/lib/observability/correlation";
 import { getValidAccessTokenForUser } from "@/lib/spotify/tokenManager";
-import {
-  SpotifyApiError,
-  spotifyApiRequest,
-} from "@/lib/spotify/spotifyApiClient";
+import { SpotifyApiError, spotifyApiRequest } from "@/lib/spotify/spotifyApiClient";
 import { bumpUserCacheVersion } from "@/lib/spotify/requestCache";
 import {
   inferSpotifyRequestPriority,
@@ -16,7 +13,10 @@ import {
 
 const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_FETCH_TIMEOUT_MS || "8000");
 
-function mapToFetchError(error: unknown, fallbackCorrelationId: string): SpotifyFetchError {
+function mapToFetchError(
+  error: unknown,
+  fallbackCorrelationId: string
+): SpotifyFetchError {
   if (error instanceof SpotifyApiError) {
     return new SpotifyFetchError(error.status, error.body || error.code, {
       code: error.code,
@@ -30,10 +30,10 @@ function mapToFetchError(error: unknown, fallbackCorrelationId: string): Spotify
   });
 }
 
-function resolveCachePolicy(args: {
-  url: string;
-  method: string;
-}): { cacheTtlMs: number; dedupeWindowMs: number } {
+function resolveCachePolicy(args: { url: string; method: string }): {
+  cacheTtlMs: number;
+  dedupeWindowMs: number;
+} {
   const method = args.method.toUpperCase();
   if (method !== "GET") {
     return { cacheTtlMs: 0, dedupeWindowMs: 250 };
@@ -56,7 +56,10 @@ function resolveCachePolicy(args: {
     if (path.startsWith("/v1/me/tracks") || path.startsWith("/v1/me/playlists")) {
       return { cacheTtlMs: 6000, dedupeWindowMs: 1200 };
     }
-    if (path.startsWith("/v1/me/top") || path.startsWith("/v1/me/player/recently-played")) {
+    if (
+      path.startsWith("/v1/me/top") ||
+      path.startsWith("/v1/me/player/recently-played")
+    ) {
       return { cacheTtlMs: 15000, dedupeWindowMs: 2000 };
     }
   } catch {

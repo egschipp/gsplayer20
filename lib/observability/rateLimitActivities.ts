@@ -25,9 +25,7 @@ type TopEntry = {
   count: number;
 };
 
-const MAX_ENTRIES = Number(
-  process.env.RATE_LIMIT_ACTIVITY_LOG_MAX_ENTRIES || "2000"
-);
+const MAX_ENTRIES = Number(process.env.RATE_LIMIT_ACTIVITY_LOG_MAX_ENTRIES || "2000");
 const RETENTION_MS = Number(
   process.env.RATE_LIMIT_ACTIVITY_LOG_RETENTION_MS || "86400000"
 );
@@ -50,10 +48,7 @@ function normalizeText(value: string | null | undefined, fallback: string): stri
 }
 
 function prune(now = Date.now()): void {
-  if (
-    now - lastPruneAt < PRUNE_INTERVAL_MS &&
-    entries.length <= MAX_ENTRIES
-  ) {
+  if (now - lastPruneAt < PRUNE_INTERVAL_MS && entries.length <= MAX_ENTRIES) {
     return;
   }
   lastPruneAt = now;
@@ -198,10 +193,7 @@ export function getRecentRateLimitActivities(
   return recent;
 }
 
-function topFromMap(
-  map: Map<string, number>,
-  limit: number
-): TopEntry[] {
+function topFromMap(map: Map<string, number>, limit: number): TopEntry[] {
   return Array.from(map.entries())
     .map(([label, count]) => ({ label, count }))
     .sort((a, b) => b.count - a.count)

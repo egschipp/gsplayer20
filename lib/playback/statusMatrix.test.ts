@@ -43,4 +43,3 @@ test("returns idle for non-active track", () => {
   });
   assert.equal(status, "idle");
 });
-

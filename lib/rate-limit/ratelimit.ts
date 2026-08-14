@@ -6,6 +6,7 @@ type Bucket = {
 };
 
 const buckets = new Map<string, Bucket>();
+const MAX_MEMORY_BUCKETS = 10_000;
 let lastCleanupAt = 0;
 
 function getRedis() {
@@ -47,6 +48,10 @@ export async function rateLimit(key: string, limit = 60, windowMs = 60_000) {
   const bucket = buckets.get(key);
 
   if (!bucket || now > bucket.resetAt) {
+    if (buckets.size >= MAX_MEMORY_BUCKETS) {
+      const oldestKey = buckets.keys().next().value as string | undefined;
+      if (oldestKey) buckets.delete(oldestKey);
+    }
     buckets.set(key, { count: 1, resetAt: now + windowMs });
     return { allowed: true, remaining: limit - 1, resetAt: now + windowMs };
   }

@@ -18,4 +18,3 @@ export async function clientFetch(input: string, init: RequestInit = {}) {
     cache: init.cache ?? "no-store",
   });
 }
-

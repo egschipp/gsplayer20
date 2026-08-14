@@ -66,7 +66,8 @@ function readSnapshot(): ViewportSnapshot {
   const orientation: ViewportOrientation =
     visualWidth > visualHeight ? "landscape" : "portrait";
   const dpr =
-    typeof window.devicePixelRatio === "number" && Number.isFinite(window.devicePixelRatio)
+    typeof window.devicePixelRatio === "number" &&
+    Number.isFinite(window.devicePixelRatio)
       ? window.devicePixelRatio
       : 1;
 

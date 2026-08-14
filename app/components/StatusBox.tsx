@@ -53,18 +53,11 @@ function Badge({ label, tone }: { label: string; tone?: BadgeTone }) {
     tone === "ok"
       ? "pill pill-success"
       : tone === "error"
-      ? "pill pill-error"
-      : tone === "info"
-      ? "pill pill-info"
-      : "pill pill-warn";
-  const icon =
-    tone === "ok"
-      ? "✔"
-      : tone === "error"
-      ? "✖"
-      : tone === "info"
-      ? "ℹ"
-      : "⚠";
+        ? "pill pill-error"
+        : tone === "info"
+          ? "pill pill-info"
+          : "pill pill-warn";
+  const icon = tone === "ok" ? "✔" : tone === "error" ? "✖" : tone === "info" ? "ℹ" : "⚠";
   return (
     <span className={cls}>
       <span aria-hidden="true">{icon}</span>
@@ -108,10 +101,7 @@ function toneFromStatus(value: string | null | undefined): BadgeTone {
   return "warn";
 }
 
-function buildApiUrl(
-  path: string,
-  params?: Record<string, string | null | undefined>
-) {
+function buildApiUrl(path: string, params?: Record<string, string | null | undefined>) {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params ?? {})) {
     if (value == null || value === "") continue;
@@ -148,6 +138,7 @@ export default function StatusBox({
   const [playlistMap, setPlaylistMap] = useState<PlaylistMap>({});
   const [versionInfo, setVersionInfo] = useState<VersionInfo>(null);
   const [syncing, setSyncing] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [loadingPlaylists, setLoadingPlaylists] = useState(false);
   const [resourceNameMap, setResourceNameMap] = useState<ResourceNameMap>({});
   const [resourceUpdateState, setResourceUpdateState] = useState<
@@ -212,12 +203,10 @@ export default function StatusBox({
             { cache: "no-store" }
           );
           if (!res.ok) break;
-          const data = (await res.json().catch(() => null)) as
-            | {
-                items?: Array<{ playlistId?: string; name?: string }>;
-                nextCursor?: string | null;
-              }
-            | null;
+          const data = (await res.json().catch(() => null)) as {
+            items?: Array<{ playlistId?: string; name?: string }>;
+            nextCursor?: string | null;
+          } | null;
           const items = Array.isArray(data?.items) ? data.items : [];
           for (const item of items) {
             const playlistId =
@@ -262,9 +251,9 @@ export default function StatusBox({
         return;
       }
 
-      const appPayload = (await appRes.json().catch(() => null)) as
-        | { status?: string }
-        | null;
+      const appPayload = (await appRes.json().catch(() => null)) as {
+        status?: string;
+      } | null;
       if (appPayload?.status) {
         setAppStatus(appPayload as AppStatus);
       } else if (!appRes.ok) {
@@ -274,9 +263,7 @@ export default function StatusBox({
       }
 
       const userPayload = (await userRes.json().catch(() => null)) as
-        | UserStatus
-        | { status?: string }
-        | null;
+        UserStatus | { status?: string } | null;
       if (userPayload?.status) {
         setUserStatus(userPayload as UserStatus);
       } else {
@@ -302,7 +289,23 @@ export default function StatusBox({
 
   async function logoutPin() {
     await fetch("/api/pin-logout", { method: "POST" });
-    window.location.href = "/login";
+    window.open("/login", "_self");
+  }
+
+  async function deleteAccountData() {
+    const confirmed = window.confirm(
+      "Alle aan dit Spotify-account gekoppelde GSPlayer-data verwijderen? Dit kan niet ongedaan worden gemaakt."
+    );
+    if (!confirmed) return;
+    setDeletingAccount(true);
+    try {
+      const response = await fetch("/api/account/data", { method: "DELETE" });
+      if (!response.ok) throw new Error("DELETE_FAILED");
+      window.open("/api/auth/logout", "_self");
+    } catch {
+      window.alert("Verwijderen is mislukt. Probeer het opnieuw.");
+      setDeletingAccount(false);
+    }
   }
 
   useEffect(() => {
@@ -311,11 +314,11 @@ export default function StatusBox({
     const fast = setInterval(() => {
       if (document.visibilityState !== "visible") return;
       refresh();
-    }, 5000);
+    }, 15000);
     const slow = setInterval(() => {
       if (document.visibilityState !== "visible") return;
       refreshAuthStatus();
-    }, 15000);
+    }, 60000);
     return () => {
       clearInterval(fast);
       clearInterval(slow);
@@ -470,17 +473,25 @@ export default function StatusBox({
     },
   ];
   const connectionMessage =
-    userStatus?.status === "OK"
-      ? "Verbonden met Spotify."
+    userStatus?.status === "OK" ||
+    userStatus?.status === "OK_LIMITED" ||
+    userStatus?.status === "OK_REAUTH_SOON"
+      ? userStatus.status === "OK_LIMITED"
+        ? "Verbonden met Spotify; enkele functies missen toestemming."
+        : userStatus.status === "OK_REAUTH_SOON"
+          ? "Verbonden met Spotify; opnieuw koppelen is binnenkort nodig."
+          : "Verbonden met Spotify."
       : userStatus?.status === "ERROR_SCOPES"
-      ? "Spotify-rechten ontbreken. Log opnieuw in."
-      : userStatus?.status === "ERROR_REVOKED"
-      ? "Spotify-toegang is ingetrokken. Log opnieuw in."
-      : userStatus?.status === "ERROR_RATE_LIMIT"
-      ? "Inlogstatus wordt te vaak opgevraagd. Even wachten."
-      : userStatus?.status === "ERROR_NETWORK"
-      ? "Spotify is tijdelijk niet bereikbaar."
-      : "Niet verbonden met Spotify.";
+        ? "Spotify-rechten ontbreken. Log opnieuw in."
+        : userStatus?.status === "ERROR_REVOKED"
+          ? "Spotify-toegang is ingetrokken. Log opnieuw in."
+          : userStatus?.status === "ERROR_REAUTH_REQUIRED"
+            ? "De Spotify-koppeling is verlopen. Koppel het account opnieuw."
+            : userStatus?.status === "ERROR_RATE_LIMIT"
+              ? "Inlogstatus wordt te vaak opgevraagd. Even wachten."
+              : userStatus?.status === "ERROR_NETWORK"
+                ? "Spotify is tijdelijk niet bereikbaar."
+                : "Niet verbonden met Spotify.";
   const showConnectionPanel = mode === "full";
   const showActionPanel = mode === "full";
   const showResourcePanel = true;
@@ -498,16 +509,16 @@ export default function StatusBox({
         if (!resource.startsWith("playlist_items:")) return null;
         const playlistId = resource.split(":")[1] ?? "";
         if (!playlistId) return null;
-        const fallbackName = playlistMap[playlistId]?.name ?? `Playlist ${playlistId.slice(0, 6)}`;
+        const fallbackName =
+          playlistMap[playlistId]?.name ?? `Playlist ${playlistId.slice(0, 6)}`;
         const displayName =
-          resourceNameMap[resource] ||
-          playlistMap[playlistId]?.name ||
-          fallbackName;
+          resourceNameMap[resource] || playlistMap[playlistId]?.name || fallbackName;
         return {
           resource,
           playlistId,
           displayName,
-          status: String((row as SyncResourceRow)?.status ?? "").toUpperCase() || "UNKNOWN",
+          status:
+            String((row as SyncResourceRow)?.status ?? "").toUpperCase() || "UNKNOWN",
           lastSuccessfulAt:
             typeof (row as SyncResourceRow)?.lastSuccessfulAt === "number"
               ? Number((row as SyncResourceRow).lastSuccessfulAt)
@@ -568,20 +579,20 @@ export default function StatusBox({
     ? selectedSyncUpdateState === "success"
       ? "OK"
       : selectedSyncUpdateState === "error"
-      ? "FAILED"
-      : selectedSyncUpdateState === "running"
-      ? "RUNNING"
-      : selectedSyncRow?.status ?? "UNKNOWN"
-    : selectedSyncRow?.status ?? "UNKNOWN";
+        ? "FAILED"
+        : selectedSyncUpdateState === "running"
+          ? "RUNNING"
+          : (selectedSyncRow?.status ?? "UNKNOWN")
+    : (selectedSyncRow?.status ?? "UNKNOWN");
   const selectedSyncTone = toneFromStatus(selectedSyncStatus);
   const selectedSyncStatusLabel =
     selectedSyncUpdateState === "success"
       ? "Afgerond"
       : selectedSyncUpdateState === "error"
-      ? "Mislukt"
-      : selectedSyncUpdateState === "running"
-      ? "Bezig"
-      : formatResourceStatus(selectedSyncStatus);
+        ? "Mislukt"
+        : selectedSyncUpdateState === "running"
+          ? "Bezig"
+          : formatResourceStatus(selectedSyncStatus);
   const selectedSyncLastSuccessfulAt = selectedSyncRow?.lastSuccessfulAt ?? null;
 
   const syncSelectedPlaylist = useCallback(
@@ -649,9 +660,7 @@ export default function StatusBox({
     >
       {showHeader ? (
         <div className="account-header">
-          <div className="account-panel-title">
-            {embedded ? embeddedTitle : ""}
-          </div>
+          <div className="account-panel-title">{embedded ? embeddedTitle : ""}</div>
           <div className="account-version">
             <div className="account-panel-title">Versie</div>
             <div className="account-version-value">{versionInfo?.version ?? "n/a"}</div>
@@ -664,7 +673,10 @@ export default function StatusBox({
           <div className="panel account-panel span-6">
             <div className="account-panel-title">Spotify‑koppeling</div>
             <div className="account-connection">
-              {userStatus?.status === "OK" && userStatus.profile ? (
+              {(userStatus?.status === "OK" ||
+                userStatus?.status === "OK_LIMITED" ||
+                userStatus?.status === "OK_REAUTH_SOON") &&
+              userStatus.profile ? (
                 <div className="account-user">
                   <div className="account-user-avatar">
                     {userStatus.profile.images?.[0]?.url ? (
@@ -684,9 +696,7 @@ export default function StatusBox({
                       {userStatus.profile.display_name ?? "Spotify gebruiker"}
                     </div>
                     <div className="text-subtle">
-                      {userStatus.profile.email ?? "Geen e-mail"} ·{" "}
-                      {userStatus.profile.country ?? "—"} ·{" "}
-                      {userStatus.profile.product ?? "free"}
+                      Abonnement: {userStatus.profile.product ?? "onbekend"}
                     </div>
                     <div className="text-subtle">
                       Spotify ID: {userStatus.profile.id ?? "—"}
@@ -707,7 +717,7 @@ export default function StatusBox({
                   type="button"
                   className="btn btn-secondary"
                   onClick={() => {
-                    window.location.href = "/api/auth/login";
+                    window.open("/api/auth/login", "_self");
                   }}
                 >
                   Spotify login
@@ -716,10 +726,23 @@ export default function StatusBox({
                   type="button"
                   className="btn btn-ghost"
                   onClick={() => {
-                    window.location.href = "/api/auth/logout";
+                    window.open("/api/auth/logout", "_self");
                   }}
                 >
-                  Spotify logout
+                  Spotify ontkoppelen
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={deleteAccountData}
+                  disabled={
+                    deletingAccount ||
+                    (userStatus?.status !== "OK" &&
+                      userStatus?.status !== "OK_LIMITED" &&
+                      userStatus?.status !== "OK_REAUTH_SOON")
+                  }
+                >
+                  {deletingAccount ? "Verwijderen…" : "Accountdata verwijderen"}
                 </button>
               </div>
             </div>
@@ -727,53 +750,53 @@ export default function StatusBox({
         ) : null}
 
         {showStatusPanel ? (
-        <div className={`panel account-panel ${statusPanelSpan}`}>
-          <div className="account-panel-title">
-            {mode === "basic-core" ? "Bibliotheekoverzicht" : "Status"}
-          </div>
-          {showStatusMeta ? (
-            <div className="status-badges">
-              {statusBadgeItems.map((item) => (
-                <Badge key={item.label} label={item.label} tone={item.tone} />
-              ))}
+          <div className={`panel account-panel ${statusPanelSpan}`}>
+            <div className="account-panel-title">
+              {mode === "basic-core" ? "Bibliotheekoverzicht" : "Status"}
             </div>
-          ) : null}
-
-          {showStatusMeta ? (
-            <div className="text-body status-summary">
-              <div>
-                Laatst bijgewerkt:{" "}
-                <time dateTime={dbStatus?.sync?.lastSuccessfulAt?.toString()}>
-                  {lastSync}
-                </time>
+            {showStatusMeta ? (
+              <div className="status-badges">
+                {statusBadgeItems.map((item) => (
+                  <Badge key={item.label} label={item.label} tone={item.tone} />
+                ))}
               </div>
-              <div>
-                Worker controle:{" "}
-                <time dateTime={workerHealth?.lastHeartbeat?.toString()}>
-                  {workerLast}
-                </time>
-              </div>
-            </div>
-          ) : null}
-          <div className="sr-only" aria-live="polite">
-            {runningInfo.label}
-          </div>
+            ) : null}
 
-          {showOverviewCounts ? (
-            <div className="status-grid compact">
-              {importantCounts.length
-                ? importantCounts.map((row) => (
-                    <div key={row.key} className="panel">
-                      <span className="count-icon" aria-hidden="true">
-                        {row.icon}
-                      </span>
-                      <strong>{row.label}</strong>: {row.value}
-                    </div>
-                  ))
-                : "Geen statusdata beschikbaar."}
+            {showStatusMeta ? (
+              <div className="text-body status-summary">
+                <div>
+                  Laatst bijgewerkt:{" "}
+                  <time dateTime={dbStatus?.sync?.lastSuccessfulAt?.toString()}>
+                    {lastSync}
+                  </time>
+                </div>
+                <div>
+                  Worker controle:{" "}
+                  <time dateTime={workerHealth?.lastHeartbeat?.toString()}>
+                    {workerLast}
+                  </time>
+                </div>
+              </div>
+            ) : null}
+            <div className="sr-only" aria-live="polite">
+              {runningInfo.label}
             </div>
-          ) : null}
-        </div>
+
+            {showOverviewCounts ? (
+              <div className="status-grid compact">
+                {importantCounts.length
+                  ? importantCounts.map((row) => (
+                      <div key={row.key} className="panel">
+                        <span className="count-icon" aria-hidden="true">
+                          {row.icon}
+                        </span>
+                        <strong>{row.label}</strong>: {row.value}
+                      </div>
+                    ))
+                  : "Geen statusdata beschikbaar."}
+              </div>
+            ) : null}
+          </div>
         ) : null}
 
         {showActionPanel ? (
@@ -885,7 +908,10 @@ export default function StatusBox({
               </label>
 
               <div className="account-sync-picker-status">
-                <Badge label={`Status: ${selectedSyncStatusLabel}`} tone={selectedSyncTone} />
+                <Badge
+                  label={`Status: ${selectedSyncStatusLabel}`}
+                  tone={selectedSyncTone}
+                />
                 <span className="text-subtle">
                   Laatste sync:{" "}
                   {selectedSyncLastSuccessfulAt
@@ -893,7 +919,9 @@ export default function StatusBox({
                     : "n/a"}
                 </span>
                 {selectedSyncRow?.lastErrorCode ? (
-                  <span className="text-subtle">Foutcode: {selectedSyncRow.lastErrorCode}</span>
+                  <span className="text-subtle">
+                    Foutcode: {selectedSyncRow.lastErrorCode}
+                  </span>
                 ) : null}
                 {selectedSyncUpdateState === "running" ? (
                   <span className="account-resource-spinner" aria-hidden="true" />
@@ -903,7 +931,9 @@ export default function StatusBox({
               <div className="account-sync-picker-actions">
                 <button
                   className="btn btn-secondary account-resource-cta"
-                  disabled={!selectedSyncPlaylistId || selectedSyncUpdateState === "running"}
+                  disabled={
+                    !selectedSyncPlaylistId || selectedSyncUpdateState === "running"
+                  }
                   onClick={async () => {
                     if (!selectedSyncPlaylistId) return;
                     await syncSelectedPlaylist(selectedSyncPlaylistId);
@@ -915,7 +945,8 @@ export default function StatusBox({
             </div>
           ) : (
             <div className="text-subtle">
-              Nog geen synchroniseerbare lijsten gevonden. Start eerst een bibliotheek sync.
+              Nog geen synchroniseerbare lijsten gevonden. Start eerst een bibliotheek
+              sync.
             </div>
           )}
         </div>

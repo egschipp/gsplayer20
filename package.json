@@ -22,11 +22,13 @@
     "test:compile": "node scripts/test/clean.mjs && tsc -p tsconfig.test.json",
     "test:run:unit": "node scripts/test/run-tests.mjs unit",
     "test:run:integration": "node scripts/test/run-tests.mjs integration",
-    "test:coverage": "npm run test:compile && node scripts/test/run-tests.mjs all --coverage",
+    "test:worker": "node --test worker/*.test.cjs",
+    "test:worker:coverage": "node --test --experimental-test-coverage --test-coverage-lines=85 --test-coverage-branches=70 --test-coverage-functions=85 worker/*.test.cjs",
+    "test:coverage": "npm run test:compile && node scripts/test/run-tests.mjs all --coverage && npm run test:worker:coverage",
     "test:e2e": "playwright test",
     "test:unit": "npm run test:compile && npm run test:run:unit",
     "test:integration": "npm run test:compile && npm run test:run:integration",
-    "test": "npm run test:compile && npm run test:run:unit && npm run test:run:integration",
+    "test": "npm run test:compile && npm run test:run:unit && npm run test:run:integration && npm run test:worker",
     "quality:architecture": "node scripts/quality/check-architecture.mjs"
   },
   "dependencies": {

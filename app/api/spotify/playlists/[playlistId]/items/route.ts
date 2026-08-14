@@ -21,12 +21,16 @@ import {
   requireSameOrigin,
 } from "@/lib/api/guards";
 import { spotifyFetch } from "@/lib/spotify/client";
-import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { incCounter, observeHistogram } from "@/lib/observability/metrics";
+import {
+  mapLivePlaylistItems,
+  normalizeSpotifyTotal,
+  normalizeTrackId,
+  type SpotifyPlaylistItemsResponse,
+} from "@/lib/spotify/playlistItems";
+import { mapSpotifyRouteError } from "@/lib/spotify/routeError";
 
 export const runtime = "nodejs";
-
-const TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
 
 function createMutationId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -35,23 +39,11 @@ function createMutationId() {
   return `mut_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function normalizeTrackId(value: unknown) {
-  if (typeof value !== "string") return null;
-  const raw = value.trim();
-  if (!raw) return null;
-  if (TRACK_ID_REGEX.test(raw)) return raw;
-  if (raw.startsWith("spotify:track:")) {
-    const id = raw.split(":").pop() ?? "";
-    return TRACK_ID_REGEX.test(id) ? id : null;
-  }
-  try {
-    const url = new URL(raw);
-    const match = url.pathname.match(/\/track\/([A-Za-z0-9]{22})/);
-    if (match?.[1]) return match[1];
-  } catch {
-    // ignore
-  }
-  return null;
+function playlistItemErrorResponse(error: unknown) {
+  const mapped = mapSpotifyRouteError(error, {
+    notFoundCode: "PLAYLIST_NOT_FOUND",
+  });
+  return jsonError(mapped.code, mapped.status);
 }
 
 export async function GET(
@@ -215,49 +207,7 @@ export async function GET(
     const offset =
       Number.isFinite(parsedOffset) && parsedOffset >= 0 ? Math.floor(parsedOffset) : 0;
     try {
-      const liveResponse = await spotifyFetch<{
-        items?: Array<{
-          added_at?: string;
-          added_by?: { id?: string };
-          item?: {
-            id?: string;
-            name?: string;
-            duration_ms?: number;
-            explicit?: boolean;
-            is_local?: boolean;
-            linked_from?: { id?: string | null };
-            restrictions?: { reason?: string | null };
-            popularity?: number;
-            album?: {
-              id?: string;
-              name?: string;
-              release_date?: string;
-              images?: Array<{ url?: string }>;
-            };
-            artists?: Array<{ name?: string }>;
-          };
-          /** @deprecated Compatibility with pre-February 2026 responses. */
-          track?: {
-            id?: string;
-            name?: string;
-            duration_ms?: number;
-            explicit?: boolean;
-            is_local?: boolean;
-            linked_from?: { id?: string | null };
-            restrictions?: { reason?: string | null };
-            popularity?: number;
-            album?: {
-              id?: string;
-              name?: string;
-              release_date?: string;
-              images?: Array<{ url?: string }>;
-            };
-            artists?: Array<{ name?: string }>;
-          };
-        }>;
-        total?: number;
-        next?: string | null;
-      }>({
+      const liveResponse = await spotifyFetch<SpotifyPlaylistItemsResponse>({
         url: `https://api.spotify.com/v1/playlists/${encodeURIComponent(
           playlistId
         )}/items?limit=${limit}&offset=${offset}`,
@@ -265,72 +215,12 @@ export async function GET(
       });
 
       const now = Date.now();
-      const mapped = (Array.isArray(liveResponse?.items) ? liveResponse.items : [])
-        .map((item, index) => {
-          const track = item?.item ?? item?.track;
-          const trackId = typeof track?.id === "string" ? track.id : null;
-          const releaseDate = track?.album?.release_date ?? null;
-          const releaseYear =
-            releaseDate && /^\d{4}/.test(releaseDate)
-              ? Number(releaseDate.slice(0, 4))
-              : null;
-          const addedAtValue = item?.added_at ? Date.parse(item.added_at) : NaN;
-          const albumImageUrl =
-            track?.album?.images?.find((img) => typeof img?.url === "string")?.url ??
-            null;
-          const trackName = track?.name ?? "Unknown track";
-          return {
-            itemId: `${playlistId}:${offset + index}:${trackId ?? "unknown"}`,
-            playlistId,
-            trackId,
-            name: trackName,
-            albumId: track?.album?.id ?? null,
-            albumName: track?.album?.name ?? null,
-            albumReleaseDate: releaseDate,
-            releaseYear,
-            albumImageUrl,
-            coverUrl: albumImageUrl,
-            durationMs: typeof track?.duration_ms === "number" ? track.duration_ms : null,
-            explicit:
-              typeof track?.explicit === "boolean" ? (track.explicit ? 1 : 0) : null,
-            isLocal:
-              typeof track?.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
-            linkedFromTrackId:
-              typeof track?.linked_from?.id === "string" ? track.linked_from.id : null,
-            restrictionsReason:
-              typeof track?.restrictions?.reason === "string"
-                ? track.restrictions.reason
-                : null,
-            popularity: typeof track?.popularity === "number" ? track.popularity : null,
-            artists: Array.isArray(track?.artists)
-              ? track.artists
-                  .map((artist) => artist?.name)
-                  .filter(Boolean)
-                  .join(", ")
-              : null,
-            addedAt: Number.isFinite(addedAtValue) ? addedAtValue : null,
-            addedBySpotifyUserId: item?.added_by?.id ?? null,
-            position: offset + index,
-            snapshotIdAtSync: null,
-            syncRunId: null,
-            playlists: [
-              {
-                id: playlistId,
-                name: "Geselecteerde playlist",
-                spotifyUrl: `https://open.spotify.com/playlist/${playlistId}`,
-              },
-            ],
-          };
-        })
-        .filter(Boolean);
+      const mapped = mapLivePlaylistItems(liveResponse?.items, playlistId, offset);
 
       return jsonNoStore({
         items: mapped,
         nextCursor: liveResponse?.next ? String(offset + mapped.length) : null,
-        totalCount:
-          typeof liveResponse?.total === "number" && Number.isFinite(liveResponse.total)
-            ? Math.max(0, Math.floor(liveResponse.total))
-            : null,
+        totalCount: normalizeSpotifyTotal(liveResponse?.total),
         asOf: now,
         sync: {
           status: "live",
@@ -348,17 +238,7 @@ export async function GET(
             : undefined),
       });
     } catch (error) {
-      if (error instanceof SpotifyFetchError) {
-        if (error.status === 401) return jsonError("UNAUTHENTICATED", 401);
-        if (error.status === 403) return jsonError("FORBIDDEN", 403);
-        if (error.status === 404) return jsonError("PLAYLIST_NOT_FOUND", 404);
-        if (error.status === 429) return jsonError("SPOTIFY_RATE_LIMIT", 429);
-        return jsonError("SPOTIFY_UPSTREAM", 502);
-      }
-      if (String(error).includes("UserNotAuthenticated")) {
-        return jsonError("UNAUTHENTICATED", 401);
-      }
-      return jsonError("SPOTIFY_UPSTREAM", 502);
+      return playlistItemErrorResponse(error);
     }
   }
 
@@ -524,17 +404,7 @@ export async function POST(
       mutatedAt: Date.now(),
     });
   } catch (error) {
-    if (error instanceof SpotifyFetchError) {
-      if (error.status === 401) return jsonError("UNAUTHENTICATED", 401);
-      if (error.status === 403) return jsonError("FORBIDDEN", 403);
-      if (error.status === 404) return jsonError("PLAYLIST_NOT_FOUND", 404);
-      if (error.status === 429) return jsonError("SPOTIFY_RATE_LIMIT", 429);
-      return jsonError("SPOTIFY_UPSTREAM", 502);
-    }
-    if (String(error).includes("UserNotAuthenticated")) {
-      return jsonError("UNAUTHENTICATED", 401);
-    }
-    return jsonError("SPOTIFY_UPSTREAM", 502);
+    return playlistItemErrorResponse(error);
   }
 }
 
@@ -593,16 +463,6 @@ export async function DELETE(
       mutatedAt: Date.now(),
     });
   } catch (error) {
-    if (error instanceof SpotifyFetchError) {
-      if (error.status === 401) return jsonError("UNAUTHENTICATED", 401);
-      if (error.status === 403) return jsonError("FORBIDDEN", 403);
-      if (error.status === 404) return jsonError("PLAYLIST_NOT_FOUND", 404);
-      if (error.status === 429) return jsonError("SPOTIFY_RATE_LIMIT", 429);
-      return jsonError("SPOTIFY_UPSTREAM", 502);
-    }
-    if (String(error).includes("UserNotAuthenticated")) {
-      return jsonError("UNAUTHENTICATED", 401);
-    }
-    return jsonError("SPOTIFY_UPSTREAM", 502);
+    return playlistItemErrorResponse(error);
   }
 }

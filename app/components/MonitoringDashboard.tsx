@@ -221,13 +221,7 @@ type Insight = {
   text: string;
 };
 
-type StatusSectionId =
-  | "overview"
-  | "health"
-  | "data"
-  | "diagnostics"
-  | "actions"
-  | "ai";
+type StatusSectionId = "overview" | "health" | "data" | "diagnostics" | "actions" | "ai";
 
 const ENDPOINT_LABEL_MAP: Record<string, { label: string; description: string }> = {
   me_player: {
@@ -334,7 +328,9 @@ function fmtAgoShort(seconds: number | null | undefined) {
 }
 
 function formatRateLimitSource(value: string) {
-  const normalized = String(value ?? "").trim().toLowerCase();
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
   if (normalized === "spotify_http_429") return "Spotify 429";
   if (normalized === "spotify_local_limiter") return "Local limiter";
   return value || "Unknown";
@@ -439,7 +435,9 @@ function formatAuthStatus(status: string) {
 }
 
 function tokenStatusTone(status: string): Tone {
-  const normalized = String(status ?? "").trim().toUpperCase();
+  const normalized = String(status ?? "")
+    .trim()
+    .toUpperCase();
   if (
     normalized === "VALID" ||
     normalized === "CONNECTED" ||
@@ -461,7 +459,9 @@ function tokenStatusTone(status: string): Tone {
 }
 
 function formatTokenStatus(status: string) {
-  const normalized = String(status ?? "").trim().toUpperCase();
+  const normalized = String(status ?? "")
+    .trim()
+    .toUpperCase();
   if (normalized === "VALID" || normalized === "OK") return "Valid";
   if (normalized === "REFRESHING") return "Refreshing";
   if (normalized === "EXPIRING") return "Expiring soon";
@@ -505,16 +505,18 @@ function describeEndpoint(endpoint: string) {
 }
 
 function normalizeEndpointKey(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 function normalizeRecentErrorMessage(raw: string): string {
   const text = String(raw ?? "").trim();
   if (!text) return "No detail available.";
   try {
-    const parsed = JSON.parse(text) as
-      | { error?: string | { status?: number; message?: string } }
-      | null;
+    const parsed = JSON.parse(text) as {
+      error?: string | { status?: number; message?: string };
+    } | null;
     if (parsed && typeof parsed === "object") {
       if (typeof parsed.error === "string" && parsed.error.trim()) {
         return parsed.error.trim();
@@ -523,9 +525,7 @@ function normalizeRecentErrorMessage(raw: string): string {
         const status =
           typeof parsed.error.status === "number" ? parsed.error.status : null;
         const message =
-          typeof parsed.error.message === "string"
-            ? parsed.error.message.trim()
-            : "";
+          typeof parsed.error.message === "string" ? parsed.error.message.trim() : "";
         if (message) return status ? `${message} (${status})` : message;
       }
     }
@@ -536,7 +536,9 @@ function normalizeRecentErrorMessage(raw: string): string {
 }
 
 function describeErrorCode(code: string): { label: string; tone: Tone; help: string } {
-  const normalized = String(code ?? "").trim().toUpperCase();
+  const normalized = String(code ?? "")
+    .trim()
+    .toUpperCase();
   switch (normalized) {
     case "NO_ACTIVE_DEVICE":
       return {
@@ -607,7 +609,9 @@ function describeRecentErrorMessage(args: {
   endpointRaw: string;
   message: string;
 }): string {
-  const code = String(args.code ?? "").trim().toUpperCase();
+  const code = String(args.code ?? "")
+    .trim()
+    .toUpperCase();
   if (code === "NO_ACTIVE_DEVICE") {
     return "No active player found. Start music on a device and try again.";
   }
@@ -659,7 +663,9 @@ function KpiCard({
   featured?: boolean;
 }) {
   return (
-    <article className={`ops-kpi ${toneClass(tone)}${featured ? " ops-kpi-featured" : ""}`}>
+    <article
+      className={`ops-kpi ${toneClass(tone)}${featured ? " ops-kpi-featured" : ""}`}
+    >
       <div className="ops-kpi-head">
         <span className="ops-kpi-title">{title}</span>
         <HelpTip label={title} text={hint} />
@@ -687,7 +693,11 @@ function AlertCard({ item }: { item: Insight }) {
   return (
     <article className={`ops-alert-card ${toneClass(item.tone)}`}>
       <span className={pillClass(item.tone)}>
-        {item.tone === "ok" ? "Alles ok" : item.tone === "warn" ? "Let op" : "Actie nodig"}
+        {item.tone === "ok"
+          ? "Alles ok"
+          : item.tone === "warn"
+            ? "Let op"
+            : "Actie nodig"}
       </span>
       <strong>{item.title}</strong>
       <p className="text-subtle">{item.text}</p>
@@ -714,9 +724,8 @@ export default function MonitoringDashboard() {
   const [libraryCounts, setLibraryCounts] = useState<LibraryCounts | null>(null);
   const [dbStatus, setDbStatus] = useState<DbStatusPayload | null>(null);
   const [workerHealth, setWorkerHealth] = useState<WorkerHealthPayload | null>(null);
-  const [diagnosticsSnapshot, setDiagnosticsSnapshot] = useState<DiagnosticsPayload | null>(
-    null
-  );
+  const [diagnosticsSnapshot, setDiagnosticsSnapshot] =
+    useState<DiagnosticsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<null | string>(null);
@@ -730,9 +739,9 @@ export default function MonitoringDashboard() {
   const [rateLimitLogOpen, setRateLimitLogOpen] = useState(false);
   const [rateLimitLogLoading, setRateLimitLogLoading] = useState(false);
   const [rateLimitLogError, setRateLimitLogError] = useState<string | null>(null);
-  const [rateLimitLogEntries, setRateLimitLogEntries] = useState<RateLimitActivityEntry[]>(
-    []
-  );
+  const [rateLimitLogEntries, setRateLimitLogEntries] = useState<
+    RateLimitActivityEntry[]
+  >([]);
   const [rateLimitLogFetchedAt, setRateLimitLogFetchedAt] = useState<number | null>(null);
   const [rateLimitLogCopyBusy, setRateLimitLogCopyBusy] = useState(false);
 
@@ -893,7 +902,9 @@ export default function MonitoringDashboard() {
         typeof parsed.refreshIntervalSec === "number" &&
         Number.isFinite(parsed.refreshIntervalSec)
       ) {
-        setRefreshIntervalSec(Math.max(5, Math.min(60, Math.floor(parsed.refreshIntervalSec))));
+        setRefreshIntervalSec(
+          Math.max(5, Math.min(60, Math.floor(parsed.refreshIntervalSec)))
+        );
       }
     } catch {
       // ignore invalid payload
@@ -942,8 +953,8 @@ export default function MonitoringDashboard() {
             typeof payload.error === "string"
               ? payload.error
               : typeof payload.message === "string"
-              ? payload.message
-              : `http_${res.status}`;
+                ? payload.message
+                : `http_${res.status}`;
           pushActionHistory({
             name,
             outcome: "error",
@@ -1164,21 +1175,25 @@ export default function MonitoringDashboard() {
   const apiTone: Tone = apiWarmup
     ? "warn"
     : (summary?.apiHealth.successRate ?? 0) >= 0.97
-    ? "ok"
-    : (summary?.apiHealth.successRate ?? 0) >= 0.9
-    ? "warn"
-    : "error";
+      ? "ok"
+      : (summary?.apiHealth.successRate ?? 0) >= 0.9
+        ? "warn"
+        : "error";
 
   const latencyTone: Tone =
     (summary?.apiHealth.latencyMs.p95 ?? 0) <= 450
       ? "ok"
       : (summary?.apiHealth.latencyMs.p95 ?? 0) <= 900
-      ? "warn"
-      : "error";
+        ? "warn"
+        : "error";
   const foregroundLatencyP95 =
-    summary?.apiHealth.latencyByPriority?.foreground.p95 ?? summary?.apiHealth.latencyMs.p95 ?? 0;
+    summary?.apiHealth.latencyByPriority?.foreground.p95 ??
+    summary?.apiHealth.latencyMs.p95 ??
+    0;
   const backgroundLatencyP95 =
-    summary?.apiHealth.latencyByPriority?.background.p95 ?? summary?.apiHealth.latencyMs.p95 ?? 0;
+    summary?.apiHealth.latencyByPriority?.background.p95 ??
+    summary?.apiHealth.latencyMs.p95 ??
+    0;
 
   const elapsedSinceSummaryMs = Math.max(0, clockNowMs - summaryReceivedAtMs);
   const backoffFromSnapshotMs = Math.max(
@@ -1208,7 +1223,8 @@ export default function MonitoringDashboard() {
   const lastRateTriggeredAgoSec = summary?.rateLimits.lastTriggeredAt
     ? Math.max(0, Math.floor((clockNowMs - summary.rateLimits.lastTriggeredAt) / 1000))
     : null;
-  const recentRateBurst = typeof lastRateTriggeredAgoSec === "number" && lastRateTriggeredAgoSec <= 120;
+  const recentRateBurst =
+    typeof lastRateTriggeredAgoSec === "number" && lastRateTriggeredAgoSec <= 120;
   const historicRateBurst =
     typeof lastRateTriggeredAgoSec === "number" && lastRateTriggeredAgoSec > 120;
 
@@ -1217,12 +1233,12 @@ export default function MonitoringDashboard() {
       ? "error"
       : "warn"
     : rateLimitCount === 0
-    ? "ok"
-    : recentRateBurst
-    ? "warn"
-    : historicRateBurst
-    ? "ok"
-    : "warn";
+      ? "ok"
+      : recentRateBurst
+        ? "warn"
+        : historicRateBurst
+          ? "ok"
+          : "warn";
 
   const topErrors = useMemo(() => {
     const rows = summary?.apiHealth.errorBreakdown ?? [];
@@ -1273,10 +1289,10 @@ export default function MonitoringDashboard() {
   const rateBackoffSubtitle = hasActiveRateBackoff
     ? `backoff active · ${rateBackoffRemainingSec}s`
     : hasRecentRateLimitEvents
-    ? `no active backoff · ${rateLimitCount} recent throttles (${fmtAgoShort(
-        lastRateTriggeredAgoSec
-      )} ago)`
-    : "no rate limits in window";
+      ? `no active backoff · ${rateLimitCount} recent throttles (${fmtAgoShort(
+          lastRateTriggeredAgoSec
+        )} ago)`
+      : "no rate limits in window";
   const rateBackoffSubtitleWithWindow = `${rateBackoffSubtitle} · window ${metricsWindowLabel}`;
 
   const insights = useMemo<Insight[]>(() => {
@@ -1403,28 +1419,38 @@ export default function MonitoringDashboard() {
     summary?.authStatus.userId ??
     "No Spotify user";
   const totalLibraryItems =
-    (libraryCounts?.playlists ?? 0) + (libraryCounts?.tracks ?? 0) + (libraryCounts?.artists ?? 0);
+    (libraryCounts?.playlists ?? 0) +
+    (libraryCounts?.tracks ?? 0) +
+    (libraryCounts?.artists ?? 0);
   const userTokenSummary =
-    userTokenExpirySec == null ? userTokenStatusLabel : `${userTokenStatusLabel} · ${userTokenExpirySec}s`;
+    userTokenExpirySec == null
+      ? userTokenStatusLabel
+      : `${userTokenStatusLabel} · ${userTokenExpirySec}s`;
   const appTokenSummary =
-    appTokenExpirySec == null ? appTokenStatusLabel : `${appTokenStatusLabel} · ${appTokenExpirySec}s`;
+    appTokenExpirySec == null
+      ? appTokenStatusLabel
+      : `${appTokenStatusLabel} · ${appTokenExpirySec}s`;
   const overallTone: Tone =
     primaryInsight?.tone ??
-    (activeIncidentCount > 0 ? "error" : apiTone === "error" || authStatusTone === "error" ? "error" : "ok");
+    (activeIncidentCount > 0
+      ? "error"
+      : apiTone === "error" || authStatusTone === "error"
+        ? "error"
+        : "ok");
   const overallStatusLabel =
     overallTone === "ok"
       ? "Healthy"
       : overallTone === "warn"
-      ? "Needs attention"
-      : "Action required";
+        ? "Needs attention"
+        : "Action required";
   const workerTone: Tone =
     workerHealth?.status === "OK"
       ? "ok"
       : workerHealth?.status === "STALE"
-      ? "warn"
-      : workerHealth?.status
-      ? "error"
-      : "warn";
+        ? "warn"
+        : workerHealth?.status
+          ? "error"
+          : "warn";
   const dbTone: Tone = dbStatus?.counts ? "ok" : "warn";
   const syncRunning = Boolean(dbStatus?.sync?.running);
   const staleRunningCount =
@@ -1449,13 +1475,17 @@ export default function MonitoringDashboard() {
     {
       title: "User token",
       value: userTokenStatusLabel,
-      meta: userTokenExpirySec == null ? "no known expiry" : `valid for ${userTokenExpirySec}s`,
+      meta:
+        userTokenExpirySec == null
+          ? "no known expiry"
+          : `valid for ${userTokenExpirySec}s`,
       tone: userTokenTone,
     },
     {
       title: "App token",
       value: appTokenStatusLabel,
-      meta: appTokenExpirySec == null ? "no known expiry" : `valid for ${appTokenExpirySec}s`,
+      meta:
+        appTokenExpirySec == null ? "no known expiry" : `valid for ${appTokenExpirySec}s`,
       tone: appTokenTone,
     },
     {
@@ -1479,8 +1509,8 @@ export default function MonitoringDashboard() {
         staleRunningCount > 0
           ? `${staleRunningCount} stale jobs`
           : dbStatus?.sync?.lastSuccessfulAt
-          ? `last sync ${fmtCompactTime(dbStatus.sync.lastSuccessfulAt)}`
-          : "no successful sync yet",
+            ? `last sync ${fmtCompactTime(dbStatus.sync.lastSuccessfulAt)}`
+            : "no successful sync yet",
       tone: syncTone,
     },
   ];
@@ -1494,29 +1524,39 @@ export default function MonitoringDashboard() {
         .slice(0, 12)
     : [];
   const dataInventory = [
-    { label: "Playlists", value: fmtCount(dbStatus?.counts?.playlists ?? libraryCounts?.playlists ?? 0) },
-    { label: "Tracks", value: fmtCount(dbStatus?.counts?.tracks ?? libraryCounts?.tracks ?? 0) },
-    { label: "Artists", value: fmtCount(dbStatus?.counts?.artists ?? libraryCounts?.artists ?? 0) },
+    {
+      label: "Playlists",
+      value: fmtCount(dbStatus?.counts?.playlists ?? libraryCounts?.playlists ?? 0),
+    },
+    {
+      label: "Tracks",
+      value: fmtCount(dbStatus?.counts?.tracks ?? libraryCounts?.tracks ?? 0),
+    },
+    {
+      label: "Artists",
+      value: fmtCount(dbStatus?.counts?.artists ?? libraryCounts?.artists ?? 0),
+    },
     { label: "Playlist items", value: fmtCount(dbStatus?.counts?.playlist_items ?? 0) },
     { label: "Cover images", value: fmtCount(dbStatus?.counts?.cover_images ?? 0) },
-    { label: "Track-artist links", value: fmtCount(dbStatus?.counts?.track_artists ?? 0) },
+    {
+      label: "Track-artist links",
+      value: fmtCount(dbStatus?.counts?.track_artists ?? 0),
+    },
   ];
   const featureFlags = Object.entries(PLAYBACK_FEATURE_FLAGS);
-  const recentSlowActivities = diagnosticsSnapshot?.recentSlowActivities?.slice(0, 8) ?? [];
+  const recentSlowActivities =
+    diagnosticsSnapshot?.recentSlowActivities?.slice(0, 8) ?? [];
 
   return (
-    <main className="page settings-page ops-page">
-      <section
-        className="card ops-shell"
-        style={{ marginTop: "4px" }}
-      >
+    <main id="main-content" tabIndex={-1} className="page settings-page ops-page">
+      <section className="card ops-shell" style={{ marginTop: "4px" }}>
         <header className="ops-control-header">
           <div className="ops-header-copy">
             <span className="ops-kicker">System control</span>
             <h1 className="ops-title">Settings & System Status</h1>
             <p className="ops-subtitle">
-              A central control room for Spotify connectivity, system health,
-              diagnostics, maintenance, and the existing ChatGPT prompt workflow.
+              A central control room for Spotify connectivity, system health, diagnostics,
+              maintenance, and the existing ChatGPT prompt workflow.
             </p>
           </div>
 
@@ -1526,7 +1566,8 @@ export default function MonitoringDashboard() {
               Environment <strong>{environmentLabel}</strong>
             </span>
             <span className="ops-meta-item">
-              Last update <strong>{summary ? fmtCompactTime(summary.generatedAt) : "..."}</strong>
+              Last update{" "}
+              <strong>{summary ? fmtCompactTime(summary.generatedAt) : "..."}</strong>
             </span>
             <button
               type="button"
@@ -1540,12 +1581,19 @@ export default function MonitoringDashboard() {
         </header>
 
         {refreshError ? (
-          <div className="ops-inline-alert ops-tone-warn" role="status" aria-live="polite">
-            The latest refresh partially failed: {refreshError}. Existing data remains visible.
+          <div
+            className="ops-inline-alert ops-tone-warn"
+            role="status"
+            aria-live="polite"
+          >
+            The latest refresh partially failed: {refreshError}. Existing data remains
+            visible.
           </div>
         ) : null}
 
-        {loading && !summaryAvailable ? <p className="text-body">Loading page...</p> : null}
+        {loading && !summaryAvailable ? (
+          <p className="text-body">Loading page...</p>
+        ) : null}
 
         {summaryAvailable ? (
           <>
@@ -1564,11 +1612,15 @@ export default function MonitoringDashboard() {
             </nav>
 
             <section className="ops-control-hero" aria-label="System summary">
-              <article className={`ops-control-focus ${toneClass(primaryInsight?.tone ?? "ok")}`}>
+              <article
+                className={`ops-control-focus ${toneClass(primaryInsight?.tone ?? "ok")}`}
+              >
                 <div className="ops-section-head">
                   <div className="ops-stack-tight">
                     <span className="ops-kicker">Focus now</span>
-                    <h2 className="ops-hero-title">{primaryInsight?.title ?? "System stable"}</h2>
+                    <h2 className="ops-hero-title">
+                      {primaryInsight?.title ?? "System stable"}
+                    </h2>
                   </div>
                   <span className={pillClass(overallTone)}>{overallStatusLabel}</span>
                 </div>
@@ -1593,9 +1645,13 @@ export default function MonitoringDashboard() {
               </article>
 
               <div className="ops-control-metrics">
-                <article className={`ops-mini-stat ${toneClass(primaryInsight?.tone ?? "ok")}`}>
+                <article
+                  className={`ops-mini-stat ${toneClass(primaryInsight?.tone ?? "ok")}`}
+                >
                   <span className="ops-mini-stat-label">Focus now</span>
-                  <strong className="ops-mini-stat-value">{primaryInsight?.title ?? "Stable"}</strong>
+                  <strong className="ops-mini-stat-value">
+                    {primaryInsight?.title ?? "Stable"}
+                  </strong>
                   <span className="ops-mini-stat-meta">
                     {activeIncidentCount > 0
                       ? `${activeIncidentCount} active incidents`
@@ -1604,9 +1660,12 @@ export default function MonitoringDashboard() {
                 </article>
                 <article className="ops-mini-stat ops-tone-ok">
                   <span className="ops-mini-stat-label">Library</span>
-                  <strong className="ops-mini-stat-value">{fmtCount(totalLibraryItems)}</strong>
+                  <strong className="ops-mini-stat-value">
+                    {fmtCount(totalLibraryItems)}
+                  </strong>
                   <span className="ops-mini-stat-meta">
-                    {fmtCount(libraryCounts?.playlists)} playlists · {fmtCount(libraryCounts?.tracks)} tracks
+                    {fmtCount(libraryCounts?.playlists)} playlists ·{" "}
+                    {fmtCount(libraryCounts?.tracks)} tracks
                   </span>
                 </article>
                 <article className={`ops-mini-stat ${toneClass(apiTone)}`}>
@@ -1615,14 +1674,18 @@ export default function MonitoringDashboard() {
                     {fmtPercent(summary?.apiHealth.successRate ?? 0)}
                   </strong>
                   <span className="ops-mini-stat-meta">
-                    {apiSampleCount} requests · {summary?.apiHealth.upstream5xx ?? 0} server errors
+                    {apiSampleCount} requests · {summary?.apiHealth.upstream5xx ?? 0}{" "}
+                    server errors
                   </span>
                 </article>
                 <article className={`ops-mini-stat ${toneClass(latencyTone)}`}>
                   <span className="ops-mini-stat-label">P95 latency</span>
-                  <strong className="ops-mini-stat-value">{foregroundLatencyP95} ms</strong>
+                  <strong className="ops-mini-stat-value">
+                    {foregroundLatencyP95} ms
+                  </strong>
                   <span className="ops-mini-stat-meta">
-                    bg {backgroundLatencyP95} ms · {topSlowActivity?.label ?? "no hotspot"}
+                    bg {backgroundLatencyP95} ms ·{" "}
+                    {topSlowActivity?.label ?? "no hotspot"}
                   </span>
                 </article>
               </div>
@@ -1639,17 +1702,25 @@ export default function MonitoringDashboard() {
                     />
                   </div>
                   <div className="ops-priority-grid">
-                    <article className={`ops-priority-lead ${toneClass(primaryInsight?.tone ?? "ok")}`}>
+                    <article
+                      className={`ops-priority-lead ${toneClass(primaryInsight?.tone ?? "ok")}`}
+                    >
                       <div className="ops-priority-head">
-                        <span className={pillClass(primaryInsight?.tone ?? "ok")}>{overallStatusLabel}</span>
+                        <span className={pillClass(primaryInsight?.tone ?? "ok")}>
+                          {overallStatusLabel}
+                        </span>
                         <span className="text-subtle">{profileLabel}</span>
                       </div>
-                      <strong className="ops-priority-title">{primaryInsight?.title}</strong>
+                      <strong className="ops-priority-title">
+                        {primaryInsight?.title}
+                      </strong>
                       <p className="ops-priority-text">{primaryInsight?.text}</p>
                     </article>
                     <div className="ops-priority-stack">
                       {supportingInsights.length ? (
-                        supportingInsights.map((item) => <AlertCard key={item.id} item={item} />)
+                        supportingInsights.map((item) => (
+                          <AlertCard key={item.id} item={item} />
+                        ))
                       ) : (
                         <article className="ops-alert-card ops-tone-ok">
                           <span className="pill pill-success">All good</span>
@@ -1676,7 +1747,7 @@ export default function MonitoringDashboard() {
                       type="button"
                       className="btn btn-primary"
                       onClick={() => {
-                        window.location.href = "/api/auth/login";
+                        window.open("/api/auth/login", "_self");
                       }}
                       disabled={actionBusy !== null}
                     >
@@ -1701,8 +1772,8 @@ export default function MonitoringDashboard() {
                       {tokenRefreshCooldownLeftSec > 0
                         ? `Wait ${tokenRefreshCooldownLeftSec}s`
                         : actionBusy === "Refresh token"
-                        ? "Working..."
-                        : "Refresh token"}
+                          ? "Working..."
+                          : "Refresh token"}
                     </button>
                     <button
                       type="button"
@@ -1728,7 +1799,9 @@ export default function MonitoringDashboard() {
                         await loadRateLimitActivityLog();
                       }}
                     >
-                      {rateLimitLogLoading ? "Loading log..." : `Rate-limit log (${fmtCount(rateLimitActivityTotal)})`}
+                      {rateLimitLogLoading
+                        ? "Loading log..."
+                        : `Rate-limit log (${fmtCount(rateLimitActivityTotal)})`}
                     </button>
                   </div>
                 </article>
@@ -1743,7 +1816,10 @@ export default function MonitoringDashboard() {
                   </div>
                   <div className="ops-service-grid">
                     {serviceCards.map((card) => (
-                      <article key={card.title} className={`ops-service-card ${toneClass(card.tone)}`}>
+                      <article
+                        key={card.title}
+                        className={`ops-service-card ${toneClass(card.tone)}`}
+                      >
                         <span className="ops-mini-stat-label">{card.title}</span>
                         <strong className="ops-service-value">{card.value}</strong>
                         <span className="ops-mini-stat-meta">{card.meta}</span>
@@ -1770,7 +1846,13 @@ export default function MonitoringDashboard() {
                       value={authStatusLabel}
                       subtitle={summary?.authStatus.userId ?? "no user"}
                       tone={authStatusTone}
-                      meter={authStatusTone === "ok" ? 1 : authStatusTone === "warn" ? 0.55 : 0.2}
+                      meter={
+                        authStatusTone === "ok"
+                          ? 1
+                          : authStatusTone === "warn"
+                            ? 0.55
+                            : 0.2
+                      }
                       hint="Shows whether Spotify auth is directly usable for playback and device actions."
                     />
                     <KpiCard
@@ -1788,7 +1870,10 @@ export default function MonitoringDashboard() {
                       tone={latencyTone}
                       meter={1 - clamp01(foregroundLatencyP95 / 1800)}
                       details={[
-                        { label: "User actions p95", value: `${foregroundLatencyP95} ms` },
+                        {
+                          label: "User actions p95",
+                          value: `${foregroundLatencyP95} ms`,
+                        },
                         { label: "Background p95", value: `${backgroundLatencyP95} ms` },
                         {
                           label: "Current hotspot",
@@ -1837,7 +1922,10 @@ export default function MonitoringDashboard() {
                   </div>
                   <div className="ops-service-grid">
                     {serviceCards.map((card) => (
-                      <article key={card.title} className={`ops-service-card ${toneClass(card.tone)}`}>
+                      <article
+                        key={card.title}
+                        className={`ops-service-card ${toneClass(card.tone)}`}
+                      >
                         <span className="ops-mini-stat-label">{card.title}</span>
                         <strong className="ops-service-value">{card.value}</strong>
                         <span className="ops-mini-stat-meta">{card.meta}</span>
@@ -1917,7 +2005,8 @@ export default function MonitoringDashboard() {
                       {topErrors.map((row) => {
                         const endpointMeta = describeEndpoint(row.label);
                         const endpointKey = normalizeEndpointKey(row.label);
-                        const isActive = normalizeEndpointKey(selectedErrorEndpoint) === endpointKey;
+                        const isActive =
+                          normalizeEndpointKey(selectedErrorEndpoint) === endpointKey;
                         return (
                           <button
                             key={row.label}
@@ -1926,7 +2015,9 @@ export default function MonitoringDashboard() {
                             title={endpointMeta.title}
                             onClick={() => {
                               setSelectedErrorEndpoint((prev) =>
-                                normalizeEndpointKey(prev) === endpointKey ? null : row.label
+                                normalizeEndpointKey(prev) === endpointKey
+                                  ? null
+                                  : row.label
                               );
                             }}
                           >
@@ -1935,7 +2026,11 @@ export default function MonitoringDashboard() {
                               <span className="ops-mix-raw">{endpointMeta.raw}</span>
                             </div>
                             <div className="ops-mix-meter" aria-hidden="true">
-                              <span style={{ width: `${Math.max(4, (row.value / maxErrorCount) * 100)}%` }} />
+                              <span
+                                style={{
+                                  width: `${Math.max(4, (row.value / maxErrorCount) * 100)}%`,
+                                }}
+                              />
                             </div>
                             <div className="ops-mix-value">{row.value}</div>
                           </button>
@@ -1943,7 +2038,9 @@ export default function MonitoringDashboard() {
                       })}
                     </div>
                   ) : (
-                    <div className="text-subtle">No errors in the current measurement.</div>
+                    <div className="text-subtle">
+                      No errors in the current measurement.
+                    </div>
                   )}
                 </article>
 
@@ -1968,8 +2065,12 @@ export default function MonitoringDashboard() {
                         return (
                           <div key={item.id} className="ops-recent-row">
                             <div className="ops-recent-top">
-                              <span className="ops-recent-time">{fmtCompactTime(item.at)}</span>
-                              <span className={`ops-recent-code ops-recent-code-${codeMeta.tone}`}>
+                              <span className="ops-recent-time">
+                                {fmtCompactTime(item.at)}
+                              </span>
+                              <span
+                                className={`ops-recent-code ops-recent-code-${codeMeta.tone}`}
+                              >
                                 {codeMeta.label}
                               </span>
                             </div>
@@ -2000,7 +2101,11 @@ export default function MonitoringDashboard() {
                       >
                         {rateLimitLogLoading ? "Loading..." : "Load activity log"}
                       </button>
-                      <button type="button" className="btn btn-secondary" onClick={() => void runDiagnosticsExport()}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => void runDiagnosticsExport()}
+                      >
                         Export diagnostics
                       </button>
                     </div>
@@ -2008,21 +2113,29 @@ export default function MonitoringDashboard() {
                   {rateLimitLogOpen && rateLimitLogEntries.length > 0 ? (
                     <div className="ops-recent-list">
                       {rateLimitLogEntries.slice(0, 12).map((item, index) => (
-                        <div key={`${item.at}:${item.correlationId}:${index}`} className="ops-recent-row">
+                        <div
+                          key={`${item.at}:${item.correlationId}:${index}`}
+                          className="ops-recent-row"
+                        >
                           <div className="ops-recent-top">
-                            <span className="ops-recent-time">{fmtCompactTime(item.at)}</span>
+                            <span className="ops-recent-time">
+                              {fmtCompactTime(item.at)}
+                            </span>
                             <span className="ops-recent-code ops-recent-code-warn">
                               {formatRateLimitSource(item.source)}
                             </span>
                           </div>
                           <strong>{item.activity}</strong>
                           <div className="text-subtle">
-                            {item.method.toUpperCase()} {item.endpointPath || "unknown path"} ·{" "}
+                            {item.method.toUpperCase()}{" "}
+                            {item.endpointPath || "unknown path"} ·{" "}
                             {item.endpoint || "unknown endpoint"}
                           </div>
                           <div className="ops-recent-extra">
-                            reliability {formatImpactLevel(item.impact?.reliability)} · responsiveness{" "}
-                            {formatImpactLevel(item.impact?.responsiveness)} · status {item.statusCode}
+                            reliability {formatImpactLevel(item.impact?.reliability)} ·
+                            responsiveness{" "}
+                            {formatImpactLevel(item.impact?.responsiveness)} · status{" "}
+                            {item.statusCode}
                           </div>
                         </div>
                       ))}
@@ -2038,7 +2151,10 @@ export default function MonitoringDashboard() {
                   {recentSlowActivities.length ? (
                     <div className="ops-diagnostics-inline-list">
                       {recentSlowActivities.slice(0, 6).map((item) => (
-                        <div key={`${item.at}-${item.correlationId}`} className="ops-diagnostics-inline-item">
+                        <div
+                          key={`${item.at}-${item.correlationId}`}
+                          className="ops-diagnostics-inline-item"
+                        >
                           <strong>{item.activity}</strong>
                           <span className="text-subtle">
                             {item.durationMs} ms · {item.endpointPath}
@@ -2052,7 +2168,10 @@ export default function MonitoringDashboard() {
             ) : null}
 
             {activeSection === "actions" ? (
-              <section className="ops-dashboard-grid" aria-label="Actions and configuration">
+              <section
+                className="ops-dashboard-grid"
+                aria-label="Actions and configuration"
+              >
                 <article className="panel ops-panel ops-span-6">
                   <div className="ops-section-head">
                     <h3 className="ops-section-title">Interventions</h3>
@@ -2066,7 +2185,7 @@ export default function MonitoringDashboard() {
                       type="button"
                       className="btn btn-primary"
                       onClick={() => {
-                        window.location.href = "/api/auth/login";
+                        window.open("/api/auth/login", "_self");
                       }}
                       disabled={actionBusy !== null}
                     >
@@ -2076,7 +2195,9 @@ export default function MonitoringDashboard() {
                       type="button"
                       className="btn btn-secondary"
                       disabled={actionBusy !== null}
-                      onClick={() => void runAction("API test", "/api/monitoring/test-api", "POST")}
+                      onClick={() =>
+                        void runAction("API test", "/api/monitoring/test-api", "POST")
+                      }
                     >
                       {actionBusy === "API test" ? "Working..." : "API test"}
                     </button>
@@ -2114,7 +2235,14 @@ export default function MonitoringDashboard() {
                       type="button"
                       className="btn btn-secondary"
                       disabled={actionBusy !== null}
-                      onClick={() => void runAction("Cache reset", "/api/monitoring/cache/clear", "POST", () => "Caches and metrics cleared")}
+                      onClick={() =>
+                        void runAction(
+                          "Cache reset",
+                          "/api/monitoring/cache/clear",
+                          "POST",
+                          () => "Caches and metrics cleared"
+                        )
+                      }
                     >
                       Cache reset
                     </button>
@@ -2123,13 +2251,15 @@ export default function MonitoringDashboard() {
                       className="btn btn-ghost"
                       disabled={actionBusy !== null}
                       onClick={async () => {
-                        const ok = window.confirm("Signing out closes the app session. Continue?");
+                        const ok = window.confirm(
+                          "Signing out closes the app session. Continue?"
+                        );
                         if (!ok) return;
                         setActionBusy("Sign out of app");
                         try {
                           await clientFetch("/api/pin-logout", { method: "POST" });
                         } finally {
-                          window.location.href = "/login";
+                          window.open("/login", "_self");
                         }
                       }}
                     >
@@ -2146,7 +2276,9 @@ export default function MonitoringDashboard() {
                     <label className="ops-settings-control ops-switch-row">
                       <span className="ops-settings-control-copy">
                         <strong>Auto refresh</strong>
-                        <small>Keeps the control room live without manual refreshes.</small>
+                        <small>
+                          Keeps the control room live without manual refreshes.
+                        </small>
                       </span>
                       <input
                         type="checkbox"
@@ -2157,7 +2289,9 @@ export default function MonitoringDashboard() {
                     <label className="ops-settings-control ops-input-row">
                       <span className="ops-settings-control-copy">
                         <strong>Refresh interval</strong>
-                        <small>Choose how often fresh status and error data is fetched.</small>
+                        <small>
+                          Choose how often fresh status and error data is fetched.
+                        </small>
                       </span>
                       <select
                         className="input"
@@ -2166,7 +2300,9 @@ export default function MonitoringDashboard() {
                         onChange={(event) => {
                           const value = Number(event.target.value);
                           if (Number.isFinite(value)) {
-                            setRefreshIntervalSec(Math.max(5, Math.min(60, Math.floor(value))));
+                            setRefreshIntervalSec(
+                              Math.max(5, Math.min(60, Math.floor(value)))
+                            );
                           }
                         }}
                       >
@@ -2182,7 +2318,9 @@ export default function MonitoringDashboard() {
                   <div className="ops-keyvalue-list">
                     <div className="ops-keyvalue-row">
                       <span className="text-subtle">Redis / Upstash</span>
-                      <strong>{runtimeFlags?.hasUpstash ? "Active" : "Not configured"}</strong>
+                      <strong>
+                        {runtimeFlags?.hasUpstash ? "Active" : "Not configured"}
+                      </strong>
                     </div>
                     <div className="ops-keyvalue-row">
                       <span className="text-subtle">Trust proxy</span>
@@ -2204,10 +2342,18 @@ export default function MonitoringDashboard() {
                       {actionHistory.map((entry) => (
                         <div key={entry.id} className="ops-history-row">
                           <div className="ops-history-top">
-                            <span className={entry.outcome === "success" ? "pill pill-success" : "pill pill-error"}>
+                            <span
+                              className={
+                                entry.outcome === "success"
+                                  ? "pill pill-success"
+                                  : "pill pill-error"
+                              }
+                            >
                               {entry.outcome === "success" ? "Success" : "Failed"}
                             </span>
-                            <span className="ops-recent-time">{fmtCompactTime(entry.at)}</span>
+                            <span className="ops-recent-time">
+                              {fmtCompactTime(entry.at)}
+                            </span>
                           </div>
                           <strong>{entry.name}</strong>
                           <div className="text-subtle">{entry.message}</div>
@@ -2215,7 +2361,9 @@ export default function MonitoringDashboard() {
                       ))}
                     </div>
                   ) : (
-                    <div className="text-subtle">No actions executed in this session yet.</div>
+                    <div className="text-subtle">
+                      No actions executed in this session yet.
+                    </div>
                   )}
                 </article>
 
@@ -2227,7 +2375,9 @@ export default function MonitoringDashboard() {
                     {featureFlags.map(([key, enabled]) => (
                       <div key={key} className="ops-flag-item">
                         <strong>{key}</strong>
-                        <span className={enabled ? "pill pill-success" : "pill pill-warn"}>
+                        <span
+                          className={enabled ? "pill pill-success" : "pill pill-warn"}
+                        >
                           {enabled ? "on" : "off"}
                         </span>
                       </div>

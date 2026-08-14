@@ -1,14 +1,14 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { workerHeartbeat } from "@/lib/db/schema";
-import { requireAppUser, jsonNoStore } from "@/lib/api/guards";
+import { requireAdminUser, jsonNoStore } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
 const STALE_AFTER_MS = 30_000;
 
 export async function GET() {
-  const { response } = await requireAppUser();
+  const { response } = await requireAdminUser();
   if (response) return response;
 
   const db = getDb();

@@ -3,13 +3,9 @@
 import { SessionProvider } from "next-auth/react";
 import TokenAutoRefresh from "./TokenAutoRefresh";
 
-export default function AuthSessionProvider({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function AuthSessionProvider({ children }: { children: React.ReactNode }) {
   return (
-    <SessionProvider refetchInterval={60} refetchOnWindowFocus>
+    <SessionProvider refetchInterval={300} refetchOnWindowFocus>
       <TokenAutoRefresh />
       {children}
     </SessionProvider>

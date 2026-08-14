@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_PLAYBACK_FOCUS } from "@/app/components/player/playbackFocus";
+import { DEFAULT_PLAYBACK_FOCUS } from "./playbackFocus";
 import type { PlaybackSnapshot } from "./playbackState";
 import { derivePlaybackViewModel } from "./viewModel";
 

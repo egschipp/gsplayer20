@@ -57,37 +57,36 @@ function isQueueItem(value: unknown): value is QueueItem {
   const playlistsValid =
     item.playlists === undefined ||
     (Array.isArray(item.playlists) &&
-      item.playlists.every(
-        (playlist) =>
-          Boolean(
-            playlist &&
-              typeof playlist === "object" &&
-              typeof (playlist as { id?: unknown }).id === "string" &&
-              typeof (playlist as { name?: unknown }).name === "string"
-          )
+      item.playlists.every((playlist) =>
+        Boolean(
+          playlist &&
+          typeof playlist === "object" &&
+          typeof (playlist as { id?: unknown }).id === "string" &&
+          typeof (playlist as { name?: unknown }).name === "string"
+        )
       ));
   return Boolean(
     typeof item.queueId === "string" &&
-      typeof item.uri === "string" &&
-      typeof item.trackId === "string" &&
-      typeof item.name === "string" &&
-      typeof item.artists === "string" &&
-      (item.primaryArtistId === undefined ||
-        typeof item.primaryArtistId === "string" ||
-        item.primaryArtistId === null) &&
-      (item.albumId === undefined ||
-        typeof item.albumId === "string" ||
-        item.albumId === null) &&
-      (item.albumName === undefined ||
-        typeof item.albumName === "string" ||
-        item.albumName === null) &&
-      (typeof item.durationMs === "number" || item.durationMs === null) &&
-      (item.explicit === undefined ||
-        typeof item.explicit === "number" ||
-        item.explicit === null) &&
-      (typeof item.artworkUrl === "string" || item.artworkUrl === null) &&
-      typeof item.addedAt === "number" &&
-      playlistsValid
+    typeof item.uri === "string" &&
+    typeof item.trackId === "string" &&
+    typeof item.name === "string" &&
+    typeof item.artists === "string" &&
+    (item.primaryArtistId === undefined ||
+      typeof item.primaryArtistId === "string" ||
+      item.primaryArtistId === null) &&
+    (item.albumId === undefined ||
+      typeof item.albumId === "string" ||
+      item.albumId === null) &&
+    (item.albumName === undefined ||
+      typeof item.albumName === "string" ||
+      item.albumName === null) &&
+    (typeof item.durationMs === "number" || item.durationMs === null) &&
+    (item.explicit === undefined ||
+      typeof item.explicit === "number" ||
+      item.explicit === null) &&
+    (typeof item.artworkUrl === "string" || item.artworkUrl === null) &&
+    typeof item.addedAt === "number" &&
+    playlistsValid
   );
 }
 
@@ -115,10 +114,10 @@ function isFallbackContext(value: unknown): value is QueueFallbackContext {
   const ctx = value as Partial<QueueFallbackContext>;
   return Boolean(
     (typeof ctx.contextUri === "string" || ctx.contextUri === null) &&
-      (typeof ctx.trackUri === "string" || ctx.trackUri === null) &&
-      typeof ctx.progressMs === "number" &&
-      typeof ctx.isPlaying === "boolean" &&
-      typeof ctx.capturedAt === "number"
+    (typeof ctx.trackUri === "string" || ctx.trackUri === null) &&
+    typeof ctx.progressMs === "number" &&
+    typeof ctx.isPlaying === "boolean" &&
+    typeof ctx.capturedAt === "number"
   );
 }
 
@@ -126,9 +125,7 @@ function parsePersistedSnapshot(raw: string | null): QueueSnapshot {
   if (!raw) return initialSnapshot;
   try {
     const parsed = JSON.parse(raw) as Partial<QueueSnapshot>;
-    const items = Array.isArray(parsed.items)
-      ? parsed.items.filter(isQueueItem)
-      : [];
+    const items = Array.isArray(parsed.items) ? parsed.items.filter(isQueueItem) : [];
     const currentQueueId =
       typeof parsed.currentQueueId === "string" ? parsed.currentQueueId : null;
     const currentExists = currentQueueId
@@ -232,8 +229,8 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
             track.explicit === undefined || track.explicit === null
               ? null
               : track.explicit
-              ? 1
-              : 0,
+                ? 1
+                : 0,
           artworkUrl: track.artworkUrl,
           playlists: normalizePlaylistRefs(track.playlists),
           addedAt: Date.now(),
@@ -270,7 +267,8 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      const nextCurrent = nextItems[index]?.queueId ?? nextItems[index - 1]?.queueId ?? null;
+      const nextCurrent =
+        nextItems[index]?.queueId ?? nextItems[index - 1]?.queueId ?? null;
       return {
         ...prev,
         items: nextItems,
@@ -311,21 +309,24 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
-  const upsertTrackPlaylist = useCallback((trackId: string, playlist: QueuePlaylistRef) => {
-    if (!trackId || !playlist?.id) return;
-    setSnapshot((prev) => ({
-      ...prev,
-      items: prev.items.map((item) => {
-        if (item.trackId !== trackId) return item;
-        const current = normalizePlaylistRefs(item.playlists);
-        if (current.some((entry) => entry.id === playlist.id)) return item;
-        return {
-          ...item,
-          playlists: [playlist, ...current],
-        };
-      }),
-    }));
-  }, []);
+  const upsertTrackPlaylist = useCallback(
+    (trackId: string, playlist: QueuePlaylistRef) => {
+      if (!trackId || !playlist?.id) return;
+      setSnapshot((prev) => ({
+        ...prev,
+        items: prev.items.map((item) => {
+          if (item.trackId !== trackId) return item;
+          const current = normalizePlaylistRefs(item.playlists);
+          if (current.some((entry) => entry.id === playlist.id)) return item;
+          return {
+            ...item,
+            playlists: [playlist, ...current],
+          };
+        }),
+      }));
+    },
+    []
+  );
 
   const removeTrackPlaylist = useCallback((trackId: string, playlistId: string) => {
     if (!trackId || !playlistId) return;
@@ -386,13 +387,17 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
 
   const currentItem = useMemo(() => {
     if (!snapshot.currentQueueId) return null;
-    return snapshot.items.find((item) => item.queueId === snapshot.currentQueueId) ?? null;
+    return (
+      snapshot.items.find((item) => item.queueId === snapshot.currentQueueId) ?? null
+    );
   }, [snapshot.currentQueueId, snapshot.items]);
 
   const nextItem = useMemo(() => {
     if (!snapshot.items.length) return null;
     if (!snapshot.currentQueueId) return snapshot.items[0] ?? null;
-    const index = snapshot.items.findIndex((item) => item.queueId === snapshot.currentQueueId);
+    const index = snapshot.items.findIndex(
+      (item) => item.queueId === snapshot.currentQueueId
+    );
     if (index < 0) return snapshot.items[0] ?? null;
     return snapshot.items[index + 1] ?? null;
   }, [snapshot.currentQueueId, snapshot.items]);

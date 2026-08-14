@@ -24,11 +24,13 @@ export function compareVersions(left, right) {
 }
 
 export function maxVersion(...values) {
-  return values
-    .map((value) => normalizeVersion(value))
-    .filter(Boolean)
-    .sort(compareVersions)
-    .at(-1) ?? "0.0.0";
+  return (
+    values
+      .map((value) => normalizeVersion(value))
+      .filter(Boolean)
+      .sort(compareVersions)
+      .at(-1) ?? "0.0.0"
+  );
 }
 
 export function bumpVersion(version, bump) {

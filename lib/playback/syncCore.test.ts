@@ -18,17 +18,14 @@ function baseState(overrides: Partial<PlaybackSyncState> = {}): PlaybackSyncStat
 }
 
 test("rejects older sequence events", () => {
-  const verdict = shouldApplyPlaybackEvent(
-    baseState({ lastSeq: 12 }),
-    {
-      source: "sse",
-      seq: 11,
-      atMs: 10_200,
-      deviceId: "d1",
-      trackId: "t1",
-      isPlaying: true,
-    }
-  );
+  const verdict = shouldApplyPlaybackEvent(baseState({ lastSeq: 12 }), {
+    source: "sse",
+    seq: 11,
+    atMs: 10_200,
+    deviceId: "d1",
+    trackId: "t1",
+    isPlaying: true,
+  });
   assert.equal(verdict.apply, false);
   assert.equal(verdict.reason, "seq_older");
 });

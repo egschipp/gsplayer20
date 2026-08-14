@@ -1,8 +1,5 @@
 import { getDb } from "@/lib/db/client";
-import {
-  artists,
-  trackArtists,
-} from "@/lib/db/schema";
+import { artists, trackArtists } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { requireAppUser, jsonPrivateCache, rateLimitResponse } from "@/lib/api/guards";
@@ -10,10 +7,7 @@ import { upsertArtist, upsertTrackArtist } from "@/lib/db/queries";
 
 export const runtime = "nodejs";
 
-export async function GET(
-  _req: Request,
-  ctx: { params: Promise<{ trackId: string }> }
-) {
+export async function GET(_req: Request, ctx: { params: Promise<{ trackId: string }> }) {
   const { session, response } = await requireAppUser();
   if (response) return response;
   const rl = await rateLimitResponse({

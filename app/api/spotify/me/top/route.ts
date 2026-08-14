@@ -21,7 +21,7 @@ export async function GET(req: Request) {
   const limitRaw = Number(searchParams.get("limit") ?? "20");
   const offsetRaw = Number(searchParams.get("offset") ?? "0");
 
-  if (!['artists', 'tracks'].includes(type)) {
+  if (!["artists", "tracks"].includes(type)) {
     return jsonNoStore({ error: "INVALID_TYPE" }, 400);
   }
 

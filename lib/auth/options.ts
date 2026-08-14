@@ -2,10 +2,7 @@ import type { NextAuthOptions } from "next-auth";
 import SpotifyProvider from "next-auth/providers/spotify";
 import { requireEnv } from "@/lib/env";
 import { scopeString } from "@/lib/spotify/scopes";
-import {
-  getOrCreateUser,
-  upsertTokens,
-} from "@/lib/db/queries";
+import { deleteTokens, getOrCreateUser, upsertTokens } from "@/lib/db/queries";
 import { endAuthLog, logAuthEvent } from "@/lib/auth/authLog";
 import { getValidAccessTokenForUser } from "@/lib/spotify/tokenManager";
 import { createCorrelationId } from "@/lib/observability/correlation";
@@ -71,7 +68,9 @@ export function getAuthOptions(): NextAuthOptions {
         authorization: {
           params: {
             scope: scopeString(),
-            show_dialog: "true",
+            ...(process.env.SPOTIFY_FORCE_CONSENT === "true"
+              ? { show_dialog: "true" }
+              : {}),
           },
         },
         checks: ["pkce", "state"],
@@ -128,7 +127,22 @@ export function getAuthOptions(): NextAuthOptions {
         });
         endAuthLog("signin_complete");
       },
-      async signOut() {
+      async signOut(message) {
+        const appUserId =
+          "token" in message && typeof message.token?.appUserId === "string"
+            ? message.token.appUserId
+            : null;
+        if (appUserId) {
+          try {
+            await deleteTokens(appUserId);
+          } catch {
+            logAuthEvent({
+              level: "error",
+              event: "nextauth_signout_token_cleanup_failed",
+              errorCode: "TOKEN_DELETE_FAILED",
+            });
+          }
+        }
         logAuthEvent({ level: "info", event: "nextauth_signout" });
       },
       async linkAccount(message) {
@@ -183,15 +197,13 @@ export function getAuthOptions(): NextAuthOptions {
           };
         }
 
-        if (
-          token.accessTokenExpires &&
-          Date.now() < token.accessTokenExpires - 60_000
-        ) {
+        if (token.accessTokenExpires && Date.now() < token.accessTokenExpires - 60_000) {
           return token;
         }
 
         const terminalErrors = new Set([
           "MissingRefreshToken",
+          "REFRESH_EXPIRED",
           "INVALID_GRANT",
           "MissingUserId",
         ]);
@@ -218,10 +230,7 @@ export function getAuthOptions(): NextAuthOptions {
             level: "error",
             event: "token_refresh_failed",
             errorCode: refreshed.code,
-            data: {
-              error: refreshed.code,
-              raw: refreshed.rawError,
-            },
+            data: { error: refreshed.code },
           });
           if (
             refreshed.code === "INVALID_GRANT" ||
@@ -249,7 +258,6 @@ export function getAuthOptions(): NextAuthOptions {
         };
       },
       async session({ session, token }) {
-        session.accessToken = token.accessToken as string | undefined;
         session.expiresAt = token.accessTokenExpires as number | undefined;
         session.scope = token.scope as string | undefined;
         session.error = token.error as string | undefined;

@@ -155,11 +155,7 @@ export async function getUserCacheVersion(userKey: string): Promise<number> {
   try {
     const raw = await client.get<number | string>(key);
     const parsed =
-      typeof raw === "number"
-        ? raw
-        : typeof raw === "string"
-        ? Number(raw)
-        : 0;
+      typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : 0;
     const version = Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
     setLocalUserCacheVersion(normalizedUserKey, version);
     return version;
@@ -265,11 +261,9 @@ export async function coalesceInflight<T>(
       if (typeof sharedRaw === "string" && sharedRaw.length > 0) {
         try {
           incCounter("spotify_coalesce_shared_hits_total", { source: "wait" });
-          observeHistogram(
-            "spotify_coalesce_wait_ms",
-            Date.now() - waitStartedAt,
-            { outcome: "hit" }
-          );
+          observeHistogram("spotify_coalesce_wait_ms", Date.now() - waitStartedAt, {
+            outcome: "hit",
+          });
           return JSON.parse(sharedRaw) as T;
         } catch {
           break;
@@ -282,13 +276,12 @@ export async function coalesceInflight<T>(
     });
   }
 
-  const promise = factory()
-    .finally(() => {
-      const current = inflight.get(key);
-      if (current?.promise === promise) {
-        inflight.delete(key);
-      }
-    });
+  const promise = factory().finally(() => {
+    const current = inflight.get(key);
+    if (current?.promise === promise) {
+      inflight.delete(key);
+    }
+  });
 
   inflight.set(key, {
     promise,

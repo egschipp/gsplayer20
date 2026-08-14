@@ -3,6 +3,11 @@
 node_modules
 .next
 coverage
+playwright-report
+test-results
+.test-dist
+tests
+playwright.config.ts
 logs
 *.log
 *.md

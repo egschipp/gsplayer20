@@ -5,22 +5,31 @@ const DB_PATH = process.env.DB_PATH || "/data/gsplayer.sqlite";
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 const TOKEN_ENCRYPTION_KEY = process.env.TOKEN_ENCRYPTION_KEY;
+const TOKEN_ENCRYPTION_KEYS = process.env.TOKEN_ENCRYPTION_KEYS || "";
+const TOKEN_ENCRYPTION_KEY_VERSION = Number(
+  process.env.TOKEN_ENCRYPTION_KEY_VERSION || "1"
+);
 const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000");
 const MAX_CONCURRENCY = Number(process.env.SPOTIFY_MAX_CONCURRENCY || "3");
 const MAX_RETRY_DELAY_MS = 60_000;
+const MAX_IMAGE_BYTES = Number(process.env.SPOTIFY_IMAGE_MAX_BYTES || "5242880");
 const JOB_LEASE_MS = Number(process.env.WORKER_JOB_LEASE_MS || "90000");
 const JOB_LEASE_HEARTBEAT_MS = Number(
   process.env.WORKER_JOB_LEASE_HEARTBEAT_MS || "15000"
 );
-const SCHEDULE_INTERVAL_MS = Number(
-  process.env.SYNC_SCHEDULE_MS || "600000"
+const SCHEDULE_INTERVAL_MS = Number(process.env.SYNC_SCHEDULE_MS || "600000");
+const MIN_SYNC_INTERVAL_MS = Number(process.env.SYNC_MIN_INTERVAL_MS || "1800000");
+const RECENTLY_PLAYED_RETENTION_DAYS = Number(
+  process.env.RECENTLY_PLAYED_RETENTION_DAYS || "90"
 );
-const MIN_SYNC_INTERVAL_MS = Number(
-  process.env.SYNC_MIN_INTERVAL_MS || "1800000"
-);
+const JOB_RETENTION_DAYS = Number(process.env.JOB_RETENTION_DAYS || "30");
+const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
 
 if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
-  console.error("Missing SPOTIFY_CLIENT_ID/SECRET");
+  throw new Error("Missing SPOTIFY_CLIENT_ID/SECRET");
+}
+if (!TOKEN_ENCRYPTION_KEY && !TOKEN_ENCRYPTION_KEYS) {
+  throw new Error("Missing token encryption key configuration");
 }
 
 const db = new Database(DB_PATH);
@@ -47,104 +56,17 @@ async function withLimiter(fn) {
   }
 }
 
-function hasColumn(table, column) {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all();
-  return rows.some((r) => r.name === column);
+const hasMigrationTable = db
+  .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+  .get("schema_migrations");
+const migration = hasMigrationTable
+  ? db
+      .prepare("SELECT id FROM schema_migrations WHERE id = ?")
+      .get("0003_refresh_token_expiry")
+  : null;
+if (!migration) {
+  throw new Error("Database migrations are missing; run npm run db:migrate first");
 }
-
-db.exec(
-  "CREATE TABLE IF NOT EXISTS worker_heartbeat (id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000))"
-);
-
-if (!hasColumn("sync_state", "updated_at")) {
-  db.exec("ALTER TABLE sync_state ADD COLUMN updated_at INTEGER");
-  db.exec(
-    "UPDATE sync_state SET updated_at=(unixepoch() * 1000) WHERE updated_at IS NULL"
-  );
-}
-
-if (!hasColumn("tracks", "album_release_date")) {
-  db.exec("ALTER TABLE tracks ADD COLUMN album_release_date TEXT");
-}
-
-if (!hasColumn("tracks", "album_release_year")) {
-  db.exec("ALTER TABLE tracks ADD COLUMN album_release_year INTEGER");
-}
-
-if (!hasColumn("tracks", "is_local")) {
-  db.exec("ALTER TABLE tracks ADD COLUMN is_local INTEGER");
-}
-
-if (!hasColumn("tracks", "restrictions_reason")) {
-  db.exec("ALTER TABLE tracks ADD COLUMN restrictions_reason TEXT");
-}
-
-if (!hasColumn("tracks", "linked_from_track_id")) {
-  db.exec("ALTER TABLE tracks ADD COLUMN linked_from_track_id TEXT");
-}
-
-if (!hasColumn("artists", "followers_total")) {
-  db.exec("ALTER TABLE artists ADD COLUMN followers_total INTEGER");
-}
-
-if (!hasColumn("artists", "image_url")) {
-  db.exec("ALTER TABLE artists ADD COLUMN image_url TEXT");
-}
-
-if (!hasColumn("playlists", "owner_display_name")) {
-  db.exec("ALTER TABLE playlists ADD COLUMN owner_display_name TEXT");
-}
-
-if (!hasColumn("playlists", "description")) {
-  db.exec("ALTER TABLE playlists ADD COLUMN description TEXT");
-}
-
-if (!hasColumn("playlists", "image_url")) {
-  db.exec("ALTER TABLE playlists ADD COLUMN image_url TEXT");
-}
-
-if (!hasColumn("jobs", "lease_owner")) {
-  db.exec("ALTER TABLE jobs ADD COLUMN lease_owner TEXT");
-}
-
-if (!hasColumn("jobs", "lease_expires_at")) {
-  db.exec("ALTER TABLE jobs ADD COLUMN lease_expires_at INTEGER");
-}
-
-if (!hasColumn("jobs", "started_at")) {
-  db.exec("ALTER TABLE jobs ADD COLUMN started_at INTEGER");
-}
-
-db.exec(
-  `CREATE TABLE IF NOT EXISTS user_recently_played (
-    user_id TEXT NOT NULL,
-    entry_id TEXT NOT NULL,
-    played_at INTEGER NOT NULL,
-    track_id TEXT,
-    context_uri TEXT,
-    track_name TEXT,
-    artist_names TEXT,
-    album_image_url TEXT,
-    duration_ms INTEGER,
-    last_seen_at INTEGER NOT NULL,
-    PRIMARY KEY (user_id, entry_id),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (track_id) REFERENCES tracks(track_id) ON DELETE SET NULL
-  )`
-);
-
-db.exec(
-  "CREATE INDEX IF NOT EXISTS playlist_items_track_idx ON playlist_items(track_id)"
-);
-db.exec(
-  "CREATE INDEX IF NOT EXISTS user_recently_played_user_played_idx ON user_recently_played(user_id, played_at)"
-);
-db.exec(
-  "CREATE INDEX IF NOT EXISTS user_recently_played_track_idx ON user_recently_played(track_id)"
-);
-db.exec(
-  "CREATE INDEX IF NOT EXISTS jobs_status_lease_exp_idx ON jobs(status, lease_expires_at)"
-);
 
 const SPOTIFY_ID_REGEX = /^[A-Za-z0-9]{22}$/;
 
@@ -243,14 +165,30 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS)
   }
 }
 
-function decryptToken(payload) {
-  if (!TOKEN_ENCRYPTION_KEY) {
-    throw new Error("Missing TOKEN_ENCRYPTION_KEY");
+function tokenKeyRing() {
+  const ring = new Map();
+  for (const entry of TOKEN_ENCRYPTION_KEYS.split(",").map((value) => value.trim())) {
+    if (!entry) continue;
+    const separator = entry.indexOf(":");
+    ring.set(Number(entry.slice(0, separator)), entry.slice(separator + 1));
   }
-  const key = Buffer.from(TOKEN_ENCRYPTION_KEY, "base64");
+  if (TOKEN_ENCRYPTION_KEY && !ring.has(1)) ring.set(1, TOKEN_ENCRYPTION_KEY);
+  if (ring.size === 0) throw new Error("Missing TOKEN_ENCRYPTION_KEY(S)");
+  return ring;
+}
+
+function tokenKey(version = 1) {
+  const encoded = tokenKeyRing().get(Number(version));
+  if (!encoded) throw new Error(`Missing token encryption key version ${version}`);
+  const key = Buffer.from(encoded, "base64");
   if (key.length !== 32) {
-    throw new Error("TOKEN_ENCRYPTION_KEY must decode to 32 bytes");
+    throw new Error(`Token encryption key version ${version} must decode to 32 bytes`);
   }
+  return key;
+}
+
+function decryptToken(payload, version = 1) {
+  const key = tokenKey(version);
   const data = Buffer.from(payload, "base64");
   const iv = data.subarray(0, 12);
   const tag = data.subarray(12, 28);
@@ -262,24 +200,37 @@ function decryptToken(payload) {
 }
 
 function encryptToken(value) {
-  if (!TOKEN_ENCRYPTION_KEY) {
-    throw new Error("Missing TOKEN_ENCRYPTION_KEY");
-  }
-  const key = Buffer.from(TOKEN_ENCRYPTION_KEY, "base64");
-  if (key.length !== 32) {
-    throw new Error("TOKEN_ENCRYPTION_KEY must decode to 32 bytes");
-  }
+  const ring = tokenKeyRing();
+  const version = ring.has(TOKEN_ENCRYPTION_KEY_VERSION)
+    ? TOKEN_ENCRYPTION_KEY_VERSION
+    : Math.max(...ring.keys());
+  const key = tokenKey(version);
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
   const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return Buffer.concat([iv, tag, encrypted]).toString("base64");
+  return {
+    payload: Buffer.concat([iv, tag, encrypted]).toString("base64"),
+    version,
+  };
+}
+
+function encryptStoredToken(value) {
+  const encrypted = encryptToken(value);
+  return `enc:v${encrypted.version}:${encrypted.payload}`;
+}
+
+function decryptStoredToken(value) {
+  if (!value || !String(value).startsWith("enc:v")) return value;
+  const separator = value.indexOf(":", 5);
+  const version = Number(value.slice(5, separator));
+  return decryptToken(value.slice(separator + 1), version);
 }
 
 async function refreshAccessToken(refreshToken) {
-  const auth = Buffer.from(
-    `${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`
-  ).toString("base64");
+  const auth = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString(
+    "base64"
+  );
 
   const res = await withLimiter(() =>
     fetchWithTimeout("https://accounts.spotify.com/api/token", {
@@ -303,8 +254,8 @@ async function refreshAccessToken(refreshToken) {
   }
 
   if (!res.ok) {
-    const text = await res.text();
-    const err = new Error(`RefreshFailed:${res.status}:${text}`);
+    const payload = await res.json().catch(() => null);
+    const err = new Error(`RefreshFailed:${res.status}:${payload?.error || "unknown"}`);
     if (res.status >= 500) err.retryable = true;
     throw err;
   }
@@ -327,8 +278,7 @@ async function spotifyGet(accessToken, url) {
   }
 
   if (!res.ok) {
-    const text = await res.text();
-    const err = new Error(`SpotifyError:${res.status}:${text}`);
+    const err = new Error(`SpotifyError:${res.status}`);
     if (res.status >= 500) err.retryable = true;
     throw err;
   }
@@ -342,9 +292,9 @@ async function getAppAccessToken() {
   if (appTokenCache && Date.now() < appTokenCache.expiresAt - 60_000) {
     return appTokenCache.accessToken;
   }
-  const auth = Buffer.from(
-    `${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`
-  ).toString("base64");
+  const auth = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString(
+    "base64"
+  );
   const res = await withLimiter(() =>
     fetchWithTimeout("https://accounts.spotify.com/api/token", {
       method: "POST",
@@ -356,8 +306,7 @@ async function getAppAccessToken() {
     })
   );
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`AppTokenFailed:${res.status}:${text}`);
+    throw new Error(`AppTokenFailed:${res.status}`);
   }
   const json = await res.json();
   appTokenCache = {
@@ -368,16 +317,37 @@ async function getAppAccessToken() {
 }
 
 async function downloadImage(url) {
-  const res = await withLimiter(() =>
-    fetchWithTimeout(url, {}, FETCH_TIMEOUT_MS)
-  );
+  let currentUrl = String(url || "");
+  let res = null;
+  for (let redirect = 0; redirect <= 3; redirect += 1) {
+    const parsed = new URL(currentUrl);
+    const allowedHost =
+      parsed.hostname === "i.scdn.co" || parsed.hostname.endsWith(".scdn.co");
+    if (parsed.protocol !== "https:" || !allowedHost || parsed.port) {
+      throw new Error("ImageFetch:disallowed_url");
+    }
+    res = await withLimiter(() =>
+      fetchWithTimeout(currentUrl, { redirect: "manual" }, FETCH_TIMEOUT_MS)
+    );
+    if (![301, 302, 303, 307, 308].includes(res.status)) break;
+    const location = res.headers.get("location");
+    if (!location) throw new Error("ImageFetch:redirect_without_location");
+    currentUrl = new URL(location, currentUrl).toString();
+  }
+  if (!res) throw new Error("ImageFetch:no_response");
   if (!res.ok) {
     const err = new Error(`ImageFetch:${res.status}`);
     if (res.status >= 500) err.retryable = true;
     throw err;
   }
   const mime = res.headers.get("content-type") || "image/jpeg";
+  if (!mime.toLowerCase().startsWith("image/")) {
+    throw new Error("ImageFetch:invalid_content_type");
+  }
+  const declaredLength = Number(res.headers.get("content-length") || "0");
+  if (declaredLength > MAX_IMAGE_BYTES) throw new Error("ImageFetch:too_large");
   const arrayBuffer = await res.arrayBuffer();
+  if (arrayBuffer.byteLength > MAX_IMAGE_BYTES) throw new Error("ImageFetch:too_large");
   return { buffer: Buffer.from(arrayBuffer), mime };
 }
 
@@ -448,13 +418,14 @@ const statements = {
      WHERE id=?`
   ),
   getOAuthTokens: db.prepare(
-    `SELECT refresh_token_enc, access_token, access_expires_at FROM oauth_tokens WHERE user_id=?`
+    `SELECT refresh_token_enc, refresh_expires_at, access_token, access_expires_at, enc_key_version FROM oauth_tokens WHERE user_id=?`
   ),
   updateOAuthTokens: db.prepare(
     `UPDATE oauth_tokens
        SET refresh_token_enc=?,
            access_token=?,
            access_expires_at=?,
+           enc_key_version=?,
            updated_at=?
      WHERE user_id=?`
   ),
@@ -477,9 +448,7 @@ const statements = {
        popularity=excluded.popularity,
        updated_at=excluded.updated_at`
   ),
-  getTrackImage: db.prepare(
-    `SELECT album_image_blob FROM tracks WHERE track_id=?`
-  ),
+  getTrackImage: db.prepare(`SELECT album_image_blob FROM tracks WHERE track_id=?`),
   updateTrackImage: db.prepare(
     `UPDATE tracks SET album_image_blob=?, album_image_mime=?, updated_at=? WHERE track_id=?`
   ),
@@ -624,6 +593,10 @@ const statements = {
          updated_at=?
      WHERE user_id=? AND resource=?`
   ),
+  purgeRecentlyPlayed: db.prepare("DELETE FROM user_recently_played WHERE played_at < ?"),
+  purgeFinishedJobs: db.prepare(
+    "DELETE FROM jobs WHERE status IN ('done', 'error') AND updated_at < ?"
+  ),
 };
 
 const writeTracksPage = db.transaction((items, userId, now) => {
@@ -635,8 +608,7 @@ const writeTracksPage = db.transaction((items, userId, now) => {
       name: track.name,
       duration_ms: track.duration_ms,
       explicit: track.explicit ? 1 : 0,
-      is_local:
-        typeof track.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
+      is_local: typeof track.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
       restrictions_reason: track.restrictions?.reason || null,
       linked_from_track_id: track.linked_from?.id || null,
       album_id: track.album?.id || null,
@@ -681,8 +653,7 @@ async function backfillTrackImages(items) {
   for (const item of items) {
     if (!item.track) continue;
     const track = item.track;
-    const imageUrl =
-      track.album?.images?.[track.album?.images?.length - 1]?.url || null;
+    const imageUrl = track.album?.images?.[track.album?.images?.length - 1]?.url || null;
     if (!track.id || !imageUrl) continue;
     const existing = statements.getTrackImage.get(track.id);
     if (existing?.album_image_blob) continue;
@@ -707,8 +678,7 @@ const writePlaylistItemsPage = db.transaction(
           name: track.name,
           duration_ms: track.duration_ms,
           explicit: track.explicit ? 1 : 0,
-          is_local:
-            typeof track.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
+          is_local: typeof track.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
           restrictions_reason: track.restrictions?.reason || null,
           linked_from_track_id: track.linked_from?.id || null,
           album_id: track.album?.id || null,
@@ -778,7 +748,7 @@ const writePlaylistsPage = db.transaction((items, userId, now) => {
       is_public: item.public === null ? null : item.public ? 1 : 0,
       collaborative: item.collaborative ? 1 : 0,
       snapshot_id: item.snapshot_id || null,
-      tracks_total: item.tracks?.total ?? null,
+      tracks_total: item.items?.total ?? item.tracks?.total ?? null,
       updated_at: now,
     });
     statements.upsertUserPlaylist.run(userId, item.id, now);
@@ -816,25 +786,36 @@ async function getAccessTokenForUser(userId) {
     row.access_expires_at &&
     Number(row.access_expires_at) - skewMs > Date.now()
   ) {
-    return row.access_token;
+    const accessToken = decryptStoredToken(row.access_token);
+    if (!String(row.access_token).startsWith("enc:v")) {
+      db.prepare(
+        "UPDATE oauth_tokens SET access_token=?, updated_at=? WHERE user_id=?"
+      ).run(encryptStoredToken(accessToken), Date.now(), userId);
+    }
+    return accessToken;
   }
 
-  const refreshToken = decryptToken(row.refresh_token_enc);
+  if (row.refresh_expires_at && Number(row.refresh_expires_at) <= Date.now()) {
+    statements.clearOAuthTokens.run(userId);
+    throw new Error("REFRESH_EXPIRED");
+  }
+
+  const refreshToken = decryptToken(row.refresh_token_enc, row.enc_key_version || 1);
   const tokens = await refreshAccessToken(refreshToken);
   if (!tokens || !tokens.access_token) {
     throw new Error("RefreshFailed:missing_access_token");
   }
 
-  const expiresAt =
-    Date.now() + Number(tokens.expires_in || 3600) * 1000;
+  const expiresAt = Date.now() + Number(tokens.expires_in || 3600) * 1000;
   const encrypted = tokens.refresh_token
     ? encryptToken(tokens.refresh_token)
-    : row.refresh_token_enc;
+    : { payload: row.refresh_token_enc, version: row.enc_key_version || 1 };
 
   statements.updateOAuthTokens.run(
-    encrypted,
-    tokens.access_token,
+    encrypted.payload,
+    encryptStoredToken(tokens.access_token),
     expiresAt,
+    encrypted.version,
     Date.now(),
     userId
   );
@@ -1083,9 +1064,12 @@ async function syncPlaylistItems(job) {
   let pages = 0;
 
   while (pages < maxPagesPerRun) {
-    const url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=${limit}&offset=${offset}`;
+    const url = `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=${limit}&offset=${offset}`;
     const data = await spotifyGet(accessToken, url);
-    const items = data.items || [];
+    const items = (data.items || []).map((entry) => ({
+      ...entry,
+      track: entry?.item ?? entry?.track ?? null,
+    }));
 
     if (items.length === 0) {
       statements.upsertSyncState.run({
@@ -1162,11 +1146,17 @@ async function syncTrackMetadata(job) {
     }
 
     const ids = rows.map((r) => r.track_id).filter(Boolean);
-    const url = `https://api.spotify.com/v1/tracks?ids=${ids.join(",")}`;
-    const data = await spotifyGet(accessToken, url);
+    const fetchedTracks = await Promise.all(
+      ids.map((id) =>
+        spotifyGet(
+          accessToken,
+          `https://api.spotify.com/v1/tracks/${encodeURIComponent(id)}`
+        )
+      )
+    );
     const now = Date.now();
 
-    for (const track of data.tracks || []) {
+    for (const track of fetchedTracks) {
       if (!track?.id) continue;
       const imageUrl =
         track.album?.images?.[track.album?.images?.length - 1]?.url || null;
@@ -1240,11 +1230,17 @@ async function syncArtistMetadata(job) {
     }
 
     const ids = rows.map((r) => r.artist_id).filter(Boolean);
-    const url = `https://api.spotify.com/v1/artists?ids=${ids.join(",")}`;
-    const data = await spotifyGet(accessToken, url);
+    const fetchedArtists = await Promise.all(
+      ids.map((id) =>
+        spotifyGet(
+          accessToken,
+          `https://api.spotify.com/v1/artists/${encodeURIComponent(id)}`
+        )
+      )
+    );
     const now = Date.now();
 
-    for (const artist of data.artists || []) {
+    for (const artist of fetchedArtists) {
       if (!artist?.id) continue;
       statements.upsertArtist.run({
         artist_id: artist.id,
@@ -1375,6 +1371,18 @@ function enqueueCoversIfMissing(userId) {
 }
 
 let lastScheduledAt = 0;
+let lastMaintenanceAt = 0;
+
+function runMaintenance(now) {
+  if (now - lastMaintenanceAt < MAINTENANCE_INTERVAL_MS) return;
+  lastMaintenanceAt = now;
+  const dayMs = 24 * 60 * 60 * 1000;
+  statements.purgeRecentlyPlayed.run(
+    now - Math.max(1, RECENTLY_PLAYED_RETENTION_DAYS) * dayMs
+  );
+  statements.purgeFinishedJobs.run(now - Math.max(1, JOB_RETENTION_DAYS) * dayMs);
+  db.pragma("wal_checkpoint(PASSIVE)");
+}
 
 function schedulePeriodicSync() {
   const now = Date.now();
@@ -1386,7 +1394,11 @@ function schedulePeriodicSync() {
     function shouldEnqueue(resource) {
       const row = statements.getSyncState.get(user.id, resource);
       if (!row) return true;
-      if (row.status === "running" || row.status === "queued" || row.status === "backoff") {
+      if (
+        row.status === "running" ||
+        row.status === "queued" ||
+        row.status === "backoff"
+      ) {
         return false;
       }
       if (row.lastSuccessfulAt && now - row.lastSuccessfulAt < MIN_SYNC_INTERVAL_MS) {
@@ -1395,10 +1407,7 @@ function schedulePeriodicSync() {
       return true;
     }
 
-    const tracksJobs = statements.countJobsByType.get(
-      user.id,
-      "SYNC_TRACKS_INCREMENTAL"
-    );
+    const tracksJobs = statements.countJobsByType.get(user.id, "SYNC_TRACKS_INCREMENTAL");
     if ((!tracksJobs || tracksJobs.c === 0) && shouldEnqueue("tracks")) {
       statements.enqueueJob.run({
         id: crypto.randomUUID(),
@@ -1557,23 +1566,12 @@ async function runLoop() {
       lastHeartbeatAt = now;
     }
     schedulePeriodicSync();
+    runMaintenance(now);
     const leaseExpiresAt = now + JOB_LEASE_MS;
     let reclaimed = false;
-    let job = statements.claimQueuedJob.get(
-      now,
-      workerId,
-      leaseExpiresAt,
-      now,
-      now
-    );
+    let job = statements.claimQueuedJob.get(now, workerId, leaseExpiresAt, now, now);
     if (!job) {
-      job = statements.reclaimStaleJob.get(
-        now,
-        workerId,
-        leaseExpiresAt,
-        now,
-        now
-      );
+      job = statements.reclaimStaleJob.get(now, workerId, leaseExpiresAt, now, now);
       reclaimed = Boolean(job);
     }
 
@@ -1619,11 +1617,7 @@ async function runLoop() {
           parseJobPayload(job.payload),
           result
         );
-        statements.requeueJob.run(
-          Date.now() + 2000,
-          Date.now(),
-          job.id
-        );
+        statements.requeueJob.run(Date.now() + 2000, Date.now(), job.id);
         db.prepare("UPDATE jobs SET payload=? WHERE id=?").run(
           JSON.stringify(nextPayload),
           job.id
@@ -1645,12 +1639,7 @@ async function runLoop() {
           job.id
         );
         if (resource !== "unknown") {
-          statements.setSyncError.run(
-            "INVALID_GRANT",
-            Date.now(),
-            job.user_id,
-            resource
-          );
+          statements.setSyncError.run("INVALID_GRANT", Date.now(), job.user_id, resource);
         }
         continue;
       }

@@ -17,7 +17,9 @@ export type PlayerErrorDetails = {
 };
 
 function normalizeCode(input: unknown): PlayerErrorCode {
-  const raw = String(input ?? "").trim().toUpperCase();
+  const raw = String(input ?? "")
+    .trim()
+    .toUpperCase();
   if (
     raw === "PLAYER_NOT_READY" ||
     raw === "SEEK_NOT_AVAILABLE" ||
@@ -91,8 +93,10 @@ export function normalizePlayerError(error: unknown): PlayerErrorDetails {
     else if (status === 403) code = "FORBIDDEN";
     else if (status === 404) code = "NO_ACTIVE_DEVICE";
     else if (status === 429) code = "RATE_LIMITED";
-    else if (rawMessage.toUpperCase().includes("PLAYER_NOT_READY")) code = "PLAYER_NOT_READY";
-    else if (rawMessage.toUpperCase().includes("SEEK_NOT_AVAILABLE")) code = "SEEK_NOT_AVAILABLE";
+    else if (rawMessage.toUpperCase().includes("PLAYER_NOT_READY"))
+      code = "PLAYER_NOT_READY";
+    else if (rawMessage.toUpperCase().includes("SEEK_NOT_AVAILABLE"))
+      code = "SEEK_NOT_AVAILABLE";
     else if (rawMessage.toUpperCase().includes("TRANSFER_NOT_AVAILABLE")) {
       code = "TRANSFER_NOT_AVAILABLE";
     }
@@ -103,9 +107,7 @@ export function normalizePlayerError(error: unknown): PlayerErrorDetails {
     status,
     retryAfterSec,
     message:
-      (rawMessage && rawMessageCode === "UNKNOWN"
-        ? rawMessage
-        : "") ||
+      (rawMessage && rawMessageCode === "UNKNOWN" ? rawMessage : "") ||
       getPlayerErrorMessage(code, {
         retryAfterSec,
       }),

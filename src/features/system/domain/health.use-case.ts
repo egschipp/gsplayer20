@@ -11,12 +11,18 @@ export function evaluateHealth(args: {
 }): HealthPayload {
   const missing: string[] = [];
 
-  if (!resolveAuthSecret()) {
+  const authSecret = resolveAuthSecret();
+  if (!authSecret) {
     missing.push("AUTH_SECRET/NEXTAUTH_SECRET");
+  } else if (Buffer.byteLength(authSecret, "utf8") < 32) {
+    missing.push("AUTH_SECRET_TOO_SHORT");
   }
 
-  if (!resolvePinCode()) {
+  const pinCode = resolvePinCode();
+  if (!pinCode) {
     missing.push("APP_PIN/PIN_CODE");
+  } else if (pinCode.length < 6) {
+    missing.push("APP_PIN_TOO_SHORT");
   }
 
   if (!process.env.TOKEN_ENCRYPTION_KEY) {

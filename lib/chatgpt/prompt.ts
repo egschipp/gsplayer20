@@ -116,9 +116,11 @@ function repairPromptTokenFragments(value: string) {
 function stripUnknownPromptTokens(value: string) {
   let next = value ?? "";
   const unknownTokens =
-    next.match(/\[[^\]]+\]/g)?.filter(
-      (match) => !(CHATGPT_PROMPT_TOKENS as readonly string[]).includes(match)
-    ) ?? [];
+    next
+      .match(/\[[^\]]+\]/g)
+      ?.filter(
+        (match) => !(CHATGPT_PROMPT_TOKENS as readonly string[]).includes(match)
+      ) ?? [];
   next = next.replace(/\[[^\]]+\]/g, (match) => {
     if ((CHATGPT_PROMPT_TOKENS as readonly string[]).includes(match)) {
       return match;
@@ -162,8 +164,8 @@ export function fillChatGptPrompt(
     metaTokens?.explicit === true || metaTokens?.explicit === 1
       ? "yes"
       : metaTokens?.explicit === false || metaTokens?.explicit === 0
-      ? "no"
-      : "Unknown";
+        ? "no"
+        : "Unknown";
   const popularityValue =
     metaTokens?.popularity === null || metaTokens?.popularity === undefined
       ? "Unknown"

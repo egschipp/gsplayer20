@@ -1,17 +1,8 @@
 import type { PlaybackExecutionMode } from "./runtimeMode";
 
-export type PlayerPlaybackStatus =
-  | "empty"
-  | "loading"
-  | "ready"
-  | "error";
+export type PlayerPlaybackStatus = "empty" | "loading" | "ready" | "error";
 
-export type PlayerCommandType =
-  | "play"
-  | "pause"
-  | "toggle"
-  | "seek"
-  | "transfer";
+export type PlayerCommandType = "play" | "pause" | "toggle" | "seek" | "transfer";
 
 export type PlayerRuntimeState = {
   deviceId: string | null;

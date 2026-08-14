@@ -1,5 +1,10 @@
 import { execSync } from "node:child_process";
-import { maxVersion, bumpVersion, readJsonFile } from "./semver-utils.mjs";
+import {
+  maxVersion,
+  bumpVersion,
+  compareVersions,
+  readJsonFile,
+} from "./semver-utils.mjs";
 
 function readPackageVersion() {
   const pkg = readJsonFile("package.json");
@@ -16,10 +21,9 @@ function readManifestVersion() {
 }
 
 function readLatestTag() {
-  const raw = execSync(
-    "git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname",
-    { encoding: "utf8" }
-  )
+  const raw = execSync("git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname", {
+    encoding: "utf8",
+  })
     .trim()
     .split("\n")
     .filter(Boolean)[0];
@@ -50,7 +54,11 @@ function classifyCommit(subject, body) {
     return "major";
   }
   if (/^feat(\([^)]+\))?:/i.test(subject)) return "minor";
-  if (/^(fix|perf|refactor|revert|build|chore|ci|docs|style|test)(\([^)]+\))?:/i.test(subject)) {
+  if (
+    /^(fix|perf|refactor|revert|build|chore|ci|docs|style|test)(\([^)]+\))?:/i.test(
+      subject
+    )
+  ) {
     return "patch";
   }
   return "patch";
@@ -70,11 +78,17 @@ function highestBump(commits) {
 const packageVersion = readPackageVersion();
 const manifestVersion = readManifestVersion();
 const latestTagVersion = readLatestTag();
-const baseVersion = maxVersion(packageVersion, manifestVersion, latestTagVersion);
+const declaredVersion = maxVersion(packageVersion, manifestVersion);
+const declaredVersionIsAhead = compareVersions(declaredVersion, latestTagVersion) > 0;
+const baseVersion = latestTagVersion;
 const commits = readCommitsSince(latestTagVersion);
 const bump = highestBump(commits);
-const shouldRelease = Boolean(bump);
-const nextVersion = shouldRelease ? bumpVersion(baseVersion, bump) : baseVersion;
+const shouldRelease = declaredVersionIsAhead || Boolean(bump);
+const nextVersion = declaredVersionIsAhead
+  ? declaredVersion
+  : bump
+    ? bumpVersion(baseVersion, bump)
+    : baseVersion;
 
 const lines = [
   `should_release=${shouldRelease ? "true" : "false"}`,

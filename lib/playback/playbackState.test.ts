@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_PLAYBACK_FOCUS, type PlaybackFocus } from "@/app/components/player/playbackFocus";
+import { DEFAULT_PLAYBACK_FOCUS, type PlaybackFocus } from "./playbackFocus";
 import { derivePlaybackSnapshot } from "./playbackState";
 
 const TRACK_A = "1111111111111111111111";

@@ -27,8 +27,7 @@ export function useStableMenu<T extends HTMLElement = HTMLDivElement>({
 
   const handleBlur = useCallback(
     (event: FocusEvent<HTMLElement>) => {
-      const nextTarget =
-        (event.relatedTarget as Node | null) ?? document.activeElement;
+      const nextTarget = (event.relatedTarget as Node | null) ?? document.activeElement;
       if (nextTarget && rootRef.current?.contains(nextTarget)) return;
       if (interactionRef.current) {
         window.setTimeout(() => {

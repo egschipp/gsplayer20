@@ -20,9 +20,7 @@ export const users = sqliteTable(
     deletedAt: integer("deleted_at"),
   },
   (table) => ({
-    spotifyUserIdIdx: uniqueIndex("users_spotify_user_id_idx").on(
-      table.spotifyUserId
-    ),
+    spotifyUserIdIdx: uniqueIndex("users_spotify_user_id_idx").on(table.spotifyUserId),
   })
 );
 
@@ -32,6 +30,7 @@ export const oauthTokens = sqliteTable("oauth_tokens", {
     .references(() => users.id, { onDelete: "cascade" })
     .primaryKey(),
   refreshTokenEnc: text("refresh_token_enc").notNull(),
+  refreshExpiresAt: integer("refresh_expires_at"),
   accessToken: text("access_token"),
   accessExpiresAt: integer("access_expires_at"),
   scope: text("scope"),

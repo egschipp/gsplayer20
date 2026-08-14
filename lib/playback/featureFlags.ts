@@ -17,4 +17,3 @@ export const PLAYBACK_FEATURE_FLAGS: PlaybackFeatureFlags = {
   delayedActiveTrackErrorIndicator: true,
   playbackUiTelemetryV1: true,
 };
-

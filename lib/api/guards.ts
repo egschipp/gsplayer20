@@ -2,10 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getAuthOptions } from "@/lib/auth/options";
 import { rateLimit } from "@/lib/rate-limit/ratelimit";
-import {
-  createCorrelationId,
-  readCorrelationId,
-} from "@/lib/observability/correlation";
+import { createCorrelationId, readCorrelationId } from "@/lib/observability/correlation";
 
 export function jsonError(
   error: string,
@@ -21,6 +18,35 @@ export async function requireAppUser() {
     return { session: null, response: jsonError("UNAUTHENTICATED", 401) };
   }
   return { session, response: null };
+}
+
+function configuredAdminSpotifyIds(): Set<string> {
+  const raw =
+    process.env.ADMIN_SPOTIFY_USER_IDS || process.env.APP_ADMIN_SPOTIFY_USER_ID || "";
+  return new Set(
+    raw
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+}
+
+export async function requireAdminUser() {
+  const auth = await requireAppUser();
+  if (auth.response || !auth.session) return auth;
+
+  const spotifyUserId =
+    typeof auth.session.spotifyUserId === "string"
+      ? auth.session.spotifyUserId.trim()
+      : "";
+  const admins = configuredAdminSpotifyIds();
+  if (!spotifyUserId || !admins.has(spotifyUserId)) {
+    return {
+      session: null,
+      response: jsonError(admins.size === 0 ? "ADMIN_NOT_CONFIGURED" : "FORBIDDEN", 403),
+    };
+  }
+  return auth;
 }
 
 function normalizeIp(value: string | null | undefined) {
@@ -63,7 +89,10 @@ export async function rateLimitResponse(options: {
     ? { "Retry-After": String(retryAfter) }
     : undefined;
   const body =
-    options.body ?? (options.includeRetryAfter ? { error: "RATE_LIMIT", retryAfter } : { error: "RATE_LIMIT" });
+    options.body ??
+    (options.includeRetryAfter
+      ? { error: "RATE_LIMIT", retryAfter }
+      : { error: "RATE_LIMIT" });
   return NextResponse.json(body, {
     status: options.status ?? 429,
     headers,
@@ -96,9 +125,12 @@ export function jsonPrivateCache(
 
 export function requireSameOrigin(req: Request) {
   const baseUrl = process.env.NEXTAUTH_URL || process.env.AUTH_URL;
-  const expectedOrigin = baseUrl
-    ? new URL(baseUrl).origin
-    : new URL(req.url).origin;
+  let expectedOrigin: string;
+  try {
+    expectedOrigin = baseUrl ? new URL(baseUrl).origin : new URL(req.url).origin;
+  } catch {
+    return jsonError("SERVICE_MISCONFIGURED", 503);
+  }
   const origin = req.headers.get("origin") || req.headers.get("referer");
   const method = req.method.toUpperCase();
   const strictMethod =
@@ -111,10 +143,7 @@ export function requireSameOrigin(req: Request) {
   }
   try {
     const originUrl = new URL(origin);
-    const expectedHost = new URL(expectedOrigin).host.replace(/^www\./, "");
-    const originHost = originUrl.host.replace(/^www\./, "");
-    const requestHost = new URL(req.url).host.replace(/^www\./, "");
-    if (originHost === expectedHost || originHost === requestHost) return null;
+    if (originUrl.origin === expectedOrigin) return null;
   } catch {
     // fall through
   }

@@ -90,10 +90,7 @@ export async function GET(req: NextRequest) {
       const disallows =
         disallowsRaw && typeof disallowsRaw === "object"
           ? Object.fromEntries(
-              Object.entries(disallowsRaw).map(([key, value]) => [
-                key,
-                Boolean(value),
-              ])
+              Object.entries(disallowsRaw).map(([key, value]) => [key, Boolean(value)])
             )
           : {};
       return jsonNoStore({
@@ -260,7 +257,9 @@ export async function PUT(req: NextRequest) {
 
   if (expectedActiveDeviceId) {
     try {
-      const current = await spotifyFetch<{ device?: { id?: string | null } | null } | undefined>({
+      const current = await spotifyFetch<
+        { device?: { id?: string | null } | null } | undefined
+      >({
         url: "https://api.spotify.com/v1/me/player",
         userLevel: true,
         activity: "me_player_transfer_conflict_check",

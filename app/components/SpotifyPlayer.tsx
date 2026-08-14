@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { getSession, useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import {
   SPOTIFY_PLAYBACK_SCOPES,
   hasPlaybackScopes,
@@ -61,10 +61,7 @@ import {
   type PlaybackCrossTabMessage,
   type PlaybackCrossTabSnapshot,
 } from "@/lib/playback/crossTab";
-import {
-  getPlayerErrorMessage,
-  normalizePlayerError,
-} from "@/lib/playback/playerErrors";
+import { getPlayerErrorMessage, normalizePlayerError } from "@/lib/playback/playerErrors";
 import {
   resolvePlaybackExecutionMode,
   resolvePlaybackSyncOwnership,
@@ -73,6 +70,10 @@ import {
   createPlayerApiHandlers,
   type PlayerDeferredPlayIntent,
 } from "@/lib/playback/playerApiFactory";
+import {
+  isLocalSdkPlaybackTarget,
+  shouldBlockPlayPause,
+} from "@/lib/playback/deviceControlPolicy";
 import { usePlaybackLeader } from "@/lib/playback/usePlaybackLeader";
 
 declare global {
@@ -125,12 +126,7 @@ type PlayerPlaylistOption = {
 };
 
 type PlaybackSource =
-  | "sdk"
-  | "api_sync"
-  | "api_poll"
-  | "api_verify"
-  | "api_bootstrap"
-  | "api_stream";
+  "sdk" | "api_sync" | "api_poll" | "api_verify" | "api_bootstrap" | "api_stream";
 
 function toIngestSource(source: PlaybackSource): PlaybackIngestSource {
   if (source === "sdk") return "sdk";
@@ -157,11 +153,7 @@ type DeviceSwitchContext = {
 };
 
 type HandoffPhase =
-  | "idle"
-  | "requested"
-  | "device_ready"
-  | "playback_confirmed"
-  | "failed";
+  "idle" | "requested" | "device_ready" | "playback_confirmed" | "failed";
 
 type HandoffState = {
   phase: HandoffPhase;
@@ -354,7 +346,10 @@ function mapQueueTrackItem(track: any, fallbackIndex = 0): QueueTrackItem {
     matchTrackIds,
     name: track?.name ?? "Unknown track",
     artists: Array.isArray(track?.artists)
-      ? track.artists.map((a: any) => a?.name).filter(Boolean).join(", ")
+      ? track.artists
+          .map((a: any) => a?.name)
+          .filter(Boolean)
+          .join(", ")
       : "",
     coverUrl: track?.album?.images?.[0]?.url ?? null,
     durationMs:
@@ -412,7 +407,11 @@ function findBestQueueMatchIndex(items: QueueTrackItem[], activeTrackIds: Set<st
   if (!items.length || !activeTrackIds.size) return -1;
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
-    const candidates = normalizeTrackIdCollection([item.id, item.uri, ...item.matchTrackIds]);
+    const candidates = normalizeTrackIdCollection([
+      item.id,
+      item.uri,
+      ...item.matchTrackIds,
+    ]);
     if (candidates.some((candidate) => activeTrackIds.has(candidate))) {
       return index;
     }
@@ -420,10 +419,7 @@ function findBestQueueMatchIndex(items: QueueTrackItem[], activeTrackIds: Set<st
   return -1;
 }
 
-function emitPlaybackDebugEvent(
-  event: string,
-  payload: Record<string, unknown>
-) {
+function emitPlaybackDebugEvent(event: string, payload: Record<string, unknown>) {
   if (process.env.NODE_ENV === "production") return;
   try {
     console.debug(`[player:${event}]`, payload);
@@ -434,10 +430,7 @@ function emitPlaybackDebugEvent(
 
 function readSyncServerSeq(payload: any): number {
   const candidate =
-    payload?.sync?.serverSeq ??
-    payload?.serverSeq ??
-    payload?.meta?.serverSeq ??
-    0;
+    payload?.sync?.serverSeq ?? payload?.serverSeq ?? payload?.meta?.serverSeq ?? 0;
   return typeof candidate === "number" && Number.isFinite(candidate)
     ? Math.max(0, Math.floor(candidate))
     : 0;
@@ -466,14 +459,14 @@ function ActiveTrackIndicator({
     status === "playing"
       ? "Now playing"
       : status === "paused"
-      ? "Gepauzeerd"
-      : status === "loading"
-      ? "Buffering"
-      : status === "ended"
-      ? "Track beëindigd"
-      : status === "error"
-      ? "Playback fout"
-      : "Actieve track";
+        ? "Gepauzeerd"
+        : status === "loading"
+          ? "Buffering"
+          : status === "ended"
+            ? "Track beëindigd"
+            : status === "error"
+              ? "Playback fout"
+              : "Actieve track";
   return (
     <span
       className={`playing-indicator ${status}${isStale ? " stale" : ""}`}
@@ -548,7 +541,9 @@ function ActiveTrackIndicator({
 }
 
 function resolveDeviceTypeIcon(type: string | null | undefined) {
-  const raw = String(type ?? "").trim().toLowerCase();
+  const raw = String(type ?? "")
+    .trim()
+    .toLowerCase();
   if (!raw) return "🎵";
   if (raw.includes("smartphone") || raw.includes("phone") || raw.includes("tablet")) {
     return "📱";
@@ -585,8 +580,8 @@ export default function SpotifyPlayer({
   const { data: session, status: sessionStatus } = useSession();
   const customQueue = useQueueStore();
   const customQueuePlayback = useQueuePlayback();
-  const accessToken = session?.accessToken as string | undefined;
-  const accessTokenExpiresAt = session?.expiresAt as number | undefined;
+  const [accessToken, setAccessToken] = useState<string | undefined>();
+  const [accessTokenExpiresAt, setAccessTokenExpiresAt] = useState<number | undefined>();
   const scope = session?.scope as string | undefined;
   const playbackAllowed = hasPlaybackScopes(scope);
   const [deviceId, setDeviceId] = useState<string | null>(null);
@@ -607,9 +602,9 @@ export default function SpotifyPlayer({
   const [likedStateSaving, setLikedStateSaving] = useState(false);
   const [trackPlaylistMenuOpen, setTrackPlaylistMenuOpen] = useState(false);
   const [trackPlaylistMembershipOpen, setTrackPlaylistMembershipOpen] = useState(false);
-  const [trackPlaylistOptions, setTrackPlaylistOptions] = useState<PlayerPlaylistOption[]>([
-    { id: PLAYER_LIKED_PLAYLIST_ID, name: "Liked Songs", type: "liked" },
-  ]);
+  const [trackPlaylistOptions, setTrackPlaylistOptions] = useState<
+    PlayerPlaylistOption[]
+  >([{ id: PLAYER_LIKED_PLAYLIST_ID, name: "Liked Songs", type: "liked" }]);
   const [trackPlaylistSelectedIds, setTrackPlaylistSelectedIds] = useState<Set<string>>(
     () => new Set()
   );
@@ -618,7 +613,9 @@ export default function SpotifyPlayer({
   );
   const [trackPlaylistLoading, setTrackPlaylistLoading] = useState(false);
   const [trackPlaylistSaving, setTrackPlaylistSaving] = useState(false);
-  const [trackPlaylistActionKey, setTrackPlaylistActionKey] = useState<string | null>(null);
+  const [trackPlaylistActionKey, setTrackPlaylistActionKey] = useState<string | null>(
+    null
+  );
   const [trackPlaylistPopoverStyle, setTrackPlaylistPopoverStyle] = useState<
     CSSProperties | undefined
   >(undefined);
@@ -743,8 +740,12 @@ export default function SpotifyPlayer({
   const queueModeRef = useRef<"queue" | "context" | null>(null);
   const shuffleInitDoneRef = useRef(false);
   const connectDockOpenDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const connectDockCloseDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const queueActiveTrackErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectDockCloseDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  const queueActiveTrackErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const queueListRef = useRef<HTMLDivElement | null>(null);
   const queueRowRefsRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const lastQueueAutoScrollRef = useRef<{ key: string | null; index: number }>({
@@ -871,21 +872,19 @@ export default function SpotifyPlayer({
   } | null>(null);
 
   const updatePlaybackFocus = useCallback(
-    (
-      next: {
-        trackId?: string | null;
-        matchTrackIds?: string[] | null;
-        isPlaying?: boolean | null;
-        status?: PlaybackFocusStatus;
-        stale?: boolean;
-        source: PlaybackSource | PlaybackFocusSource;
-        confidence?: number;
-        positionMs?: number;
-        durationMs?: number;
-        errorMessage?: string | null;
-        updatedAt?: number;
-      }
-    ) => {
+    (next: {
+      trackId?: string | null;
+      matchTrackIds?: string[] | null;
+      isPlaying?: boolean | null;
+      status?: PlaybackFocusStatus;
+      stale?: boolean;
+      source: PlaybackSource | PlaybackFocusSource;
+      confidence?: number;
+      positionMs?: number;
+      durationMs?: number;
+      errorMessage?: string | null;
+      updatedAt?: number;
+    }) => {
       const nextTrackId = next.trackId ?? null;
       const nextMatchTrackIds = Array.isArray(next.matchTrackIds)
         ? next.matchTrackIds
@@ -936,7 +935,9 @@ export default function SpotifyPlayer({
       const changed =
         previous.trackId !== normalized.trackId ||
         previous.matchTrackIds.length !== normalized.matchTrackIds.length ||
-        previous.matchTrackIds.some((value, index) => value !== normalized.matchTrackIds[index]) ||
+        previous.matchTrackIds.some(
+          (value, index) => value !== normalized.matchTrackIds[index]
+        ) ||
         previous.isPlaying !== normalized.isPlaying ||
         previous.status !== normalized.status ||
         previous.stale !== normalized.stale ||
@@ -989,8 +990,8 @@ export default function SpotifyPlayer({
           Array.isArray(options?.matchTrackIds) && options?.matchTrackIds.length > 0
             ? options.matchTrackIds
             : nextTrackId
-            ? [nextTrackId]
-            : [],
+              ? [nextTrackId]
+              : [],
         isPlaying:
           typeof options?.isPlaying === "boolean"
             ? options.isPlaying
@@ -1008,8 +1009,8 @@ export default function SpotifyPlayer({
           typeof options?.confidence === "number"
             ? options.confidence
             : nextTrackId
-            ? 1
-            : 0,
+              ? 1
+              : 0,
         positionMs:
           typeof options?.positionMs === "number"
             ? options.positionMs
@@ -1199,7 +1200,7 @@ export default function SpotifyPlayer({
         targetDeviceId:
           options?.targetDeviceId === undefined
             ? handoffStateRef.current.targetDeviceId
-            : options.targetDeviceId ?? null,
+            : (options.targetDeviceId ?? null),
         updatedAt:
           typeof options?.updatedAt === "number" ? options.updatedAt : Date.now(),
         reason,
@@ -1415,9 +1416,12 @@ export default function SpotifyPlayer({
     (delayMs = 220, source: PlaybackSource = "api_verify", minEpoch?: number) => {
       if (verifyTimerRef.current) clearTimeout(verifyTimerRef.current);
       const epoch = typeof minEpoch === "number" ? minEpoch : operationEpochRef.current;
-      verifyTimerRef.current = setTimeout(() => {
-        syncPlaybackStateRef.current(source, epoch).catch(() => undefined);
-      }, Math.max(0, delayMs));
+      verifyTimerRef.current = setTimeout(
+        () => {
+          syncPlaybackStateRef.current(source, epoch).catch(() => undefined);
+        },
+        Math.max(0, delayMs)
+      );
     },
     []
   );
@@ -1650,10 +1654,10 @@ export default function SpotifyPlayer({
     hideLoadingForRemoteActiveTrack:
       PLAYBACK_FEATURE_FLAGS.remoteActiveTrackHideLoadingIndicator,
   });
-  const activeQueueTrackStatus: PlaybackFocusStatus = PLAYBACK_FEATURE_FLAGS
-    .playbackStatusMatrixV1
-    ? queuePresentation.status
-    : activeQueueTrackStatusRaw;
+  const activeQueueTrackStatus: PlaybackFocusStatus =
+    PLAYBACK_FEATURE_FLAGS.playbackStatusMatrixV1
+      ? queuePresentation.status
+      : activeQueueTrackStatusRaw;
   const activeQueueTrackIsStale = queuePresentation.stale;
   const playbackExecutionMode = resolvePlaybackExecutionMode({
     activeDeviceId: activeDeviceId || deviceId || null,
@@ -1661,13 +1665,14 @@ export default function SpotifyPlayer({
     pendingDeviceId: pendingDeviceIdRef.current,
     sdkReady: sdkReadyState,
   });
-  const { shouldOwnPlaybackSync, shouldRunPlaybackStream } =
-    resolvePlaybackSyncOwnership({
+  const { shouldOwnPlaybackSync, shouldRunPlaybackStream } = resolvePlaybackSyncOwnership(
+    {
       executionMode: playbackExecutionMode,
       isLeader: isPlaybackLeader,
       activeDeviceId: activeDeviceId || deviceId || null,
       sdkDeviceId: sdkDeviceIdRef.current,
-    });
+    }
+  );
   useEffect(() => {
     if (!PLAYBACK_FEATURE_FLAGS.playbackUiTelemetryV1) return;
     if (lastQueueUiStatusRef.current === activeQueueTrackStatus) return;
@@ -1686,8 +1691,7 @@ export default function SpotifyPlayer({
       Date.now() - lastQueueActiveTrackSeenAtRef.current <=
       QUEUE_ACTIVE_FALLBACK_MAX_AGE_MS;
     const hasKnownActiveTrack = activeTrackIdSet.size > 0;
-    const allowHistoricalFallback =
-      !hasKnownActiveTrack || activeQueueTrackTransientGap;
+    const allowHistoricalFallback = !hasKnownActiveTrack || activeQueueTrackTransientGap;
     const indexed = queueItems.map((item, index) => ({
       ...item,
       _index: index,
@@ -1698,12 +1702,7 @@ export default function SpotifyPlayer({
     }));
 
     let activeIndex = findBestQueueMatchIndex(indexed, activeTrackIdSet);
-    if (
-      activeIndex < 0 &&
-      fallbackActiveId &&
-      fallbackFresh &&
-      allowHistoricalFallback
-    ) {
+    if (activeIndex < 0 && fallbackActiveId && fallbackFresh && allowHistoricalFallback) {
       activeIndex = indexed.findIndex(
         (item) => Boolean(item._normalizedId) && item._normalizedId === fallbackActiveId
       );
@@ -1827,10 +1826,7 @@ export default function SpotifyPlayer({
       180,
       Math.floor(viewportWidth - viewportGutter * 2)
     );
-    const resolvedWidth = Math.max(
-      220,
-      Math.min(560, cardMaxWidth, viewportMaxWidth)
-    );
+    const resolvedWidth = Math.max(220, Math.min(560, cardMaxWidth, viewportMaxWidth));
 
     const minLeft = Math.max(viewportGutter, cardRect.left + cardGutter);
     const maxLeft = Math.min(
@@ -1839,9 +1835,7 @@ export default function SpotifyPlayer({
     );
     const wantedLeft = anchorRect.left;
     const clampedLeft =
-      maxLeft >= minLeft
-        ? Math.min(Math.max(wantedLeft, minLeft), maxLeft)
-        : minLeft;
+      maxLeft >= minLeft ? Math.min(Math.max(wantedLeft, minLeft), maxLeft) : minLeft;
     const relativeLeft = Math.round(clampedLeft - anchorRect.left);
 
     setTrackPlaylistPopoverStyle({
@@ -1969,7 +1963,6 @@ export default function SpotifyPlayer({
     sdkReadyState,
   ]);
 
-
   useEffect(() => {
     shuffleOnRef.current = shuffleOn;
   }, [shuffleOn]);
@@ -2051,10 +2044,7 @@ export default function SpotifyPlayer({
         ? Math.min(parsedRetryMs, PLAYER_RETRY_AFTER_MAX_MS)
         : rateLimitRef.current.backoffMs;
     rateLimitRef.current.until = Date.now() + retryMs;
-    rateLimitRef.current.backoffMs = Math.min(
-      rateLimitRef.current.backoffMs * 2,
-      60000
-    );
+    rateLimitRef.current.backoffMs = Math.min(rateLimitRef.current.backoffMs * 2, 60000);
     setError(
       getPlayerErrorMessage("RATE_LIMITED", {
         retryAfterSec: Math.ceil(retryMs / 1000),
@@ -2074,33 +2064,27 @@ export default function SpotifyPlayer({
         }
       );
       if (tokenRes.ok) {
-        const payload = (await tokenRes.json().catch(() => null)) as
-          | { accessToken?: string | null; expiresAt?: number | null }
-          | null;
+        const payload = (await tokenRes.json().catch(() => null)) as {
+          accessToken?: string | null;
+          expiresAt?: number | null;
+        } | null;
         const token =
           typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
         if (token) {
           accessTokenRef.current = token;
           accessTokenExpiresAtRef.current =
             typeof payload?.expiresAt === "number" ? payload.expiresAt : null;
+          setAccessToken(token);
+          setAccessTokenExpiresAt(
+            typeof payload?.expiresAt === "number" ? payload.expiresAt : undefined
+          );
           return token;
         }
       }
     } catch {
-      // fall through to session fallback
-    }
-
-    try {
-      const next = await getSession();
-      const nextToken = next?.accessToken as string | undefined;
-      if (!nextToken) return null;
-      accessTokenRef.current = nextToken;
-      accessTokenExpiresAtRef.current =
-        typeof next?.expiresAt === "number" ? next.expiresAt : null;
-      return nextToken;
-    } catch {
       return null;
     }
+    return null;
   }, []);
 
   const spotifyApiFetch = useCallback(
@@ -2109,8 +2093,7 @@ export default function SpotifyPlayer({
       if (Date.now() < rateLimitRef.current.until) return null;
       const method = String(options?.method ?? "GET").toUpperCase();
       const playerApiUrl = parseSpotifyPlayerApiUrl(url);
-      const isPlayerStateGet =
-        method === "GET" && playerApiUrl?.endpoint === "";
+      const isPlayerStateGet = method === "GET" && playerApiUrl?.endpoint === "";
       const isPlayerDevicesGet =
         method === "GET" && playerApiUrl?.endpoint === "/devices";
       const bodyPayload = extractProxyPayload(options?.body) as
@@ -2124,13 +2107,16 @@ export default function SpotifyPlayer({
       const playerProxyUrl = isPlayerStateGet
         ? "/api/spotify/me/player?raw=1"
         : isPlayerDevicesGet
-        ? "/api/spotify/me/player/devices"
-        : null;
+          ? "/api/spotify/me/player/devices"
+          : null;
       const expectedDeviceId = (() => {
         if (!playerApiUrl || method === "GET") return null;
         if (playerApiUrl.endpoint === "") {
           return (
-            activeDeviceIdRef.current || deviceIdRef.current || sdkDeviceIdRef.current || null
+            activeDeviceIdRef.current ||
+            deviceIdRef.current ||
+            sdkDeviceIdRef.current ||
+            null
           );
         }
         const query = new URLSearchParams(playerApiUrl.search || "");
@@ -2138,12 +2124,16 @@ export default function SpotifyPlayer({
         if (deviceFromQuery) return deviceFromQuery;
         const bodyDevice =
           Array.isArray(bodyPayload?.device_ids) && bodyPayload.device_ids.length
-            ? bodyPayload.device_ids.find((value) => typeof value === "string" && value.trim()) ??
-              null
+            ? (bodyPayload.device_ids.find(
+                (value) => typeof value === "string" && value.trim()
+              ) ?? null)
             : null;
         if (bodyDevice) return bodyDevice;
         return (
-          activeDeviceIdRef.current || deviceIdRef.current || sdkDeviceIdRef.current || null
+          activeDeviceIdRef.current ||
+          deviceIdRef.current ||
+          sdkDeviceIdRef.current ||
+          null
         );
       })();
       const commandId =
@@ -2160,8 +2150,7 @@ export default function SpotifyPlayer({
               expectedDeviceId,
             }
           : null;
-      const isPlaybackCommand =
-        method !== "GET" && Boolean(playerApiUrl);
+      const isPlaybackCommand = method !== "GET" && Boolean(playerApiUrl);
       const knownPlaybackRestriction = (() => {
         if (!playerApiUrl || method === "GET") return null;
         const transferCommand =
@@ -2224,7 +2213,9 @@ export default function SpotifyPlayer({
           1,
           Math.ceil((playbackRestrictionUntilRef.current - Date.now()) / 1000)
         );
-        setError(`Spotify blokkeert dit commando tijdelijk. Probeer opnieuw over ${retryInSec}s.`);
+        setError(
+          `Spotify blokkeert dit commando tijdelijk. Probeer opnieuw over ${retryInSec}s.`
+        );
         return null;
       }
 
@@ -2254,19 +2245,19 @@ export default function SpotifyPlayer({
                 signal: controller.signal,
               })
             : playerCommandProxyPayload
-            ? await fetch("/api/spotify/me/player/command", {
-                method: "POST",
-                cache: "no-store",
-                credentials: "include",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(playerCommandProxyPayload),
-                signal: controller.signal,
-              })
-            : await fetch(url, {
-                ...options,
-                headers: { Authorization: `Bearer ${token}`, ...options?.headers },
-                signal: controller.signal,
-              });
+              ? await fetch("/api/spotify/me/player/command", {
+                  method: "POST",
+                  cache: "no-store",
+                  credentials: "include",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(playerCommandProxyPayload),
+                  signal: controller.signal,
+                })
+              : await fetch(url, {
+                  ...options,
+                  headers: { Authorization: `Bearer ${token}`, ...options?.headers },
+                  signal: controller.signal,
+                });
 
           if (applyRateLimit(res)) return null;
 
@@ -2294,10 +2285,14 @@ export default function SpotifyPlayer({
             const details = await readJsonSafely<{ error?: string; message?: string }>(
               res.clone()
             );
-            const errorCode = String(details?.error ?? "").trim().toUpperCase();
+            const errorCode = String(details?.error ?? "")
+              .trim()
+              .toUpperCase();
             const restrictionViolation =
               errorCode === "RESTRICTION_VIOLATED" ||
-              String(details?.message ?? "").toLowerCase().includes("restriction violated");
+              String(details?.message ?? "")
+                .toLowerCase()
+                .includes("restriction violated");
 
             if (restrictionViolation) {
               playbackRestrictionUntilRef.current =
@@ -2317,7 +2312,9 @@ export default function SpotifyPlayer({
             emitPlaybackMetric("command_conflict", 1, {
               total: playbackMetricsRef.current.commandConflicts,
             });
-            setConnectConflict("Spotify Connect is active on another device. Choose again.");
+            setConnectConflict(
+              "Spotify Connect is active on another device. Choose again."
+            );
             setError("Spotify Connect is active on another device. Choose again.");
             return res;
           }
@@ -2342,16 +2339,13 @@ export default function SpotifyPlayer({
 
           return res;
         } catch (error) {
-          const isAbort =
-            error instanceof DOMException && error.name === "AbortError";
-          const isFetchError =
-            String((error as Error)?.message ?? error)
-              .toLowerCase()
-              .includes("fetch");
-          const isAccessControlError =
-            String((error as Error)?.message ?? error)
-              .toLowerCase()
-              .includes("access control");
+          const isAbort = error instanceof DOMException && error.name === "AbortError";
+          const isFetchError = String((error as Error)?.message ?? error)
+            .toLowerCase()
+            .includes("fetch");
+          const isAccessControlError = String((error as Error)?.message ?? error)
+            .toLowerCase()
+            .includes("access control");
           const retryable = isAbort || isFetchError || isAccessControlError;
           if (!retryable || attempt >= PLAYER_FETCH_MAX_ATTEMPTS) {
             if (isPlaybackCommand) {
@@ -2389,8 +2383,7 @@ export default function SpotifyPlayer({
         if (currentDeviceId) {
           return {
             id: currentDeviceId,
-            name:
-              typeof current?.device?.name === "string" ? current.device.name : null,
+            name: typeof current?.device?.name === "string" ? current.device.name : null,
             source: "player" as const,
           };
         }
@@ -2413,8 +2406,7 @@ export default function SpotifyPlayer({
         if (activeDeviceId) {
           return {
             id: activeDeviceId,
-            name:
-              typeof activeDevice?.name === "string" ? activeDevice.name : null,
+            name: typeof activeDevice?.name === "string" ? activeDevice.name : null,
             source: "devices" as const,
           };
         }
@@ -2433,11 +2425,7 @@ export default function SpotifyPlayer({
     expectedCurrentDeviceId?: string | null
   ) {
     const confirmed = lastConfirmedActiveDeviceRef.current;
-    if (
-      confirmed &&
-      confirmed.id === targetId &&
-      Date.now() - confirmed.at < 12000
-    ) {
+    if (confirmed && confirmed.id === targetId && Date.now() - confirmed.at < 12000) {
       setDeviceReady(true);
       return true;
     }
@@ -2524,8 +2512,8 @@ export default function SpotifyPlayer({
       Number.isFinite(lastKnownPositionRef.current) && lastKnownPositionRef.current >= 0
         ? Math.floor(lastKnownPositionRef.current)
         : typeof playerStateRef.current?.positionMs === "number"
-        ? Math.max(0, Math.floor(playerStateRef.current.positionMs))
-        : null;
+          ? Math.max(0, Math.floor(playerStateRef.current.positionMs))
+          : null;
     const fallbackDuration =
       typeof playerStateRef.current?.durationMs === "number"
         ? Math.max(0, Math.floor(playerStateRef.current.durationMs))
@@ -2543,7 +2531,9 @@ export default function SpotifyPlayer({
       const live = await readCurrentPlayback();
       if (!live) return fallback;
       const liveProgress =
-        typeof live.progress_ms === "number" ? Math.max(0, Math.floor(live.progress_ms)) : null;
+        typeof live.progress_ms === "number"
+          ? Math.max(0, Math.floor(live.progress_ms))
+          : null;
       const liveDuration =
         typeof live?.item?.duration_ms === "number"
           ? Math.max(0, Math.floor(live.item.duration_ms))
@@ -2568,7 +2558,9 @@ export default function SpotifyPlayer({
     if (typeof context.progressMs !== "number" || !Number.isFinite(context.progressMs)) {
       return null;
     }
-    const elapsedMs = context.wasPlaying ? Math.max(0, Date.now() - context.sampledAt) : 0;
+    const elapsedMs = context.wasPlaying
+      ? Math.max(0, Date.now() - context.sampledAt)
+      : 0;
     let target = Math.max(0, Math.floor(context.progressMs + elapsedMs));
     if (typeof context.durationMs === "number" && Number.isFinite(context.durationMs)) {
       target = Math.min(target, Math.max(0, Math.floor(context.durationMs - 700)));
@@ -2607,8 +2599,7 @@ export default function SpotifyPlayer({
     const verify = await readCurrentPlayback();
     if (!verify) return true;
 
-    const verifyTrackId =
-      typeof verify?.item?.id === "string" ? verify.item.id : null;
+    const verifyTrackId = typeof verify?.item?.id === "string" ? verify.item.id : null;
     if (context.trackId && verifyTrackId && verifyTrackId !== context.trackId) {
       return true;
     }
@@ -2631,10 +2622,7 @@ export default function SpotifyPlayer({
     return true;
   }
 
-  function playbackMatchesExpectedTrack(
-    playback: any,
-    expectedTrackId?: string | null
-  ) {
+  function playbackMatchesExpectedTrack(playback: any, expectedTrackId?: string | null) {
     if (!expectedTrackId) return true;
     const currentTrackId =
       typeof playback?.item?.id === "string" ? playback.item.id : null;
@@ -2727,40 +2715,47 @@ export default function SpotifyPlayer({
     return [startIndex, ...rest];
   }, []);
 
-  const syncQueuePositionFromTrack = useCallback((trackId?: string | null) => {
-    if (!trackId || queueModeRef.current !== "queue" || !queueUrisRef.current?.length) return;
-    const index = getIndexFromTrackId(queueUrisRef.current, trackId);
-    if (index < 0) return;
-    queueIndexRef.current = index;
-    if (!queueOrderRef.current?.length) return;
-    const pos = queueOrderRef.current.indexOf(index);
-    if (pos >= 0) queuePosRef.current = pos;
-  }, [getIndexFromTrackId]);
+  const syncQueuePositionFromTrack = useCallback(
+    (trackId?: string | null) => {
+      if (!trackId || queueModeRef.current !== "queue" || !queueUrisRef.current?.length)
+        return;
+      const index = getIndexFromTrackId(queueUrisRef.current, trackId);
+      if (index < 0) return;
+      queueIndexRef.current = index;
+      if (!queueOrderRef.current?.length) return;
+      const pos = queueOrderRef.current.indexOf(index);
+      if (pos >= 0) queuePosRef.current = pos;
+    },
+    [getIndexFromTrackId]
+  );
 
-  const rebuildQueueOrder = useCallback((nextShuffle: boolean, forceRebuild = false) => {
-    if (queueModeRef.current !== "queue" || !queueUrisRef.current?.length) return;
-    const uris = queueUrisRef.current;
-    const activeTrackId = lastTrackIdRef.current || pendingTrackIdRef.current;
-    const currentIndex = getIndexFromTrackId(uris, activeTrackId);
-    const startIndex = currentIndex >= 0 ? currentIndex : queueIndexRef.current;
-    queueIndexRef.current = Math.max(0, startIndex);
-    if (nextShuffle) {
-      if (
-        !forceRebuild &&
-        queueOrderRef.current?.length === uris.length &&
-        queueOrderRef.current.includes(queueIndexRef.current)
-      ) {
+  const rebuildQueueOrder = useCallback(
+    (nextShuffle: boolean, forceRebuild = false) => {
+      if (queueModeRef.current !== "queue" || !queueUrisRef.current?.length) return;
+      const uris = queueUrisRef.current;
+      const activeTrackId = lastTrackIdRef.current || pendingTrackIdRef.current;
+      const currentIndex = getIndexFromTrackId(uris, activeTrackId);
+      const startIndex = currentIndex >= 0 ? currentIndex : queueIndexRef.current;
+      queueIndexRef.current = Math.max(0, startIndex);
+      if (nextShuffle) {
+        if (
+          !forceRebuild &&
+          queueOrderRef.current?.length === uris.length &&
+          queueOrderRef.current.includes(queueIndexRef.current)
+        ) {
+          queuePosRef.current = queueOrderRef.current.indexOf(queueIndexRef.current);
+          return;
+        }
+        queueOrderRef.current = buildShuffleOrder(uris.length, queueIndexRef.current);
         queuePosRef.current = queueOrderRef.current.indexOf(queueIndexRef.current);
+        if (queuePosRef.current < 0) queuePosRef.current = 0;
         return;
       }
-      queueOrderRef.current = buildShuffleOrder(uris.length, queueIndexRef.current);
-      queuePosRef.current = queueOrderRef.current.indexOf(queueIndexRef.current);
-      if (queuePosRef.current < 0) queuePosRef.current = 0;
-      return;
-    }
-    queueOrderRef.current = null;
-    queuePosRef.current = queueIndexRef.current;
-  }, [buildShuffleOrder, getIndexFromTrackId]);
+      queueOrderRef.current = null;
+      queuePosRef.current = queueIndexRef.current;
+    },
+    [buildShuffleOrder, getIndexFromTrackId]
+  );
 
   async function confirmShuffleState(expectedState?: boolean) {
     const delays = [0, 180, 380, 650];
@@ -2843,10 +2838,13 @@ export default function SpotifyPlayer({
       position_ms: 0,
     };
     const attemptPlay = () =>
-      spotifyApiFetch(withDeviceId("https://api.spotify.com/v1/me/player/play", deviceId), {
-        method: "PUT",
-        body: JSON.stringify(payload),
-      });
+      spotifyApiFetch(
+        withDeviceId("https://api.spotify.com/v1/me/player/play", deviceId),
+        {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        }
+      );
     const res = await attemptPlay();
     if (res && res.ok) {
       const started = await ensurePlaybackStartedWithRetry({
@@ -2864,42 +2862,48 @@ export default function SpotifyPlayer({
     }
   }
 
-  const setActiveDevice = useCallback((id: string | null, name?: string | null) => {
-    const previousId = activeDeviceIdRef.current;
-    setActiveDeviceId(id);
-    activeDeviceIdRef.current = id;
-    if (previousId !== id) {
-      bumpDeviceEpoch("active_device_changed", id);
-    }
-    if (name !== undefined) {
-      setActiveDeviceName(name);
-    }
-    refreshAuthorityMode("set_active_device");
-  }, [bumpDeviceEpoch, refreshAuthorityMode]);
-
-  const shouldAdoptRemoteDevice = useCallback((remoteDeviceId?: string | null) => {
-    if (!remoteDeviceId) return false;
-    const pendingId = pendingDeviceIdRef.current;
-    if (pendingId) {
-      const pendingFresh =
-        Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
-      if (!pendingFresh) {
-        clearPendingDevice("pending_device_expired_before_adopt", remoteDeviceId);
-        setHandoffPhase("failed", "pending_device_expired_before_adopt", {
-          targetDeviceId: remoteDeviceId ?? null,
-        });
-      } else {
-        return remoteDeviceId === pendingId;
+  const setActiveDevice = useCallback(
+    (id: string | null, name?: string | null) => {
+      const previousId = activeDeviceIdRef.current;
+      setActiveDeviceId(id);
+      activeDeviceIdRef.current = id;
+      if (previousId !== id) {
+        bumpDeviceEpoch("active_device_changed", id);
       }
-    }
-    const selectedId = activeDeviceIdRef.current;
-    if (!selectedId) return true;
-    if (remoteDeviceId === selectedId) return true;
-    const heldSelection =
-      Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
-    if (heldSelection) return false;
-    return true;
-  }, [clearPendingDevice, setHandoffPhase]);
+      if (name !== undefined) {
+        setActiveDeviceName(name);
+      }
+      refreshAuthorityMode("set_active_device");
+    },
+    [bumpDeviceEpoch, refreshAuthorityMode]
+  );
+
+  const shouldAdoptRemoteDevice = useCallback(
+    (remoteDeviceId?: string | null) => {
+      if (!remoteDeviceId) return false;
+      const pendingId = pendingDeviceIdRef.current;
+      if (pendingId) {
+        const pendingFresh =
+          Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
+        if (!pendingFresh) {
+          clearPendingDevice("pending_device_expired_before_adopt", remoteDeviceId);
+          setHandoffPhase("failed", "pending_device_expired_before_adopt", {
+            targetDeviceId: remoteDeviceId ?? null,
+          });
+        } else {
+          return remoteDeviceId === pendingId;
+        }
+      }
+      const selectedId = activeDeviceIdRef.current;
+      if (!selectedId) return true;
+      if (remoteDeviceId === selectedId) return true;
+      const heldSelection =
+        Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
+      if (heldSelection) return false;
+      return true;
+    },
+    [clearPendingDevice, setHandoffPhase]
+  );
 
   const clearRemoteTakeoverCandidate = useCallback(() => {
     remoteTakeoverCandidateRef.current = null;
@@ -2925,7 +2929,7 @@ export default function SpotifyPlayer({
     remoteTakeoverCandidateRef.current = null;
     return true;
   }, []);
-  
+
   const clearPendingDeviceIfStale = useCallback(() => {
     const pendingId = pendingDeviceIdRef.current;
     if (!pendingId) return;
@@ -3114,21 +3118,19 @@ export default function SpotifyPlayer({
       const sdkDevice = sdkDeviceIdRef.current;
       const pendingDeviceSwitchActive = Boolean(
         pendingDeviceIdRef.current &&
-          nowMs - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS
+        nowMs - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS
       );
       const fallbackTrackId = currentTrackIdRef.current || lastTrackIdRef.current || null;
       if (!fallbackTrackId) return false;
       const remoteDeviceActive = Boolean(
         activeDevice &&
-          sdkDevice &&
-          activeDevice !== sdkDevice &&
-          args.snapshotDeviceId &&
-          args.snapshotDeviceId === activeDevice
+        sdkDevice &&
+        activeDevice !== sdkDevice &&
+        args.snapshotDeviceId &&
+        args.snapshotDeviceId === activeDevice
       );
       const remoteDeviceFromSnapshot = Boolean(
-        args.snapshotDeviceId &&
-          sdkDevice &&
-          args.snapshotDeviceId !== sdkDevice
+        args.snapshotDeviceId && sdkDevice && args.snapshotDeviceId !== sdkDevice
       );
       const inRateLimitBackoff = nowMs < rateLimitRef.current.until;
       const remoteAuthorityActive =
@@ -3155,8 +3157,8 @@ export default function SpotifyPlayer({
           ? args.isPlaying
             ? "playing"
             : "paused"
-          : args.fallbackStatus ??
-            (playbackFocusRef.current.isPlaying ? "playing" : "paused");
+          : (args.fallbackStatus ??
+            (playbackFocusRef.current.isPlaying ? "playing" : "paused"));
       setPlaybackTrackState(fallbackTrackId, {
         matchTrackIds:
           playbackFocusRef.current.matchTrackIds.length > 0
@@ -3166,8 +3168,7 @@ export default function SpotifyPlayer({
         status: inferredStatus,
         stale: true,
         source: args.source,
-        confidence:
-          typeof args.confidence === "number" ? args.confidence : 0.75,
+        confidence: typeof args.confidence === "number" ? args.confidence : 0.75,
         positionMs: lastKnownPositionRef.current,
         durationMs: durationMsRef.current,
         errorMessage: null,
@@ -3228,7 +3229,8 @@ export default function SpotifyPlayer({
 
       const counter = recordNoTrackEvent(args.source, args.snapshotDeviceId, nowMs);
       const handoffPhase = handoffStateRef.current.phase;
-      const handoffActive = handoffPhase === "requested" || handoffPhase === "device_ready";
+      const handoffActive =
+        handoffPhase === "requested" || handoffPhase === "device_ready";
       const minCount = handoffActive
         ? NO_TRACK_HANDOFF_HARD_CLEAR_MIN_COUNT
         : NO_TRACK_HARD_CLEAR_MIN_COUNT;
@@ -3294,21 +3296,22 @@ export default function SpotifyPlayer({
           : responseReceivedAtWallMs;
       const eventSeq = readSyncServerSeq(data);
       const eventTrackId = data?.item ? resolvePlaybackTrackId(data.item) : null;
-      const eventDeviceId =
-        typeof data?.device?.id === "string" ? data.device.id : null;
+      const eventDeviceId = typeof data?.device?.id === "string" ? data.device.id : null;
       if (
-        !shouldApplyIngest({
-          source: toIngestSource(source),
-          seq: eventSeq,
-          atMs: eventAtMs,
-          deviceId: eventDeviceId,
-          trackId: eventTrackId,
-          isPlaying:
-            typeof data?.is_playing === "boolean" ? data.is_playing : null,
-        }, {
-          receivedMonoMs: responseReceivedAtMonoMs,
-          snapshotDeviceId: eventDeviceId,
-        })
+        !shouldApplyIngest(
+          {
+            source: toIngestSource(source),
+            seq: eventSeq,
+            atMs: eventAtMs,
+            deviceId: eventDeviceId,
+            trackId: eventTrackId,
+            isPlaying: typeof data?.is_playing === "boolean" ? data.is_playing : null,
+          },
+          {
+            receivedMonoMs: responseReceivedAtMonoMs,
+            snapshotDeviceId: eventDeviceId,
+          }
+        )
       ) {
         return Boolean(data?.is_playing);
       }
@@ -3388,11 +3391,11 @@ export default function SpotifyPlayer({
       setPlaybackDisallows(disallows);
       const hasBlockingRestriction = Boolean(
         disallows.resuming ||
-          disallows.pausing ||
-          disallows.skipping_prev ||
-          disallows.skipping_next ||
-          disallows.seeking ||
-          disallows.toggling_shuffle
+        disallows.pausing ||
+        disallows.skipping_prev ||
+        disallows.skipping_next ||
+        disallows.seeking ||
+        disallows.toggling_shuffle
       );
       if (!hasBlockingRestriction) {
         playbackRestrictionUntilRef.current = 0;
@@ -3403,8 +3406,7 @@ export default function SpotifyPlayer({
         const nowMs = Date.now();
         const noTrackTransition = decideNoTrackTransition({
           source,
-          isPlaying:
-            typeof data?.is_playing === "boolean" ? data.is_playing : null,
+          isPlaying: typeof data?.is_playing === "boolean" ? data.is_playing : null,
           snapshotDeviceId: eventDeviceId,
           nowMs,
           confidence: 0.75,
@@ -3444,8 +3446,7 @@ export default function SpotifyPlayer({
         const nowMs = Date.now();
         const noTrackTransition = decideNoTrackTransition({
           source,
-          isPlaying:
-            typeof data?.is_playing === "boolean" ? data.is_playing : null,
+          isPlaying: typeof data?.is_playing === "boolean" ? data.is_playing : null,
           snapshotDeviceId: eventDeviceId,
           fallbackStatus: "loading",
           nowMs,
@@ -3478,7 +3479,7 @@ export default function SpotifyPlayer({
         trackChangeLockUntilRef.current = Date.now() + 1200;
         setOptimisticTrack(null);
       }
-      const rawPosition = isNewTrack ? 0 : data.progress_ms ?? 0;
+      const rawPosition = isNewTrack ? 0 : (data.progress_ms ?? 0);
       const projectedPosition = projectRemoteProgressMs(
         rawPosition,
         isPlaying,
@@ -3560,8 +3561,8 @@ export default function SpotifyPlayer({
           data.repeat_state === "track"
             ? "track"
             : data.repeat_state === "context"
-            ? "context"
-            : "off";
+              ? "context"
+              : "off";
         setRepeatMode(mode);
       }
       if (typeof device?.volume_percent === "number") {
@@ -3606,11 +3607,7 @@ export default function SpotifyPlayer({
   ingestCrossTabSnapshotRef.current = (
     payload,
     source,
-    {
-      requestStartedAtWallMs,
-      responseReceivedAtWallMs,
-      responseReceivedAtMonoMs,
-    }
+    { requestStartedAtWallMs, responseReceivedAtWallMs, responseReceivedAtMonoMs }
   ) => {
     ingestApiSnapshot(payload, {
       source,
@@ -3628,12 +3625,12 @@ export default function SpotifyPlayer({
         source === "api_bootstrap"
           ? 0
           : source === "api_verify"
-          ? 1_500
-          : source === "api_sync"
-          ? 1_400
-          : source === "api_poll"
-          ? 4_200
-          : 1_200;
+            ? 1_500
+            : source === "api_sync"
+              ? 1_400
+              : source === "api_poll"
+                ? 4_200
+                : 1_200;
       if (
         source !== "api_bootstrap" &&
         nowMs - lastSyncStartedAtRef.current < minSyncIntervalMs
@@ -3644,8 +3641,7 @@ export default function SpotifyPlayer({
         enablePlaybackStream &&
         shouldRunPlaybackStream &&
         nowMs - lastStreamSnapshotAtRef.current < 6_500;
-      const inDeviceSwitchBoostWindow =
-        nowMs < deviceSwitchSyncBoostUntilRef.current;
+      const inDeviceSwitchBoostWindow = nowMs < deviceSwitchSyncBoostUntilRef.current;
       if (
         streamFresh &&
         (source === "api_poll" || source === "api_verify") &&
@@ -3678,7 +3674,10 @@ export default function SpotifyPlayer({
         if (!res?.ok) return;
         const responseReceivedAtWallMs = Date.now();
         const responseReceivedAtMonoMs = getMonotonicNow();
-        const observedRttMs = Math.max(0, responseReceivedAtWallMs - requestStartedAtWallMs);
+        const observedRttMs = Math.max(
+          0,
+          responseReceivedAtWallMs - requestStartedAtWallMs
+        );
         rttEwmaMsRef.current = rttEwmaMsRef.current * 0.8 + observedRttMs * 0.2;
         playbackMetricsRef.current.avgRttMs = rttEwmaMsRef.current;
         seekRollbackTimeoutMsRef.current = Math.min(
@@ -3767,7 +3766,11 @@ export default function SpotifyPlayer({
           payload = null;
         }
         const code = typeof payload?.code === "string" ? payload.code : "";
-        if (code === "RATE_LIMIT" || code === "SPOTIFY_UPSTREAM" || code === "STREAM_FAILED") {
+        if (
+          code === "RATE_LIMIT" ||
+          code === "SPOTIFY_UPSTREAM" ||
+          code === "STREAM_FAILED"
+        ) {
           // Force watchdog poll to take over quickly.
           lastStreamSnapshotAtRef.current = 0;
         }
@@ -3927,9 +3930,10 @@ export default function SpotifyPlayer({
       if (!res.ok) {
         throw new Error(`PLAYLIST_OPTIONS_${res.status}`);
       }
-      const payload = (await res.json().catch(() => null)) as
-        | { items?: Array<{ playlistId?: string; name?: string }>; nextCursor?: string | null }
-        | null;
+      const payload = (await res.json().catch(() => null)) as {
+        items?: Array<{ playlistId?: string; name?: string }>;
+        nextCursor?: string | null;
+      } | null;
       const rows = Array.isArray(payload?.items) ? payload.items : [];
       allRows.push(...rows);
       cursor = payload?.nextCursor ? String(payload.nextCursor) : null;
@@ -3956,47 +3960,45 @@ export default function SpotifyPlayer({
     trackPlaylistOptionsLoadedRef.current = true;
   }, []);
 
-  const syncCurrentTrackPlaylistSelection = useCallback(
-    async (trackId: string) => {
-      const requestId = ++trackPlaylistRequestIdRef.current;
-      setTrackPlaylistLoading(true);
-      try {
-        const res = await fetch(
-          `/api/spotify/me/tracks/playlists?trackId=${encodeURIComponent(trackId)}`,
-          { cache: "no-store" }
-        );
-        if (!res.ok) throw new Error(`TRACK_PLAYLISTS_${res.status}`);
-        const payload = (await res.json().catch(() => null)) as
-          | { playlistIds?: string[]; liked?: boolean }
-          | null;
-        if (trackPlaylistRequestIdRef.current !== requestId) return;
-        const ids = new Set<string>();
-        for (const playlistId of Array.isArray(payload?.playlistIds)
-          ? payload?.playlistIds
-          : []) {
-          const id = String(playlistId ?? "").trim();
-          if (id) ids.add(id);
-        }
-        const liked = Boolean(payload?.liked);
-        if (liked) {
-          ids.add(PLAYER_LIKED_PLAYLIST_ID);
-          likedCacheRef.current.set(trackId, true);
-          setCurrentTrackLiked(true);
-        } else {
-          likedCacheRef.current.set(trackId, false);
-          setCurrentTrackLiked(false);
-          ids.delete(PLAYER_LIKED_PLAYLIST_ID);
-        }
-        setTrackPlaylistSelectedIds(ids);
-        setTrackPlaylistInitialIds(new Set(ids));
-      } finally {
-        if (trackPlaylistRequestIdRef.current === requestId) {
-          setTrackPlaylistLoading(false);
-        }
+  const syncCurrentTrackPlaylistSelection = useCallback(async (trackId: string) => {
+    const requestId = ++trackPlaylistRequestIdRef.current;
+    setTrackPlaylistLoading(true);
+    try {
+      const res = await fetch(
+        `/api/spotify/me/tracks/playlists?trackId=${encodeURIComponent(trackId)}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok) throw new Error(`TRACK_PLAYLISTS_${res.status}`);
+      const payload = (await res.json().catch(() => null)) as {
+        playlistIds?: string[];
+        liked?: boolean;
+      } | null;
+      if (trackPlaylistRequestIdRef.current !== requestId) return;
+      const ids = new Set<string>();
+      for (const playlistId of Array.isArray(payload?.playlistIds)
+        ? payload?.playlistIds
+        : []) {
+        const id = String(playlistId ?? "").trim();
+        if (id) ids.add(id);
       }
-    },
-    []
-  );
+      const liked = Boolean(payload?.liked);
+      if (liked) {
+        ids.add(PLAYER_LIKED_PLAYLIST_ID);
+        likedCacheRef.current.set(trackId, true);
+        setCurrentTrackLiked(true);
+      } else {
+        likedCacheRef.current.set(trackId, false);
+        setCurrentTrackLiked(false);
+        ids.delete(PLAYER_LIKED_PLAYLIST_ID);
+      }
+      setTrackPlaylistSelectedIds(ids);
+      setTrackPlaylistInitialIds(new Set(ids));
+    } finally {
+      if (trackPlaylistRequestIdRef.current === requestId) {
+        setTrackPlaylistLoading(false);
+      }
+    }
+  }, []);
 
   const applyTrackPlaylistDraft = useCallback(async () => {
     if (!currentTrackIdState) return;
@@ -4081,7 +4083,8 @@ export default function SpotifyPlayer({
     [trackPlaylistSelectedIds]
   );
   const selectedPlaylistsForTrack = useMemo(() => {
-    if (!selectedPlaylistIdsForTrack.length) return [] as Array<{ id: string; name: string }>;
+    if (!selectedPlaylistIdsForTrack.length)
+      return [] as Array<{ id: string; name: string }>;
     const optionById = new Map(trackPlaylistOptions.map((option) => [option.id, option]));
     return selectedPlaylistIdsForTrack.map((id) => {
       if (id === PLAYER_LIKED_PLAYLIST_ID) {
@@ -4096,7 +4099,9 @@ export default function SpotifyPlayer({
   }, [selectedPlaylistIdsForTrack, trackPlaylistOptions]);
   const selectedPlaylistNamesForTrack = useMemo(() => {
     if (!selectedPlaylistIdsForTrack.length) return [] as string[];
-    const optionById = new Map(trackPlaylistOptions.map((option) => [option.id, option.name]));
+    const optionById = new Map(
+      trackPlaylistOptions.map((option) => [option.id, option.name])
+    );
     return selectedPlaylistIdsForTrack.map((id) => {
       if (id === PLAYER_LIKED_PLAYLIST_ID) return "Liked Songs";
       return optionById.get(id) ?? id;
@@ -4192,17 +4197,20 @@ export default function SpotifyPlayer({
       const eventAtMs = Date.now();
       const eventMonoMs = getMonotonicNow();
       if (
-        !shouldApplyIngest({
-          source: "sdk",
-          seq: eventSeq,
-          atMs: eventAtMs,
-          deviceId: eventDeviceId ?? null,
-          trackId: eventTrackId,
-          isPlaying: typeof state?.paused === "boolean" ? !state.paused : null,
-        }, {
-          receivedMonoMs: eventMonoMs,
-          snapshotDeviceId: eventDeviceId ?? null,
-        })
+        !shouldApplyIngest(
+          {
+            source: "sdk",
+            seq: eventSeq,
+            atMs: eventAtMs,
+            deviceId: eventDeviceId ?? null,
+            trackId: eventTrackId,
+            isPlaying: typeof state?.paused === "boolean" ? !state.paused : null,
+          },
+          {
+            receivedMonoMs: eventMonoMs,
+            snapshotDeviceId: eventDeviceId ?? null,
+          }
+        )
       ) {
         return;
       }
@@ -4298,9 +4306,7 @@ export default function SpotifyPlayer({
       setPlayerState((prev) => {
         const next = {
           name: current?.name ?? prev?.name ?? "Unknown track",
-          artists: (current?.artists ?? [])
-            .map((a: any) => a.name)
-            .join(", "),
+          artists: (current?.artists ?? []).map((a: any) => a.name).join(", "),
           album: current?.album?.name ?? prev?.album ?? "",
           coverUrl: current?.album?.images?.[0]?.url ?? prev?.coverUrl ?? null,
           paused: Boolean(state.paused),
@@ -4338,7 +4344,11 @@ export default function SpotifyPlayer({
         updatedAt: Date.now(),
       });
       resetNoTrackCounter("sdk_valid_track");
-      confirmPendingHandoffOnPlayback(trackId, "sdk", stateDeviceId ?? eventDeviceId ?? null);
+      confirmPendingHandoffOnPlayback(
+        trackId,
+        "sdk",
+        stateDeviceId ?? eventDeviceId ?? null
+      );
       setPlaybackDisallows((prev) => {
         if (!prev || (!prev.pausing && !prev.resuming)) return prev;
         return {
@@ -4433,163 +4443,177 @@ export default function SpotifyPlayer({
     }
   }, [clampProgressMs, durationMs, setScrubPreview]);
 
-  const refreshDevices = useCallback(async (force = false) => {
-    if (force || !accessTokenRef.current) {
-      await refreshClientAccessToken(force);
-    }
-    const now = Date.now();
-    const hidden =
-      typeof document !== "undefined" && document.visibilityState === "hidden";
-    const minRefreshGapMs = force ? 2000 : hidden ? 6000 : 3500;
-    if (now - lastDevicesRefreshRef.current < minRefreshGapMs) return;
-    lastDevicesRefreshRef.current = now;
-    if (!force && now < rateLimitRef.current.until) return;
+  const refreshDevices = useCallback(
+    async (force = false) => {
+      if (force || !accessTokenRef.current) {
+        await refreshClientAccessToken(force);
+      }
+      const now = Date.now();
+      const hidden =
+        typeof document !== "undefined" && document.visibilityState === "hidden";
+      const minRefreshGapMs = force ? 2000 : hidden ? 6000 : 3500;
+      if (now - lastDevicesRefreshRef.current < minRefreshGapMs) return;
+      lastDevicesRefreshRef.current = now;
+      if (!force && now < rateLimitRef.current.until) return;
 
-    let data: any = null;
-    let playbackState: any = null;
-    const direct = await spotifyApiFetch("https://api.spotify.com/v1/me/player/devices");
-    if (direct?.ok) {
-      data = await readJsonSafely(direct);
-    }
-    const shouldFetchPlaybackForDeviceMerge =
-      force &&
-      now - lastDevicesPlaybackFetchRef.current >= 20_000 &&
-      !Array.isArray(data?.devices);
-    if (shouldFetchPlaybackForDeviceMerge) {
-      try {
-        const playbackRes = await spotifyApiFetch("https://api.spotify.com/v1/me/player");
-        if (playbackRes?.ok) {
-          playbackState = await playbackRes.json().catch(() => null);
-          lastDevicesPlaybackFetchRef.current = Date.now();
-        }
-      } catch {
-        // ignore playback-state merge errors
+      let data: any = null;
+      let playbackState: any = null;
+      const direct = await spotifyApiFetch(
+        "https://api.spotify.com/v1/me/player/devices"
+      );
+      if (direct?.ok) {
+        data = await readJsonSafely(direct);
       }
-    }
-
-    setDevicesLoaded(true);
-    const list = Array.isArray(data?.devices) ? data.devices : [];
-    const mergedList = [...list];
-    if (playbackState?.device) {
-      mergedList.push({
-        ...playbackState.device,
-        is_active: true,
-      });
-    }
-    const deduped = new Map<string, any>();
-    let unavailableCounter = 0;
-    for (const d of mergedList) {
-      const key =
-        typeof d?.id === "string" && d.id
-          ? d.id
-          : `unavailable:${String(d?.name ?? "Unknown")}:${String(
-              d?.type ?? "Unknown"
-            )}:${unavailableCounter++}`;
-      if (!deduped.has(key)) {
-        deduped.set(key, d);
-        continue;
-      }
-      const existing = deduped.get(key);
-      if (existing && !existing.is_active && d?.is_active) {
-        deduped.set(key, d);
-      }
-    }
-    const currentSelectedId = activeDeviceIdRef.current;
-    const sdkDeviceId = sdkDeviceIdRef.current;
-    if (canUseSdk && sdkReadyRef.current && sdkDeviceId && !deduped.has(sdkDeviceId)) {
-      deduped.set(sdkDeviceId, {
-        id: sdkDeviceId,
-        name: localWebplayerName,
-        is_active: currentSelectedId === sdkDeviceId,
-        type: localWebplayerType,
-        is_restricted: false,
-        supports_volume: true,
-      });
-    }
-    const localNameLower = localWebplayerName.trim().toLowerCase();
-    const localNameEntries = Array.from(deduped.entries()).filter(([, d]) => {
-      return String(d?.name ?? "")
-        .trim()
-        .toLowerCase() === localNameLower;
-    });
-    if (localNameEntries.length > 1) {
-      const preferredKey =
-        (sdkDeviceId && deduped.has(sdkDeviceId)
-          ? sdkDeviceId
-          : localNameEntries.find(([, d]) => Boolean(d?.is_active))?.[0]) ??
-        localNameEntries[0][0];
-      for (const [key] of localNameEntries) {
-        if (key !== preferredKey) {
-          deduped.delete(key);
+      const shouldFetchPlaybackForDeviceMerge =
+        force &&
+        now - lastDevicesPlaybackFetchRef.current >= 20_000 &&
+        !Array.isArray(data?.devices);
+      if (shouldFetchPlaybackForDeviceMerge) {
+        try {
+          const playbackRes = await spotifyApiFetch(
+            "https://api.spotify.com/v1/me/player"
+          );
+          if (playbackRes?.ok) {
+            playbackState = await playbackRes.json().catch(() => null);
+            lastDevicesPlaybackFetchRef.current = Date.now();
+          }
+        } catch {
+          // ignore playback-state merge errors
         }
       }
-    }
-    const mapped = Array.from(deduped.entries()).map(([key, d]: [string, any]) => {
-      const id = typeof d?.id === "string" && d.id ? d.id : key;
-      const isLocalSdkDevice = Boolean(sdkDeviceIdRef.current && id === sdkDeviceIdRef.current);
-      return {
-        id,
-        name: d?.name ?? "Unknown device",
-        isActive: Boolean(d.is_active),
-        type: isLocalSdkDevice ? localWebplayerType : d?.type ?? "Unknown",
-        isRestricted: Boolean(d.is_restricted),
-        isPrivateSession: Boolean(d.is_private_session),
-        supportsVolume: d.supports_volume !== false,
-        selectable: Boolean(d?.id),
-        unavailableReason:
+
+      setDevicesLoaded(true);
+      const list = Array.isArray(data?.devices) ? data.devices : [];
+      const mergedList = [...list];
+      if (playbackState?.device) {
+        mergedList.push({
+          ...playbackState.device,
+          is_active: true,
+        });
+      }
+      const deduped = new Map<string, any>();
+      let unavailableCounter = 0;
+      for (const d of mergedList) {
+        const key =
           typeof d?.id === "string" && d.id
-            ? null
-            : "Open Spotify on this device and start a track so it becomes available as a Connect device.",
-      };
-    });
-    setDevices(mapped);
-    const selectableById = new Map(
-      mapped
-        .filter((device) => device.selectable)
-        .map((device) => [device.id, device])
-    );
-    const selectedDevice = activeDeviceIdRef.current
-      ? selectableById.get(activeDeviceIdRef.current)
-      : null;
-    const sdkDevice = sdkDeviceIdRef.current
-      ? selectableById.get(sdkDeviceIdRef.current)
-      : null;
-    const active = mapped.find((device) => device.isActive && device.selectable);
-    const selectionHeld =
-      Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
-    if (
-      selectedDevice?.id &&
-      (selectionHeld || !active?.id || active.id === selectedDevice.id)
-    ) {
-      setActiveDevice(selectedDevice.id, selectedDevice.name ?? null);
-      setActiveDeviceRestricted(Boolean(selectedDevice.isRestricted));
-      setActiveDevicePrivateSession(Boolean(selectedDevice.isPrivateSession));
-      setActiveDeviceSupportsVolume(selectedDevice.supportsVolume !== false);
-    } else if (active?.id) {
-      lastConfirmedActiveDeviceRef.current = { id: active.id, at: Date.now() };
-      setActiveDevice(active.id, active.name ?? null);
-      setActiveDeviceRestricted(Boolean(active.isRestricted));
-      setActiveDevicePrivateSession(Boolean(active.isPrivateSession));
-      setActiveDeviceSupportsVolume(active.supportsVolume !== false);
-    } else if (sdkDevice?.id && canUseSdk && !activeDeviceIdRef.current) {
-      setActiveDevice(sdkDevice.id, sdkDevice.name ?? localWebplayerName);
-      setActiveDeviceRestricted(Boolean(sdkDevice.isRestricted));
-      setActiveDevicePrivateSession(Boolean(sdkDevice.isPrivateSession));
-      setActiveDeviceSupportsVolume(sdkDevice.supportsVolume !== false);
-    } else if (sdkDevice?.id && canUseSdk && preferSdkDeviceRef.current && !active?.id) {
-      setActiveDevice(sdkDevice.id, sdkDevice.name ?? localWebplayerName);
-      setActiveDeviceRestricted(Boolean(sdkDevice.isRestricted));
-      setActiveDevicePrivateSession(Boolean(sdkDevice.isPrivateSession));
-      setActiveDeviceSupportsVolume(sdkDevice.supportsVolume !== false);
-    }
-  }, [
-    canUseSdk,
-    localWebplayerName,
-    localWebplayerType,
-    refreshClientAccessToken,
-    setActiveDevice,
-    spotifyApiFetch,
-  ]);
+            ? d.id
+            : `unavailable:${String(d?.name ?? "Unknown")}:${String(
+                d?.type ?? "Unknown"
+              )}:${unavailableCounter++}`;
+        if (!deduped.has(key)) {
+          deduped.set(key, d);
+          continue;
+        }
+        const existing = deduped.get(key);
+        if (existing && !existing.is_active && d?.is_active) {
+          deduped.set(key, d);
+        }
+      }
+      const currentSelectedId = activeDeviceIdRef.current;
+      const sdkDeviceId = sdkDeviceIdRef.current;
+      if (canUseSdk && sdkReadyRef.current && sdkDeviceId && !deduped.has(sdkDeviceId)) {
+        deduped.set(sdkDeviceId, {
+          id: sdkDeviceId,
+          name: localWebplayerName,
+          is_active: currentSelectedId === sdkDeviceId,
+          type: localWebplayerType,
+          is_restricted: false,
+          supports_volume: true,
+        });
+      }
+      const localNameLower = localWebplayerName.trim().toLowerCase();
+      const localNameEntries = Array.from(deduped.entries()).filter(([, d]) => {
+        return (
+          String(d?.name ?? "")
+            .trim()
+            .toLowerCase() === localNameLower
+        );
+      });
+      if (localNameEntries.length > 1) {
+        const preferredKey =
+          (sdkDeviceId && deduped.has(sdkDeviceId)
+            ? sdkDeviceId
+            : localNameEntries.find(([, d]) => Boolean(d?.is_active))?.[0]) ??
+          localNameEntries[0][0];
+        for (const [key] of localNameEntries) {
+          if (key !== preferredKey) {
+            deduped.delete(key);
+          }
+        }
+      }
+      const mapped = Array.from(deduped.entries()).map(([key, d]: [string, any]) => {
+        const id = typeof d?.id === "string" && d.id ? d.id : key;
+        const isLocalSdkDevice = Boolean(
+          sdkDeviceIdRef.current && id === sdkDeviceIdRef.current
+        );
+        return {
+          id,
+          name: d?.name ?? "Unknown device",
+          isActive: Boolean(d.is_active),
+          type: isLocalSdkDevice ? localWebplayerType : (d?.type ?? "Unknown"),
+          isRestricted: Boolean(d.is_restricted),
+          isPrivateSession: Boolean(d.is_private_session),
+          supportsVolume: d.supports_volume !== false,
+          selectable: Boolean(d?.id),
+          unavailableReason:
+            typeof d?.id === "string" && d.id
+              ? null
+              : "Open Spotify on this device and start a track so it becomes available as a Connect device.",
+        };
+      });
+      setDevices(mapped);
+      const selectableById = new Map(
+        mapped.filter((device) => device.selectable).map((device) => [device.id, device])
+      );
+      const selectedDevice = activeDeviceIdRef.current
+        ? selectableById.get(activeDeviceIdRef.current)
+        : null;
+      const sdkDevice = sdkDeviceIdRef.current
+        ? selectableById.get(sdkDeviceIdRef.current)
+        : null;
+      const active = mapped.find((device) => device.isActive && device.selectable);
+      const selectionHeld =
+        Date.now() - lastDeviceSelectRef.current < DEVICE_SELECTION_HOLD_MS;
+      if (
+        selectedDevice?.id &&
+        (selectionHeld || !active?.id || active.id === selectedDevice.id)
+      ) {
+        setActiveDevice(selectedDevice.id, selectedDevice.name ?? null);
+        setActiveDeviceRestricted(Boolean(selectedDevice.isRestricted));
+        setActiveDevicePrivateSession(Boolean(selectedDevice.isPrivateSession));
+        setActiveDeviceSupportsVolume(selectedDevice.supportsVolume !== false);
+      } else if (active?.id) {
+        lastConfirmedActiveDeviceRef.current = { id: active.id, at: Date.now() };
+        setActiveDevice(active.id, active.name ?? null);
+        setActiveDeviceRestricted(Boolean(active.isRestricted));
+        setActiveDevicePrivateSession(Boolean(active.isPrivateSession));
+        setActiveDeviceSupportsVolume(active.supportsVolume !== false);
+      } else if (sdkDevice?.id && canUseSdk && !activeDeviceIdRef.current) {
+        setActiveDevice(sdkDevice.id, sdkDevice.name ?? localWebplayerName);
+        setActiveDeviceRestricted(Boolean(sdkDevice.isRestricted));
+        setActiveDevicePrivateSession(Boolean(sdkDevice.isPrivateSession));
+        setActiveDeviceSupportsVolume(sdkDevice.supportsVolume !== false);
+      } else if (
+        sdkDevice?.id &&
+        canUseSdk &&
+        preferSdkDeviceRef.current &&
+        !active?.id
+      ) {
+        setActiveDevice(sdkDevice.id, sdkDevice.name ?? localWebplayerName);
+        setActiveDeviceRestricted(Boolean(sdkDevice.isRestricted));
+        setActiveDevicePrivateSession(Boolean(sdkDevice.isPrivateSession));
+        setActiveDeviceSupportsVolume(sdkDevice.supportsVolume !== false);
+      }
+    },
+    [
+      canUseSdk,
+      localWebplayerName,
+      localWebplayerType,
+      refreshClientAccessToken,
+      setActiveDevice,
+      spotifyApiFetch,
+    ]
+  );
 
   useEffect(() => {
     if (!accessToken) return;
@@ -4633,7 +4657,10 @@ export default function SpotifyPlayer({
 
     while (Date.now() - startedAt < timeoutMs) {
       const candidate =
-        activeDeviceIdRef.current || deviceIdRef.current || sdkDeviceIdRef.current || null;
+        activeDeviceIdRef.current ||
+        deviceIdRef.current ||
+        sdkDeviceIdRef.current ||
+        null;
       if (candidate) {
         lastCandidate = candidate;
         const ready = await ensureActiveDevice(candidate, token, true);
@@ -4748,7 +4775,9 @@ export default function SpotifyPlayer({
           reconnectAttemptsRef.current += 1;
         }
         if (reconnectAttemptsRef.current >= 6) {
-          setSdkLastError("Local web player stays offline. Use ↻ or open the Spotify app.");
+          setSdkLastError(
+            "Local web player stays offline. Use ↻ or open the Spotify app."
+          );
           setSdkLifecycle("error");
         }
       } else {
@@ -5134,8 +5163,8 @@ export default function SpotifyPlayer({
                 data.repeat_state === "track"
                   ? "track"
                   : data.repeat_state === "context"
-                  ? "context"
-                  : "off";
+                    ? "context"
+                    : "off";
               setRepeatMode(mode);
             }
           }
@@ -5152,9 +5181,12 @@ export default function SpotifyPlayer({
         shuffleOnRef.current = false;
         rebuildQueueOrder(false, true);
         if (hasUserPlaybackIntent) {
-          await setRemoteShuffleState(false, device_id, accessTokenRef.current, false).catch(
-            () => undefined
-          );
+          await setRemoteShuffleState(
+            false,
+            device_id,
+            accessTokenRef.current,
+            false
+          ).catch(() => undefined);
         }
       }
     };
@@ -5524,15 +5556,9 @@ export default function SpotifyPlayer({
         playerApiRef.current = null;
       }
     };
-  }, [
-    onControllerHandlersChange,
-    onReady,
-    playbackApiAvailable,
-    publishedPlayerApi,
-  ]);
+  }, [onControllerHandlersChange, onReady, playbackApiAvailable, publishedPlayerApi]);
 
-  const playbackPausedUi =
-    playPauseOptimisticPaused ?? (playerState?.paused ?? true);
+  const playbackPausedUi = playPauseOptimisticPaused ?? playerState?.paused ?? true;
   const isPlaybackPaused = playbackPausedUi;
 
   useEffect(() => {
@@ -5541,11 +5567,7 @@ export default function SpotifyPlayer({
     if (playerState.paused === playPauseOptimisticPaused) {
       clearPlayPauseOptimisticState();
     }
-  }, [
-    clearPlayPauseOptimisticState,
-    playPauseOptimisticPaused,
-    playerState?.paused,
-  ]);
+  }, [clearPlayPauseOptimisticState, playPauseOptimisticPaused, playerState?.paused]);
 
   useEffect(() => {
     return () => {
@@ -5742,8 +5764,7 @@ export default function SpotifyPlayer({
       }
 
       const targetDeviceId =
-        selectedDeviceId ||
-        (preferSdkDeviceRef.current ? sdkDeviceId ?? null : null);
+        selectedDeviceId || (preferSdkDeviceRef.current ? (sdkDeviceId ?? null) : null);
       if (!targetDeviceId) return;
 
       const lastConfirmedAt = lastConfirmedActiveDeviceRef.current?.at ?? 0;
@@ -5765,7 +5786,9 @@ export default function SpotifyPlayer({
         }
         setActiveDevice(
           targetDeviceId,
-          targetDeviceId === sdkDeviceId ? localWebplayerName : activeDeviceNameRef.current
+          targetDeviceId === sdkDeviceId
+            ? localWebplayerName
+            : activeDeviceNameRef.current
         );
       }
 
@@ -5864,8 +5887,7 @@ export default function SpotifyPlayer({
         const streamFresh =
           enablePlaybackStream && Date.now() - lastStreamSnapshotAtRef.current < 5500;
         const playbackFresh = Date.now() - lastPlaybackSnapshotAtRef.current < 3500;
-        const inDeviceSwitchBoostWindow =
-          now < deviceSwitchSyncBoostUntilRef.current;
+        const inDeviceSwitchBoostWindow = now < deviceSwitchSyncBoostUntilRef.current;
         const sdkStatePrimary =
           sdkReadyRef.current &&
           Boolean(sdkDevice) &&
@@ -5902,11 +5924,7 @@ export default function SpotifyPlayer({
           scheduleNext(isPlaying, isPlaying ? 5500 : 9500);
           return;
         }
-        const minRequestGapMs = remoteDeviceActive
-          ? streamFresh
-            ? 1400
-            : 1000
-          : 1200;
+        const minRequestGapMs = remoteDeviceActive ? (streamFresh ? 1400 : 1000) : 1200;
         if (now - lastRequestAtRef.current < minRequestGapMs) {
           scheduleNext();
           return;
@@ -5958,17 +5976,20 @@ export default function SpotifyPlayer({
       );
       const streamFresh =
         enablePlaybackStream && now - lastStreamSnapshotAtRef.current < 5500;
-      const inDeviceSwitchBoostWindow =
-        now < deviceSwitchSyncBoostUntilRef.current;
+      const inDeviceSwitchBoostWindow = now < deviceSwitchSyncBoostUntilRef.current;
       const connectionInfo =
         typeof navigator !== "undefined" &&
         "connection" in navigator &&
-        (navigator as Navigator & {
-          connection?: { effectiveType?: string; saveData?: boolean };
-        }).connection
-          ? (navigator as Navigator & {
-              connection: { effectiveType?: string; saveData?: boolean };
-            }).connection
+        (
+          navigator as Navigator & {
+            connection?: { effectiveType?: string; saveData?: boolean };
+          }
+        ).connection
+          ? (
+              navigator as Navigator & {
+                connection: { effectiveType?: string; saveData?: boolean };
+              }
+            ).connection
           : null;
       const saveData = Boolean(connectionInfo?.saveData);
       const effectiveType = String(connectionInfo?.effectiveType ?? "").toLowerCase();
@@ -6102,7 +6123,9 @@ export default function SpotifyPlayer({
       // Force early state convergence after Connect switch.
       void syncPlaybackState("api_sync", operationEpoch).catch(() => undefined);
       setTimeout(() => {
-        void syncPlaybackStateRef.current("api_poll", operationEpoch).catch(() => undefined);
+        void syncPlaybackStateRef
+          .current("api_poll", operationEpoch)
+          .catch(() => undefined);
       }, 450);
     });
     clearPendingDeviceIfStale();
@@ -6113,7 +6136,14 @@ export default function SpotifyPlayer({
     allowQueueActivation: boolean
   ) {
     setPlaybackTouched(true);
-    if (activeDeviceRestrictedRef.current) {
+    let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
+    const playPauseBlocked = shouldBlockPlayPause({
+      activeDeviceId: activeDeviceIdRef.current,
+      selectedDeviceId: deviceIdRef.current,
+      sdkDeviceId: sdkDeviceIdRef.current,
+      restricted: activeDeviceRestrictedRef.current,
+    });
+    if (playPauseBlocked) {
       setError(
         "Spotify is currently blocking playback controls on this device. Switch device or wait a moment."
       );
@@ -6127,7 +6157,12 @@ export default function SpotifyPlayer({
       setError("Spotify is not allowing playback to resume in the current context.");
       return;
     }
-    if (allowQueueActivation && !targetPaused && isCustomQueueActive && !isCurrentTrackFromCustomQueue) {
+    if (
+      allowQueueActivation &&
+      !targetPaused &&
+      isCustomQueueActive &&
+      !isCurrentTrackFromCustomQueue
+    ) {
       const targetQueueId =
         customQueue.currentQueueId ?? customQueue.items[0]?.queueId ?? null;
       if (targetQueueId) {
@@ -6138,14 +6173,13 @@ export default function SpotifyPlayer({
     }
 
     const currentPausedSnapshot =
-      playPauseOptimisticPaused ?? (playerStateRef.current?.paused ?? true);
+      playPauseOptimisticPaused ?? playerStateRef.current?.paused ?? true;
     if (currentPausedSnapshot === targetPaused) {
       return;
     }
 
     const endpoint = targetPaused ? "pause" : "play";
     const token = accessTokenRef.current;
-    let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (token && currentDevice && Date.now() < rateLimitRef.current.until) return;
     setPlayPauseOptimisticState(targetPaused);
     if (!token || !currentDevice) {
@@ -6215,10 +6249,7 @@ export default function SpotifyPlayer({
         return;
       }
       const res = await spotifyApiFetch(
-        withDeviceId(
-          `https://api.spotify.com/v1/me/player/${endpoint}`,
-          targetDevice
-        ),
+        withDeviceId(`https://api.spotify.com/v1/me/player/${endpoint}`, targetDevice),
         { method: "PUT" }
       );
       if (!res || (!res.ok && res.status !== 204)) {
@@ -6232,7 +6263,7 @@ export default function SpotifyPlayer({
 
   async function handleTogglePlay() {
     const currentPausedSnapshot =
-      playPauseOptimisticPaused ?? (playerStateRef.current?.paused ?? true);
+      playPauseOptimisticPaused ?? playerStateRef.current?.paused ?? true;
     await handleSetPlaybackPaused(!currentPausedSnapshot, true);
   }
 
@@ -6260,10 +6291,7 @@ export default function SpotifyPlayer({
     if (Date.now() < rateLimitRef.current.until) return;
     const operationEpoch = beginOperationEpoch();
     await enqueuePlaybackCommand(async () => {
-      if (
-        currentDevice === sdkDeviceIdRef.current &&
-        queueModeRef.current !== "queue"
-      ) {
+      if (currentDevice === sdkDeviceIdRef.current && queueModeRef.current !== "queue") {
         await playerRef.current?.nextTrack?.();
         schedulePlaybackVerify(220, "api_verify", operationEpoch);
         return;
@@ -6313,10 +6341,7 @@ export default function SpotifyPlayer({
     if (Date.now() < rateLimitRef.current.until) return;
     const operationEpoch = beginOperationEpoch();
     await enqueuePlaybackCommand(async () => {
-      if (
-        currentDevice === sdkDeviceIdRef.current &&
-        queueModeRef.current !== "queue"
-      ) {
+      if (currentDevice === sdkDeviceIdRef.current && queueModeRef.current !== "queue") {
         await playerRef.current?.previousTrack?.();
         schedulePlaybackVerify(220, "api_verify", operationEpoch);
         return;
@@ -6351,7 +6376,10 @@ export default function SpotifyPlayer({
 
   async function handleToggleShuffle() {
     setPlaybackTouched(true);
-    if (activeDeviceRestrictedRef.current || playbackDisallowsRef.current.toggling_shuffle) {
+    if (
+      activeDeviceRestrictedRef.current ||
+      playbackDisallowsRef.current.toggling_shuffle
+    ) {
       setError("Spotify is not allowing shuffle changes in the current context.");
       return;
     }
@@ -6428,10 +6456,13 @@ export default function SpotifyPlayer({
     return `${min}:${sec.toString().padStart(2, "0")}`;
   }
 
-  const readSliderValue = useCallback((raw: string) => {
-    const parsed = Number(raw);
-    return clampProgressMs(Number.isFinite(parsed) ? parsed : 0);
-  }, [clampProgressMs]);
+  const readSliderValue = useCallback(
+    (raw: string) => {
+      const parsed = Number(raw);
+      return clampProgressMs(Number.isFinite(parsed) ? parsed : 0);
+    },
+    [clampProgressMs]
+  );
 
   async function handleSeek(nextMs: number) {
     if (activeDeviceRestrictedRef.current) {
@@ -6513,8 +6544,7 @@ export default function SpotifyPlayer({
   }
 
   function commitScrubSeek(fallbackMs?: number) {
-    const hasPendingScrub =
-      isScrubbingRef.current || scrubPositionRef.current !== null;
+    const hasPendingScrub = isScrubbingRef.current || scrubPositionRef.current !== null;
     const candidate = scrubPositionRef.current ?? fallbackMs;
     setScrubPreview(null);
     setScrubActive(false);
@@ -6615,7 +6645,9 @@ export default function SpotifyPlayer({
           });
           if (proxyRes.ok) return true;
           if (proxyRes.status === 409) {
-            setConnectConflict("Spotify Connect is active on another device. Choose again.");
+            setConnectConflict(
+              "Spotify Connect is active on another device. Choose again."
+            );
             return false;
           }
           if (proxyRes.status === 401 || proxyRes.status === 403) return false;
@@ -6629,10 +6661,13 @@ export default function SpotifyPlayer({
         });
         if (directRes?.ok) return true;
         if (directRes && directRes.status === 409) {
-          setConnectConflict("Spotify Connect is active on another device. Choose again.");
+          setConnectConflict(
+            "Spotify Connect is active on another device. Choose again."
+          );
           return false;
         }
-        if (directRes && (directRes.status === 401 || directRes.status === 403)) return false;
+        if (directRes && (directRes.status === 401 || directRes.status === 403))
+          return false;
       }
       return false;
     };
@@ -6663,9 +6698,7 @@ export default function SpotifyPlayer({
       <div className="player-card">
         <div className="player-meta">
           <div className="player-title">Spotify Player</div>
-          <div className="text-body">
-            Connect Spotify to control playback.
-          </div>
+          <div className="text-body">Connect Spotify to control playback.</div>
           {!playbackSessionReady ? (
             <div className="text-subtle">Sign in with Spotify to continue.</div>
           ) : null}
@@ -6700,10 +6733,13 @@ export default function SpotifyPlayer({
   const disallowPrevious = Boolean(playbackDisallows.skipping_prev);
   const disallowNext = Boolean(playbackDisallows.skipping_next);
   const disallowShuffle = Boolean(playbackDisallows.toggling_shuffle);
-  const localSdkControlsPlayback =
-    Boolean(deviceId) && (!activeDeviceId || activeDeviceId === deviceId);
+  const localSdkControlsPlayback = isLocalSdkPlaybackTarget({
+    activeDeviceId,
+    selectedDeviceId: deviceId,
+    sdkDeviceId: sdkDeviceIdRef.current,
+  });
   const disallowPlayPause =
-    activeDeviceRestricted ||
+    (activeDeviceRestricted && !localSdkControlsPlayback) ||
     (!localSdkControlsPlayback &&
       (playbackPausedUi
         ? Boolean(playbackDisallows.resuming)
@@ -6716,10 +6752,10 @@ export default function SpotifyPlayer({
     playbackFocusState.status !== "ended";
   const showLiveTrackInPlayer = hasLiveTrackSignal || liveTrackUiGraceVisible;
   const playerTitleText = showLiveTrackInPlayer
-    ? playerState?.name ?? "Unknown track"
+    ? (playerState?.name ?? "Unknown track")
     : "Select track";
-  const playerArtistText = showLiveTrackInPlayer ? playerState?.artists ?? "" : "";
-  const playerAlbumText = showLiveTrackInPlayer ? playerState?.album ?? "" : "";
+  const playerArtistText = showLiveTrackInPlayer ? (playerState?.artists ?? "") : "";
+  const playerAlbumText = showLiveTrackInPlayer ? (playerState?.album ?? "") : "";
 
   return (
     <div className="player-card" ref={playerCardRef}>
@@ -6737,239 +6773,238 @@ export default function SpotifyPlayer({
             <div className="player-cover placeholder" />
           )}
         </div>
-      <div className="player-meta player-meta-wide">
-        <div className="player-title-row">
-          <div className="player-title">{playerTitleText}</div>
-        </div>
-        {playerArtistText ? <div className="text-body">{playerArtistText}</div> : null}
-        {playerAlbumText ? (
-          <div className="text-subtle">
-            {playerAlbumText}
+        <div className="player-meta player-meta-wide">
+          <div className="player-title-row">
+            <div className="player-title">{playerTitleText}</div>
           </div>
-        ) : null}
-        {accessToken && showLiveTrackInPlayer && currentTrackIdState ? (
-          <div
-            className="player-track-actions"
-            ref={trackPlaylistMenu.rootRef}
-            onPointerDownCapture={trackPlaylistMenu.markInteraction}
-            onTouchStartCapture={trackPlaylistMenu.markInteraction}
-          >
-            <button
-              type="button"
-              className={`player-track-action-btn player-track-action-like${
-                currentTrackLiked ? " active" : ""
-              }`}
-              aria-label={
-                currentTrackLiked
-                  ? "Remove from Liked Songs"
-                  : "Add to Liked Songs"
-              }
-              title={
-                currentTrackLiked
-                  ? "Remove from Liked Songs"
-                  : "Add to Liked Songs"
-              }
-              disabled={likedStateSaving || likedStateLoading || trackPlaylistSaving}
-              onClick={handleLikeCurrentTrack}
+          {playerArtistText ? <div className="text-body">{playerArtistText}</div> : null}
+          {playerAlbumText ? <div className="text-subtle">{playerAlbumText}</div> : null}
+          {accessToken && showLiveTrackInPlayer && currentTrackIdState ? (
+            <div
+              className="player-track-actions"
+              ref={trackPlaylistMenu.rootRef}
+              onPointerDownCapture={trackPlaylistMenu.markInteraction}
+              onTouchStartCapture={trackPlaylistMenu.markInteraction}
             >
-              {likedStateSaving ? "…" : currentTrackLiked ? "−" : "+"}
-            </button>
-            <button
-              type="button"
-              className={`player-track-action-btn player-track-action-membership${
-                currentTrackInAnyPlaylist ? " active" : ""
-              }${trackPlaylistLoading ? " loading" : ""}`}
-              aria-label="Show track playlists"
-              title={
-                currentTrackInAnyPlaylist
-                  ? `Track is in ${selectedPlaylistNamesForTrack.length} list${
-                      selectedPlaylistNamesForTrack.length === 1 ? "" : "s"
-                    }`
-                  : "Track is not in your lists"
-              }
-              disabled={trackPlaylistSaving}
-              onClick={() =>
-                setTrackPlaylistMembershipOpen((prev) => {
-                  const next = !prev;
-                  if (next) {
-                    setTrackPlaylistMenuOpen(false);
-                    void ensureTrackPlaylistOptionsLoaded().catch(() => {
-                      setError("Unable to load playlist targets right now.");
-                    });
-                    void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(() => {
-                      setError("Unable to load track playlists right now.");
-                    });
-                  }
-                  return next;
-                })
-              }
-              onBlur={trackPlaylistMenu.handleBlur}
-            >
-              {trackPlaylistSaving || trackPlaylistLoading
-                ? "…"
-                : currentTrackInAnyPlaylist
-                ? String(selectedPlaylistNamesForTrack.length)
-                : "0"}
-            </button>
-            <button
-              type="button"
-              className="player-track-action-btn player-track-action-add"
-              aria-label="Add track to playlists"
-              title="Add track to playlists"
-              disabled={trackPlaylistSaving}
-              onClick={() =>
-                setTrackPlaylistMenuOpen((prev) => {
-                  const next = !prev;
-                  if (next) {
-                    setTrackPlaylistMembershipOpen(false);
-                    void ensureTrackPlaylistOptionsLoaded().catch(() => {
-                      setError("Unable to load playlist targets right now.");
-                    });
-                    void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(() => {
-                      setError("Unable to load track playlists right now.");
-                    });
-                  }
-                  return next;
-                })
-              }
-              onBlur={trackPlaylistMenu.handleBlur}
-            >
-              {trackPlaylistSaving ? "…" : "＋"}
-            </button>
-            {trackPlaylistMembershipOpen ? (
-              <div
-                className="combo-list track-playlist-menu track-playlist-membership-menu"
-                role="status"
-                style={trackPlaylistPopoverStyle}
+              <button
+                type="button"
+                className={`player-track-action-btn player-track-action-like${
+                  currentTrackLiked ? " active" : ""
+                }`}
+                aria-label={
+                  currentTrackLiked ? "Remove from Liked Songs" : "Add to Liked Songs"
+                }
+                title={
+                  currentTrackLiked ? "Remove from Liked Songs" : "Add to Liked Songs"
+                }
+                disabled={likedStateSaving || likedStateLoading || trackPlaylistSaving}
+                onClick={handleLikeCurrentTrack}
               >
-                <div className="track-playlist-membership-summary">
-                  {trackPlaylistLoading ? (
-                    <div className="combo-empty">Loading track playlists...</div>
-                  ) : currentTrackInAnyPlaylist ? (
-                    <div className="text-subtle">This track is in:</div>
-                  ) : (
-                    <div className="text-subtle">This track is not in your lists.</div>
-                  )}
-                </div>
-                {!trackPlaylistLoading && currentTrackInAnyPlaylist ? (
-                  selectedPlaylistsForTrack.map((playlist) => (
-                    <button
-                      key={playlist.id}
-                      type="button"
-                      className="combo-item player-playlist-jump"
-                      onClick={() => {
-                        if (typeof window !== "undefined") {
-                          window.dispatchEvent(
-                            new CustomEvent("gs-player-open-playlist", {
-                              detail: {
-                                playlistId: playlist.id,
-                                source: "player_track_membership",
-                                at: Date.now(),
-                              },
-                            })
-                          );
+                {likedStateSaving ? "…" : currentTrackLiked ? "−" : "+"}
+              </button>
+              <button
+                type="button"
+                className={`player-track-action-btn player-track-action-membership${
+                  currentTrackInAnyPlaylist ? " active" : ""
+                }${trackPlaylistLoading ? " loading" : ""}`}
+                aria-label="Show track playlists"
+                title={
+                  currentTrackInAnyPlaylist
+                    ? `Track is in ${selectedPlaylistNamesForTrack.length} list${
+                        selectedPlaylistNamesForTrack.length === 1 ? "" : "s"
+                      }`
+                    : "Track is not in your lists"
+                }
+                disabled={trackPlaylistSaving}
+                onClick={() =>
+                  setTrackPlaylistMembershipOpen((prev) => {
+                    const next = !prev;
+                    if (next) {
+                      setTrackPlaylistMenuOpen(false);
+                      void ensureTrackPlaylistOptionsLoaded().catch(() => {
+                        setError("Unable to load playlist targets right now.");
+                      });
+                      void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(
+                        () => {
+                          setError("Unable to load track playlists right now.");
                         }
-                        setTrackPlaylistMembershipOpen(false);
-                        setTrackPlaylistMenuOpen(false);
-                      }}
-                    >
-                      {playlist.name}
-                    </button>
-                  ))
-                ) : null}
-              </div>
-            ) : null}
-            {trackPlaylistMenuOpen ? (
-              <div
-                className="combo-list track-playlist-menu"
-                role="menu"
-                style={trackPlaylistPopoverStyle}
+                      );
+                    }
+                    return next;
+                  })
+                }
+                onBlur={trackPlaylistMenu.handleBlur}
               >
-                <div className="track-playlist-membership-summary">
-                  {trackPlaylistLoading ? (
-                    <div className="combo-empty">Loading track playlists...</div>
-                  ) : currentTrackInAnyPlaylist ? (
-                    <div className="text-subtle">
-                      In playlists: {selectedPlaylistNamesForTrack.join(", ")}
-                    </div>
-                  ) : (
-                    <div className="text-subtle">This track is not in your playlists.</div>
-                  )}
-                </div>
-                {trackPlaylistLoading ? (
-                  <div className="combo-empty">Loading playlists...</div>
-                ) : trackPlaylistAddTargetOptions.length === 0 ? (
-                  <div className="combo-empty">No playlist targets.</div>
-                ) : (
-                  trackPlaylistAddTargetOptions.map((option) => {
-                    const opKey = `${currentTrackIdState}:${option.id}`;
-                    const busy = trackPlaylistSaving || trackPlaylistActionKey === opKey;
-                    const checked = trackPlaylistSelectedIds.has(option.id);
-                    return (
-                      <label
-                        key={option.id}
-                        role="menuitem"
-                        className="combo-item"
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                          justifyContent: "flex-start",
-                          minWidth: 0,
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={busy}
-                          onChange={() => {
-                            if (busy) return;
-                            setTrackPlaylistSelectedIds((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(option.id)) {
-                                next.delete(option.id);
-                              } else {
-                                next.add(option.id);
-                              }
-                              return next;
-                            });
-                          }}
-                          onClick={(event) => event.stopPropagation()}
-                        />
-                        <span
-                          style={{
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            minWidth: 0,
-                            display: "block",
+                {trackPlaylistSaving || trackPlaylistLoading
+                  ? "…"
+                  : currentTrackInAnyPlaylist
+                    ? String(selectedPlaylistNamesForTrack.length)
+                    : "0"}
+              </button>
+              <button
+                type="button"
+                className="player-track-action-btn player-track-action-add"
+                aria-label="Add track to playlists"
+                title="Add track to playlists"
+                disabled={trackPlaylistSaving}
+                onClick={() =>
+                  setTrackPlaylistMenuOpen((prev) => {
+                    const next = !prev;
+                    if (next) {
+                      setTrackPlaylistMembershipOpen(false);
+                      void ensureTrackPlaylistOptionsLoaded().catch(() => {
+                        setError("Unable to load playlist targets right now.");
+                      });
+                      void syncCurrentTrackPlaylistSelection(currentTrackIdState).catch(
+                        () => {
+                          setError("Unable to load track playlists right now.");
+                        }
+                      );
+                    }
+                    return next;
+                  })
+                }
+                onBlur={trackPlaylistMenu.handleBlur}
+              >
+                {trackPlaylistSaving ? "…" : "＋"}
+              </button>
+              {trackPlaylistMembershipOpen ? (
+                <div
+                  className="combo-list track-playlist-menu track-playlist-membership-menu"
+                  role="status"
+                  style={trackPlaylistPopoverStyle}
+                >
+                  <div className="track-playlist-membership-summary">
+                    {trackPlaylistLoading ? (
+                      <div className="combo-empty">Loading track playlists...</div>
+                    ) : currentTrackInAnyPlaylist ? (
+                      <div className="text-subtle">This track is in:</div>
+                    ) : (
+                      <div className="text-subtle">This track is not in your lists.</div>
+                    )}
+                  </div>
+                  {!trackPlaylistLoading && currentTrackInAnyPlaylist
+                    ? selectedPlaylistsForTrack.map((playlist) => (
+                        <button
+                          key={playlist.id}
+                          type="button"
+                          className="combo-item player-playlist-jump"
+                          onClick={() => {
+                            if (typeof window !== "undefined") {
+                              window.dispatchEvent(
+                                new CustomEvent("gs-player-open-playlist", {
+                                  detail: {
+                                    playlistId: playlist.id,
+                                    source: "player_track_membership",
+                                    at: Date.now(),
+                                  },
+                                })
+                              );
+                            }
+                            setTrackPlaylistMembershipOpen(false);
+                            setTrackPlaylistMenuOpen(false);
                           }}
                         >
-                          {option.name}
-                        </span>
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        {playerErrorMessage &&
-        playbackTouched &&
-        !showLiveTrackInPlayer &&
-        !activeDeviceName &&
-        !deviceId &&
-        !deviceMissing ? (
-          <div className="text-subtle">
-            Playback problem: {playerErrorMessage}
-            {playerErrorMessage.includes("Reconnect") ? (
+                          {playlist.name}
+                        </button>
+                      ))
+                    : null}
+                </div>
+              ) : null}
+              {trackPlaylistMenuOpen ? (
+                <div
+                  className="combo-list track-playlist-menu"
+                  role="menu"
+                  style={trackPlaylistPopoverStyle}
+                >
+                  <div className="track-playlist-membership-summary">
+                    {trackPlaylistLoading ? (
+                      <div className="combo-empty">Loading track playlists...</div>
+                    ) : currentTrackInAnyPlaylist ? (
+                      <div className="text-subtle">
+                        In playlists: {selectedPlaylistNamesForTrack.join(", ")}
+                      </div>
+                    ) : (
+                      <div className="text-subtle">
+                        This track is not in your playlists.
+                      </div>
+                    )}
+                  </div>
+                  {trackPlaylistLoading ? (
+                    <div className="combo-empty">Loading playlists...</div>
+                  ) : trackPlaylistAddTargetOptions.length === 0 ? (
+                    <div className="combo-empty">No playlist targets.</div>
+                  ) : (
+                    trackPlaylistAddTargetOptions.map((option) => {
+                      const opKey = `${currentTrackIdState}:${option.id}`;
+                      const busy =
+                        trackPlaylistSaving || trackPlaylistActionKey === opKey;
+                      const checked = trackPlaylistSelectedIds.has(option.id);
+                      return (
+                        <label
+                          key={option.id}
+                          role="menuitem"
+                          className="combo-item"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            justifyContent: "flex-start",
+                            minWidth: 0,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={busy}
+                            onChange={() => {
+                              if (busy) return;
+                              setTrackPlaylistSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(option.id)) {
+                                  next.delete(option.id);
+                                } else {
+                                  next.add(option.id);
+                                }
+                                return next;
+                              });
+                            }}
+                            onClick={(event) => event.stopPropagation()}
+                          />
+                          <span
+                            style={{
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              minWidth: 0,
+                              display: "block",
+                            }}
+                          >
+                            {option.name}
+                          </span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {playerErrorMessage &&
+          playbackTouched &&
+          !showLiveTrackInPlayer &&
+          !activeDeviceName &&
+          !deviceId &&
+          !deviceMissing ? (
+            <div className="text-subtle">
+              Playback problem: {playerErrorMessage}
+              {playerErrorMessage.includes("Reconnect") ? (
                 <button
                   type="button"
                   className="btn btn-ghost"
                   style={{ marginLeft: 8 }}
                   onClick={() => {
-                    window.location.href = "/api/auth/login";
+                    window.open("/api/auth/login", "_self");
                   }}
                 >
                   Reconnect
@@ -6977,24 +7012,25 @@ export default function SpotifyPlayer({
               ) : null}
             </div>
           ) : null}
-        {activeDeviceRestricted ? (
-          <div className="text-subtle">
-            This device does not support remote control.
-          </div>
-        ) : null}
-        {activeDevicePrivateSession ? (
-          <div className="text-subtle">
-            A private session is active on this device; history and queue may be limited.
-          </div>
-        ) : null}
-        {deviceMissing ? (
-          <div className="text-subtle">
-            No Spotify device selected. Choose a device to start playback.
-          </div>
-        ) : null}
-        {connectConflict ? (
-          <div className="text-subtle">{connectConflict}</div>
-        ) : null}
+          {activeDeviceRestricted ? (
+            <div className="text-subtle">
+              {localSdkControlsPlayback
+                ? "Spotify blocks Web API control for this web player. Check that Web Playback SDK is enabled for this Client ID, then reconnect. Local play/pause remains available."
+                : "Spotify reports that this device does not support remote Web API control."}
+            </div>
+          ) : null}
+          {activeDevicePrivateSession ? (
+            <div className="text-subtle">
+              A private session is active on this device; history and queue may be
+              limited.
+            </div>
+          ) : null}
+          {deviceMissing ? (
+            <div className="text-subtle">
+              No Spotify device selected. Choose a device to start playback.
+            </div>
+          ) : null}
+          {connectConflict ? <div className="text-subtle">{connectConflict}</div> : null}
         </div>
         <div className="player-controls">
           <button
@@ -7179,7 +7215,9 @@ export default function SpotifyPlayer({
               aria-label="Volume"
               disabled={!activeDeviceSupportsVolume}
             />
-            <span className="text-subtle">{Math.round(Math.min(1, Math.max(0, volume)) * 100)}%</span>
+            <span className="text-subtle">
+              {Math.round(Math.min(1, Math.max(0, volume)) * 100)}%
+            </span>
           </div>
         </div>
       </div>
@@ -7256,7 +7294,9 @@ export default function SpotifyPlayer({
             <button
               type="button"
               className="player-library-dock-chevron-btn"
-              aria-label={connectDockOpen ? "Hide device selection" : "Show device selection"}
+              aria-label={
+                connectDockOpen ? "Hide device selection" : "Show device selection"
+              }
               title={connectDockOpen ? "Hide device selection" : "Show device selection"}
               aria-expanded={connectDockOpen}
               onClick={() => {
@@ -7300,9 +7340,7 @@ export default function SpotifyPlayer({
           <span className="player-connect-active-icon" aria-hidden="true">
             {activeConnectDevice.icon}
           </span>
-          <span className="player-connect-active-name">
-            {activeConnectDevice.name}
-          </span>
+          <span className="player-connect-active-name">{activeConnectDevice.name}</span>
         </div>
         <div
           className={`player-library-dock-body${connectDockOpen ? " open" : ""}`}
@@ -7353,7 +7391,8 @@ export default function SpotifyPlayer({
                           setDeviceMenuOpen(false);
                         }}
                       >
-                        {localWebplayerName} <span className="text-subtle">(start locally)</span>
+                        {localWebplayerName}{" "}
+                        <span className="text-subtle">(start locally)</span>
                       </button>
                     ) : null}
                     {devices.length === 0 ? (
@@ -7415,13 +7454,14 @@ export default function SpotifyPlayer({
         ) : null}
         {!sdkSupported && !activeDeviceId && !deviceId ? (
           <div className="text-subtle" style={{ marginTop: 6 }}>
-            Local web player is not available in this browser. Use Spotify Connect
-            through the Spotify app to control playback.
+            Local web player is not available in this browser. Use Spotify Connect through
+            the Spotify app to control playback.
           </div>
         ) : null}
         {selectableDevicesCount === 0 ? (
           <div className="text-subtle" style={{ marginTop: 6 }}>
-            No selectable devices found. Open Spotify on your iPhone/iPad and start a track, then click ↻.
+            No selectable devices found. Open Spotify on your iPhone/iPad and start a
+            track, then click ↻.
             <button
               type="button"
               className="btn btn-ghost"
@@ -7488,39 +7528,39 @@ export default function SpotifyPlayer({
                       queueRowRefsRef.current.delete(index);
                     }}
                   >
-                  {track.coverUrl ? (
-                    <Image
-                      src={track.coverUrl}
-                      alt={track.name}
-                      width={40}
-                      height={40}
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="player-queue-cover" />
-                  )}
-                  <div>
-                    <div className="player-queue-name">
-                      {track.name}
-                      {track.isCurrent ? (
-                        <>
-                          <ActiveTrackIndicator
-                            status={trackStatus}
-                            isStale={isStale}
-                          />
-                          <span className="player-queue-nowplaying">Now playing</span>
-                        </>
-                      ) : null}
+                    {track.coverUrl ? (
+                      <Image
+                        src={track.coverUrl}
+                        alt={track.name}
+                        width={40}
+                        height={40}
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="player-queue-cover" />
+                    )}
+                    <div>
+                      <div className="player-queue-name">
+                        {track.name}
+                        {track.isCurrent ? (
+                          <>
+                            <ActiveTrackIndicator
+                              status={trackStatus}
+                              isStale={isStale}
+                            />
+                            <span className="player-queue-nowplaying">Now playing</span>
+                          </>
+                        ) : null}
+                      </div>
+                      <div className="text-subtle">{track.artists}</div>
+                      <div className="text-subtle">
+                        {track.explicit ? "Explicit" : "Clean"} •{" "}
+                        {track.durationMs && track.durationMs > 0
+                          ? formatTime(track.durationMs)
+                          : "—"}
+                        {track.uri ? ` • ${track.uri}` : ""}
+                      </div>
                     </div>
-                    <div className="text-subtle">{track.artists}</div>
-                    <div className="text-subtle">
-                      {track.explicit ? "Explicit" : "Clean"} •{" "}
-                      {track.durationMs && track.durationMs > 0
-                        ? formatTime(track.durationMs)
-                        : "—"}
-                      {track.uri ? ` • ${track.uri}` : ""}
-                    </div>
-                  </div>
                   </div>
                 );
               })}

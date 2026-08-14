@@ -7,6 +7,7 @@ type LockState = {
 };
 
 const locks = new Map<string, LockState>();
+const MAX_MEMORY_LOCKS = 10_000;
 const BASE_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 60_000;
 const RESET_AFTER_MS = 10 * 60_000;
@@ -27,7 +28,11 @@ async function getRedisLockState(key: string): Promise<LockState | null> {
   const fails = Number(row.fails ?? 0);
   const lockedUntil = Number(row.lockedUntil ?? 0);
   const lastFailAt = Number(row.lastFailAt ?? 0);
-  if (!Number.isFinite(fails) || !Number.isFinite(lockedUntil) || !Number.isFinite(lastFailAt)) {
+  if (
+    !Number.isFinite(fails) ||
+    !Number.isFinite(lockedUntil) ||
+    !Number.isFinite(lastFailAt)
+  ) {
     return null;
   }
   return {
@@ -62,6 +67,10 @@ function getInMemoryLockState(key: string): LockState | null {
 }
 
 function setInMemoryLockState(key: string, state: LockState): void {
+  if (!locks.has(key) && locks.size >= MAX_MEMORY_LOCKS) {
+    const oldestKey = locks.keys().next().value as string | undefined;
+    if (oldestKey) locks.delete(oldestKey);
+  }
   locks.set(key, state);
 }
 

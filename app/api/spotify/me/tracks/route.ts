@@ -11,7 +11,12 @@ import {
 } from "@/lib/db/schema";
 import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { encodeCursor, tryDecodeCursor } from "@/lib/spotify/cursor";
-import { rateLimitResponse, requireAppUser, jsonNoStore, jsonPrivateCache } from "@/lib/api/guards";
+import {
+  rateLimitResponse,
+  requireAppUser,
+  jsonNoStore,
+  jsonPrivateCache,
+} from "@/lib/api/guards";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { incCounter } from "@/lib/observability/metrics";
@@ -127,14 +132,9 @@ export async function GET(req: Request) {
           return {
             trackId: track.id,
             name: track.name ?? null,
-            durationMs:
-              typeof track.duration_ms === "number" ? track.duration_ms : null,
+            durationMs: typeof track.duration_ms === "number" ? track.duration_ms : null,
             explicit:
-              typeof track.explicit === "boolean"
-                ? track.explicit
-                  ? 1
-                  : 0
-                : null,
+              typeof track.explicit === "boolean" ? (track.explicit ? 1 : 0) : null,
             isLocal:
               typeof track.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
             linkedFromTrackId:
@@ -152,8 +152,7 @@ export async function GET(req: Request) {
                 : null,
             albumImageUrl: track.album?.images?.[0]?.url ?? null,
             coverUrl: track.album?.images?.[0]?.url ?? null,
-            popularity:
-              typeof track.popularity === "number" ? track.popularity : null,
+            popularity: typeof track.popularity === "number" ? track.popularity : null,
             addedAt: Number.isFinite(parsedAddedAt) ? parsedAddedAt : null,
             artists: Array.isArray(track.artists)
               ? track.artists
@@ -280,7 +279,9 @@ export async function GET(req: Request) {
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
       popularity: tracks.popularity,
       addedAt: userSavedTracks.addedAt,
-      artists: sql<string | null>`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,
+      artists: sql<
+        string | null
+      >`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,
     })
     .from(userSavedTracks)
     .innerJoin(tracks, eq(tracks.trackId, userSavedTracks.trackId))
@@ -331,41 +332,45 @@ export async function GET(req: Request) {
     trackIds
   );
 
-  return jsonPrivateCache({
-    items: rows.map((row) => ({
-      ...row,
-      coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,
-      playlists: [
-        {
-          id: "liked",
-          name: "Liked Songs",
-          spotifyUrl: "https://open.spotify.com/collection/tracks",
-        },
-        ...((playlistsByTrack.get(row.trackId) ?? []).map((pl) => ({
-          ...pl,
-          spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
-        })) as Array<{ id: string; name: string; spotifyUrl: string }>),
-      ],
-    })),
-    nextCursor,
-    totalCount:
-      typeof totalRow?.count === "number" && Number.isFinite(totalRow.count)
-        ? Math.max(0, Math.floor(totalRow.count))
-        : null,
-    asOf: now,
-    sync: {
-      status: sync?.status ?? "idle",
-      lastSuccessfulAt,
-      lagSec,
-    },
-    meta: buildDataSourceMeta({
-      resource: "tracks",
-      source: "db",
+  return jsonPrivateCache(
+    {
+      items: rows.map((row) => ({
+        ...row,
+        coverUrl: row.hasCover ? `/api/spotify/cover/${row.trackId}` : row.albumImageUrl,
+        playlists: [
+          {
+            id: "liked",
+            name: "Liked Songs",
+            spotifyUrl: "https://open.spotify.com/collection/tracks",
+          },
+          ...((playlistsByTrack.get(row.trackId) ?? []).map((pl) => ({
+            ...pl,
+            spotifyUrl: `https://open.spotify.com/playlist/${pl.id}`,
+          })) as Array<{ id: string; name: string; spotifyUrl: string }>),
+        ],
+      })),
+      nextCursor,
+      totalCount:
+        typeof totalRow?.count === "number" && Number.isFinite(totalRow.count)
+          ? Math.max(0, Math.floor(totalRow.count))
+          : null,
       asOf: now,
-      staleSec,
-      degraded: Boolean(live && liveFallbackReason),
-      degradeReason: liveFallbackReason,
-      liveRequested: live,
-    }),
-  }, 200, policy.privateMaxAgeSec);
+      sync: {
+        status: sync?.status ?? "idle",
+        lastSuccessfulAt,
+        lagSec,
+      },
+      meta: buildDataSourceMeta({
+        resource: "tracks",
+        source: "db",
+        asOf: now,
+        staleSec,
+        degraded: Boolean(live && liveFallbackReason),
+        degradeReason: liveFallbackReason,
+        liveRequested: live,
+      }),
+    },
+    200,
+    policy.privateMaxAgeSec
+  );
 }

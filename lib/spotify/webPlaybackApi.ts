@@ -48,8 +48,8 @@ export async function fetchPlaybackStateSnapshot(): Promise<PlaybackStateSnapsho
         typeof body?.retryAfter === "number"
           ? body.retryAfter
           : body?.retryAfter
-          ? Number(body.retryAfter)
-          : undefined,
+            ? Number(body.retryAfter)
+            : undefined,
     };
     throw error;
   }

@@ -1,10 +1,7 @@
-import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
+import { jsonNoStore, requireAppUser, requireSameOrigin } from "@/lib/api/guards";
 import { getValidAccessTokenForUser } from "@/lib/spotify/tokenManager";
 import { getAppAccessToken, getAppTokenStatus } from "@/lib/spotify/tokens";
-import {
-  createCorrelationId,
-  readCorrelationId,
-} from "@/lib/observability/correlation";
+import { createCorrelationId, readCorrelationId } from "@/lib/observability/correlation";
 
 export const runtime = "nodejs";
 
@@ -16,6 +13,8 @@ function mapUserTokenStatus(expiresInSec: number | null) {
 }
 
 export async function POST(req: Request) {
+  const originError = requireSameOrigin(req);
+  if (originError) return originError;
   const { session, response } = await requireAppUser();
   if (response) return response;
 

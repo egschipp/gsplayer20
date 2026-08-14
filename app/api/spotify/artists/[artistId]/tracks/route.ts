@@ -88,20 +88,16 @@ async function fetchLiveTracksForArtist(artistId: string, limit: number) {
       rows.push({
         trackId,
         name: track?.name ?? null,
-        durationMs:
-          typeof track?.duration_ms === "number" ? track.duration_ms : null,
-        explicit:
-          typeof track?.explicit === "boolean" ? (track.explicit ? 1 : 0) : null,
-        isLocal:
-          typeof track?.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
+        durationMs: typeof track?.duration_ms === "number" ? track.duration_ms : null,
+        explicit: typeof track?.explicit === "boolean" ? (track.explicit ? 1 : 0) : null,
+        isLocal: typeof track?.is_local === "boolean" ? (track.is_local ? 1 : 0) : null,
         linkedFromTrackId:
           typeof track?.linked_from?.id === "string" ? track.linked_from.id : null,
         restrictionsReason:
           typeof track?.restrictions?.reason === "string"
             ? track.restrictions.reason
             : null,
-        popularity:
-          typeof track?.popularity === "number" ? track.popularity : null,
+        popularity: typeof track?.popularity === "number" ? track.popularity : null,
         albumId: track?.album?.id ?? null,
         albumName: track?.album?.name ?? null,
         albumReleaseDate: releaseDate,
@@ -134,10 +130,7 @@ async function fetchLiveTracksForArtist(artistId: string, limit: number) {
   return rows;
 }
 
-export async function GET(
-  req: Request,
-  ctx: { params: Promise<{ artistId: string }> }
-) {
+export async function GET(req: Request, ctx: { params: Promise<{ artistId: string }> }) {
   const { session, response } = await requireAppUser();
   if (response) return response;
   const rl = await rateLimitResponse({
@@ -199,7 +192,9 @@ export async function GET(
       releaseYear: tracks.albumReleaseYear,
       albumImageUrl: tracks.albumImageUrl,
       hasCover: sql<number>`(${tracks.albumImageBlob} IS NOT NULL)`,
-      artists: sql<string | null>`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,
+      artists: sql<
+        string | null
+      >`replace(group_concat(DISTINCT ${artists.name}), ',', ', ')`,
       saved: sql<number>`max(${userSavedTracks.trackId} IS NOT NULL)`,
     })
     .from(tracks)

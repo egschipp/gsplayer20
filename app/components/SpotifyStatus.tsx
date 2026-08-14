@@ -35,39 +35,48 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
   const effectiveUserStatus =
     sessionStatus === "unauthenticated"
       ? "LOGGED_OUT"
-      : userStatus?.status ?? "CHECKING";
+      : (userStatus?.status ?? "CHECKING");
   const userName =
-    effectiveUserStatus === "OK"
+    effectiveUserStatus === "OK" ||
+    effectiveUserStatus === "OK_LIMITED" ||
+    effectiveUserStatus === "OK_REAUTH_SOON"
       ? userStatus?.profile?.display_name || userStatus?.profile?.email
       : null;
   const appOk = appStatus?.status === "OK";
-  const userOk = effectiveUserStatus === "OK";
+  const userOk =
+    effectiveUserStatus === "OK" ||
+    effectiveUserStatus === "OK_LIMITED" ||
+    effectiveUserStatus === "OK_REAUTH_SOON";
   const userMessage =
-    effectiveUserStatus === "OK"
+    effectiveUserStatus === "OK" || effectiveUserStatus === "OK_LIMITED"
       ? userName
         ? `Connected as ${userName}.`
         : "Connected to Spotify."
-      : effectiveUserStatus === "ERROR_SCOPES"
-      ? "Required permissions are missing. Reconnect."
-      : effectiveUserStatus === "ERROR_REVOKED"
-      ? "Spotify access was revoked. Reconnect."
-      : effectiveUserStatus === "LOGGED_OUT"
-      ? "Not connected yet."
-      : effectiveUserStatus === "ERROR_RATE_LIMIT"
-      ? "Status check requested too often. Please wait."
-      : effectiveUserStatus === "ERROR_NETWORK"
-      ? "Spotify is temporarily unavailable."
-      : "Checking status.";
+      : effectiveUserStatus === "OK_REAUTH_SOON"
+        ? "Connected to Spotify. Reconnect soon to renew access."
+        : effectiveUserStatus === "ERROR_REAUTH_REQUIRED"
+          ? "Spotify access expired. Reconnect."
+          : effectiveUserStatus === "ERROR_SCOPES"
+            ? "Required permissions are missing. Reconnect."
+            : effectiveUserStatus === "ERROR_REVOKED"
+              ? "Spotify access was revoked. Reconnect."
+              : effectiveUserStatus === "LOGGED_OUT"
+                ? "Not connected yet."
+                : effectiveUserStatus === "ERROR_RATE_LIMIT"
+                  ? "Status check requested too often. Please wait."
+                  : effectiveUserStatus === "ERROR_NETWORK"
+                    ? "Spotify is temporarily unavailable."
+                    : "Checking status.";
   const appMessage =
     appStatus?.status === "OK"
       ? "Spotify app connection is healthy."
       : appStatus?.status === "ERROR_MISSING_ENV"
-      ? "App configuration is incomplete."
-      : appStatus?.status === "ERROR_AUTH"
-      ? "App authentication failed."
-      : appStatus?.status === "ERROR_NETWORK"
-      ? "Spotify is temporarily unavailable."
-      : "Checking status.";
+        ? "App configuration is incomplete."
+        : appStatus?.status === "ERROR_AUTH"
+          ? "App authentication failed."
+          : appStatus?.status === "ERROR_NETWORK"
+            ? "Spotify is temporarily unavailable."
+            : "Checking status.";
 
   const refreshStatus = useCallback(async () => {
     if (Date.now() < authRateLimitedUntilRef.current) return;
@@ -89,9 +98,7 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
       }
 
       const appPayload = (await appRes.json().catch(() => null)) as
-        | AppStatus
-        | { status?: string }
-        | null;
+        AppStatus | { status?: string } | null;
       if (appPayload?.status) {
         setAppStatus(appPayload as AppStatus);
       } else if (!appRes.ok) {
@@ -101,9 +108,7 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
       }
 
       const userPayload = (await userRes.json().catch(() => null)) as
-        | UserStatus
-        | { status?: string }
-        | null;
+        UserStatus | { status?: string } | null;
       if (userPayload?.status) {
         setUserStatus(userPayload as UserStatus);
       } else if (userRes.status === 401) {
@@ -128,7 +133,7 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
     const interval = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void refreshStatus();
-    }, 15000);
+    }, 60000);
     const handleResume = () => {
       void refreshStatus();
     };
@@ -174,7 +179,7 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
           type="button"
           className="btn btn-primary"
           onClick={() => {
-            window.location.href = "/api/auth/login";
+            window.open("/api/auth/login", "_self");
           }}
         >
           Connect Spotify
@@ -183,7 +188,7 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
           type="button"
           className="btn btn-ghost"
           onClick={() => {
-            window.location.href = "/api/auth/logout";
+            window.open("/api/auth/logout", "_self");
           }}
         >
           Disconnect Spotify

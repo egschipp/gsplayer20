@@ -16,22 +16,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Prune Docker artifacts on Pi
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
         env:
           DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT }}
-          envs: DOCKER_REGISTRY,DOCKER_USERNAME,DOCKER_PASSWORD
+          envs: DOCKER_REGISTRY,DOCKER_USERNAME,DOCKER_PASSWORD,DEPLOY_DIR
           script: |
             set -euo pipefail
             if [ -n "${DOCKER_PASSWORD:-}" ]; then
               echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
             fi
+            backup_dir="${DEPLOY_DIR}/data/backups"
+            mkdir -p "$backup_dir"
+            backup_name="gsplayer-$(date -u +%Y%m%dT%H%M%SZ).sqlite"
+            docker exec gsplayer20 node -e \
+              "(async()=>{const D=require('better-sqlite3');const d=new D('/data/gsplayer.sqlite',{readonly:true});await d.backup('/data/backups/${backup_name}');d.close()})().catch(()=>process.exit(1))"
+            gzip "${backup_dir}/${backup_name}"
+            find "$backup_dir" -type f -name 'gsplayer-*.sqlite.gz' -mtime +30 -delete
             docker image prune -af --filter "until=168h"
             docker container prune -f --filter "until=168h"
             docker builder prune -af --filter "until=168h"

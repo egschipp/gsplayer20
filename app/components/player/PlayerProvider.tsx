@@ -16,10 +16,7 @@ import { QueueProvider } from "@/lib/queue/QueueProvider";
 import { QueuePlaybackProvider } from "@/lib/playback/QueuePlaybackProvider";
 import { useViewport } from "@/lib/responsive/useViewport";
 import { PlaybackCommandQueue } from "@/lib/playback/commandQueue";
-import {
-  DEFAULT_PLAYBACK_FOCUS,
-  type PlaybackFocus,
-} from "./playbackFocus";
+import { DEFAULT_PLAYBACK_FOCUS, type PlaybackFocus } from "./playbackFocus";
 import type {
   PlayTrackRequest,
   PlayerApi,
@@ -154,9 +151,8 @@ function createCommandId() {
 
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [api, setApi] = useState<PlayerApi | null>(null);
-  const [playbackFocus, setPlaybackFocus] = useState<PlaybackFocus>(
-    DEFAULT_PLAYBACK_FOCUS
-  );
+  const [playbackFocus, setPlaybackFocus] =
+    useState<PlaybackFocus>(DEFAULT_PLAYBACK_FOCUS);
   const [controllerRuntime, setControllerRuntime] =
     useState<PlayerRuntimeState>(INITIAL_RUNTIME);
   const [controllerError, setControllerError] = useState<string | null>(null);
@@ -198,7 +194,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const executeCommand = useCallback(
-    async (command: PlayerCommandType, run: (handlers: PlayerCommandHandlers) => Promise<void>) => {
+    async (
+      command: PlayerCommandType,
+      run: (handlers: PlayerCommandHandlers) => Promise<void>
+    ) => {
       const commandId = createCommandId();
       setLastCommandId(commandId);
       setPendingCommand(command);
@@ -312,7 +311,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const queueUris = Array.isArray(request.queueUris) ? request.queueUris : [];
       const hasQueueTrack = request.queueContainsTrack && queueUris.length > 0;
       const rowOffset = normalizeOffsetIndex(request.rowIndex, queueUris.length);
-      const explicitTrackOffset = normalizeOffsetIndex(request.trackPosition, queueUris.length);
+      const explicitTrackOffset = normalizeOffsetIndex(
+        request.trackPosition,
+        queueUris.length
+      );
 
       if (request.mode === "playlists" && request.selectedPlaylistId) {
         if (
@@ -357,7 +359,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (playbackFocus.status === "loading") return "loading";
     if (playbackFocus.trackId && !playbackFocus.stale) return "ready";
     if (!handlersReady && !api && !controllerRuntime.sdkReady) return "empty";
-    if (controllerRuntime.sdkReady || Boolean(controllerRuntime.deviceId) || Boolean(api)) {
+    if (
+      controllerRuntime.sdkReady ||
+      Boolean(controllerRuntime.deviceId) ||
+      Boolean(api)
+    ) {
       return "loading";
     }
     return "empty";
@@ -382,8 +388,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       lastCommandId,
       runtime: controllerRuntime,
       error: controllerError ?? controllerRuntime.lastError,
-      ready:
-        controllerPlaybackStatus === "ready",
+      ready: controllerPlaybackStatus === "ready",
       playTrack,
       playQueue,
       playContext,
@@ -451,7 +456,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ api, currentTrackId, playbackFocus, playbackState, playbackView, controller }),
+    () => ({
+      api,
+      currentTrackId,
+      playbackFocus,
+      playbackState,
+      playbackView,
+      controller,
+    }),
     [api, currentTrackId, playbackFocus, playbackState, playbackView, controller]
   );
 
@@ -462,7 +474,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const headerEl = document.querySelector(".shell.header-shell");
 
     function applyContentHeight() {
-      const viewportHeight = viewport.visualHeight || viewport.height || window.innerHeight;
+      const viewportHeight =
+        viewport.visualHeight || viewport.height || window.innerHeight;
       const headerBottom =
         headerEl instanceof HTMLElement
           ? Math.max(0, Math.round(headerEl.getBoundingClientRect().bottom))
@@ -487,8 +500,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     applyContentHeight();
     const rafId = window.requestAnimationFrame(applyContentHeight);
     window.addEventListener("resize", applyContentHeight, { passive: true });
-    window.visualViewport?.addEventListener("resize", applyContentHeight, { passive: true });
-    window.visualViewport?.addEventListener("scroll", applyContentHeight, { passive: true });
+    window.visualViewport?.addEventListener("resize", applyContentHeight, {
+      passive: true,
+    });
+    window.visualViewport?.addEventListener("scroll", applyContentHeight, {
+      passive: true,
+    });
 
     const observer =
       typeof ResizeObserver !== "undefined"
@@ -520,7 +537,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               className="shell player-shell-wrap"
               data-visible="true"
             >
-              <div className={`library-sticky player-shell${showPlayerShell ? "" : " is-logo-only"}`}>
+              <div
+                className={`library-sticky player-shell${showPlayerShell ? "" : " is-logo-only"}`}
+              >
                 <Image
                   src="/georgies-spotify.png"
                   alt="Georgies Spotify logo"

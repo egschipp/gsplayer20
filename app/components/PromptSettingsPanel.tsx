@@ -23,12 +23,7 @@ const TOKEN_GROUPS = [
   },
   {
     label: "Artist & album",
-    tokens: [
-      "[ARTIST_IDS]",
-      "[ARTIST_NAMES]",
-      "[ALBUM_ID]",
-      "[ALBUM_RELEASE_DATE]",
-    ],
+    tokens: ["[ARTIST_IDS]", "[ARTIST_NAMES]", "[ALBUM_ID]", "[ALBUM_RELEASE_DATE]"],
   },
   {
     label: "Validatie",
@@ -123,7 +118,11 @@ export default function PromptSettingsPanel({
       <div className="ops-prompt-grid">
         <div className="ops-prompt-main">
           {promptWarning ? (
-            <div className="ops-inline-alert ops-tone-warn" role="status" aria-live="polite">
+            <div
+              className="ops-inline-alert ops-tone-warn"
+              role="status"
+              aria-live="polite"
+            >
               {promptWarning}
             </div>
           ) : null}
@@ -149,7 +148,9 @@ export default function PromptSettingsPanel({
             ) : promptSaved === "error" ? (
               <span className="text-subtle">Save failed</span>
             ) : (
-              <span className="text-subtle">Uses the exact same prompt flow as My Music.</span>
+              <span className="text-subtle">
+                Uses the exact same prompt flow as My Music.
+              </span>
             )}
           </div>
         </div>

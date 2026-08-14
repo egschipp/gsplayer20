@@ -1,18 +1,17 @@
-import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
+import { jsonNoStore, requireAdminUser, requireSameOrigin } from "@/lib/api/guards";
 import { clearMetrics } from "@/lib/observability/metrics";
 import { clearRecentErrors } from "@/lib/observability/logger";
 import { clearRateLimitActivityLog } from "@/lib/observability/rateLimitActivities";
 import { clearSlowActivityLog } from "@/lib/observability/slowActivities";
 import { clearAppTokenCache } from "@/lib/spotify/tokens";
-import {
-  createCorrelationId,
-  readCorrelationId,
-} from "@/lib/observability/correlation";
+import { createCorrelationId, readCorrelationId } from "@/lib/observability/correlation";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
-  const { response } = await requireAppUser();
+  const originError = requireSameOrigin(req);
+  if (originError) return originError;
+  const { response } = await requireAdminUser();
   if (response) return response;
 
   const correlationId = readCorrelationId(req.headers) || createCorrelationId();

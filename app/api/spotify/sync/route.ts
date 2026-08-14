@@ -3,7 +3,12 @@ import { getDb } from "@/lib/db/client";
 import { jobs, syncState } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { cryptoRandomId } from "@/lib/db/queries";
-import { getRequestIp, rateLimitResponse, requireAppUser, requireSameOrigin } from "@/lib/api/guards";
+import {
+  getRequestIp,
+  rateLimitResponse,
+  requireAppUser,
+  requireSameOrigin,
+} from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 
@@ -27,9 +32,7 @@ function clampInt(value: unknown, min: number, max: number, fallback: number) {
 
 function normalizePayload(type: string, payload: unknown) {
   const raw =
-    payload && typeof payload === "object"
-      ? (payload as Record<string, unknown>)
-      : {};
+    payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
 
   if (
     type === "SYNC_TRACKS_INITIAL" ||
@@ -130,12 +133,12 @@ export async function POST(req: Request) {
         type === "SYNC_PLAYLISTS"
           ? "playlists"
           : type === "SYNC_PLAYLIST_ITEMS"
-          ? "playlist_items"
-          : type === "SYNC_ARTISTS"
-          ? "artists"
-          : type === "SYNC_COVERS"
-          ? "covers"
-          : "tracks",
+            ? "playlist_items"
+            : type === "SYNC_ARTISTS"
+              ? "artists"
+              : type === "SYNC_COVERS"
+                ? "covers"
+                : "tracks",
       status: "queued",
       cursorOffset: null,
       cursorLimit: null,

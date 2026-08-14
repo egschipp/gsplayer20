@@ -1,9 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  getRequestIp,
-  rateLimitResponse,
-  requireSameOrigin,
-} from "@/lib/api/guards";
+import { getRequestIp, rateLimitResponse, requireSameOrigin } from "@/lib/api/guards";
 import { pinLockRepository } from "@/src/features/auth-pin/data/pin-lock.repository";
 import { runPinLoginAction } from "@/src/features/auth-pin/actions/pin-login.action";
 

@@ -1,12 +1,9 @@
-import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
+import { jsonNoStore, requireAdminUser } from "@/lib/api/guards";
 import { counterEntries } from "@/lib/observability/metrics";
 import { getRecentErrors } from "@/lib/observability/logger";
 import { getRecentRateLimitActivities } from "@/lib/observability/rateLimitActivities";
 import { getRecentSlowActivities } from "@/lib/observability/slowActivities";
-import {
-  createCorrelationId,
-  readCorrelationId,
-} from "@/lib/observability/correlation";
+import { createCorrelationId, readCorrelationId } from "@/lib/observability/correlation";
 
 export const runtime = "nodejs";
 
@@ -21,7 +18,7 @@ type EndpointErrorAggregate = {
 };
 
 export async function GET(req: Request) {
-  const { response } = await requireAppUser();
+  const { response } = await requireAdminUser();
   if (response) return response;
 
   const correlationId = readCorrelationId(req.headers) || createCorrelationId();
@@ -47,12 +44,11 @@ export async function GET(req: Request) {
     const statusClass = String(row.labels.status_class || "").toLowerCase();
     const method = String(row.labels.method || "unknown").toUpperCase();
 
-    const current =
-      byEndpoint.get(endpoint) ?? {
-        totalErrors: 0,
-        statusClass: { "4xx": 0, "5xx": 0 },
-        methods: new Map<string, number>(),
-      };
+    const current = byEndpoint.get(endpoint) ?? {
+      totalErrors: 0,
+      statusClass: { "4xx": 0, "5xx": 0 },
+      methods: new Map<string, number>(),
+    };
 
     current.totalErrors += row.value;
     if (statusClass === "4xx") current.statusClass["4xx"] += row.value;

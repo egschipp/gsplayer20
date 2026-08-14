@@ -36,7 +36,7 @@ export default function MainNav() {
     try {
       await fetch("/api/pin-logout", { method: "POST" });
     } finally {
-      window.location.href = "/login";
+      window.open("/login", "_self");
     }
   }
 

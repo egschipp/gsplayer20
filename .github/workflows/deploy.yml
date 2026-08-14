@@ -16,6 +16,9 @@ on:
       - "lib/**"
       - "pages/**"
       - "public/**"
+      - "scripts/**"
+      - "src/**"
+      - "tests/**"
       - "types/**"
       - "infra/**"
       - "Dockerfile"
@@ -25,7 +28,11 @@ on:
       - "package.json"
       - "package-lock.json"
       - "next.config.js"
+      - "proxy.ts"
+      - "playwright.config.ts"
+      - "eslint.config.js"
       - "tsconfig.json"
+      - "tsconfig.test.json"
   workflow_dispatch: {}
   pull_request:
     paths:
@@ -35,6 +42,9 @@ on:
       - "lib/**"
       - "pages/**"
       - "public/**"
+      - "scripts/**"
+      - "src/**"
+      - "tests/**"
       - "types/**"
       - "infra/**"
       - "Dockerfile"
@@ -44,7 +54,11 @@ on:
       - "package.json"
       - "package-lock.json"
       - "next.config.js"
+      - "proxy.ts"
+      - "playwright.config.ts"
+      - "eslint.config.js"
       - "tsconfig.json"
+      - "tsconfig.test.json"
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -52,22 +66,21 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   ci:
     name: Validate Web App
-    if: github.event_name == 'pull_request' && github.actor != 'release-please[bot]'
+    if: github.actor != 'release-please[bot]' || github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
 
       - name: Install
@@ -76,11 +89,20 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Formatting
+        run: npm run format:check
+
       - name: Typecheck
         run: npm run typecheck
 
       - name: Test
-        run: npm test
+        run: npm run test:coverage
+
+      - name: Install browser for accessibility tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser and WCAG tests
+        run: npm run test:e2e
 
       - name: Dependency audit (high+)
         run: npm audit --omit=dev --audit-level=high
@@ -88,41 +110,45 @@ jobs:
   build:
     name: Build And Scan Container
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: ci
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: arm64
 
       - name: Docker login
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ secrets.DOCKER_REGISTRY }}
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - name: Build and push (arm64)
-        uses: docker/build-push-action@v6
+      - name: Build candidate (arm64)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/arm64
           push: true
-          tags: |
-            ${{ secrets.DOCKER_REGISTRY }}/${{ secrets.DOCKER_IMAGE }}:${{ github.sha }}
-            ${{ secrets.DOCKER_REGISTRY }}/${{ secrets.DOCKER_IMAGE }}:latest
+          tags: ${{ secrets.DOCKER_REGISTRY }}/${{ secrets.DOCKER_IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
 
       - name: Scan image (Trivy)
-        uses: aquasecurity/trivy-action@v0.35.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         env:
           TRIVY_PLATFORM: linux/arm64
         with:
@@ -133,6 +159,12 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
+      - name: Promote scanned image to latest
+        run: >-
+          docker buildx imagetools create
+          --tag "${{ secrets.DOCKER_REGISTRY }}/${{ secrets.DOCKER_IMAGE }}:latest"
+          "${{ secrets.DOCKER_REGISTRY }}/${{ secrets.DOCKER_IMAGE }}:${{ github.sha }}"
+
   deploy:
     name: Deploy To ARM Runner
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
@@ -141,12 +173,12 @@ jobs:
     timeout-minutes: 12
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Resolve app version
         id: app_version
@@ -202,30 +234,31 @@ jobs:
           main();
           NODE
 
-      - name: Validate APP_ENCRYPTION_KEY
+      - name: Validate TOKEN_ENCRYPTION_KEY
         env:
-          APP_ENCRYPTION_KEY: ${{ secrets.APP_ENCRYPTION_KEY }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          TOKEN_ENCRYPTION_KEYS: ${{ secrets.TOKEN_ENCRYPTION_KEYS }}
+          TOKEN_ENCRYPTION_KEY_VERSION: ${{ secrets.TOKEN_ENCRYPTION_KEY_VERSION }}
         run: |
           python3 - <<'PY'
           import base64
           import os
           import sys
 
-          key = os.environ.get("APP_ENCRYPTION_KEY", "")
+          key = os.environ.get("TOKEN_ENCRYPTION_KEY", "")
           try:
             raw = base64.b64decode(key, validate=True)
           except Exception:
-            print("APP_ENCRYPTION_KEY is not valid base64", file=sys.stderr)
+            print("TOKEN_ENCRYPTION_KEY is not valid base64", file=sys.stderr)
             sys.exit(1)
 
           if len(raw) != 32:
-            print("APP_ENCRYPTION_KEY must decode to 32 bytes", file=sys.stderr)
+            print("TOKEN_ENCRYPTION_KEY must decode to 32 bytes", file=sys.stderr)
             sys.exit(1)
           PY
 
       - name: Deploy on self-hosted runner
         env:
-          APP_ENCRYPTION_KEY: ${{ secrets.APP_ENCRYPTION_KEY }}
           IMAGE_NAME: ${{ secrets.DOCKER_REGISTRY }}/${{ secrets.DOCKER_IMAGE }}
           IMAGE_TAG: ${{ github.sha }}
           DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
@@ -234,12 +267,15 @@ jobs:
           SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
           SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
           SPOTIFY_REDIRECT_URI: ${{ secrets.SPOTIFY_REDIRECT_URI }}
-          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET || secrets.NEXTAUTH_SECRET }}
           APP_PIN: ${{ secrets.APP_PIN }}
           AUTH_URL: ${{ secrets.AUTH_URL || secrets.NEXTAUTH_URL }}
-          NEXTAUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+          NEXTAUTH_SECRET: ${{ secrets.AUTH_SECRET || secrets.NEXTAUTH_SECRET }}
           NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL || secrets.AUTH_URL }}
           TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          TOKEN_ENCRYPTION_KEYS: ${{ secrets.TOKEN_ENCRYPTION_KEYS }}
+          TOKEN_ENCRYPTION_KEY_VERSION: ${{ secrets.TOKEN_ENCRYPTION_KEY_VERSION }}
+          ADMIN_SPOTIFY_USER_IDS: ${{ secrets.ADMIN_SPOTIFY_USER_IDS }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
           DB_PATH: /data/gsplayer.sqlite
           APP_RELEASE_VERSION: ${{ steps.app_version.outputs.value }}
@@ -262,7 +298,6 @@ jobs:
           tmp_env="$(mktemp .env.tmp.XXXXXX)"
           cat > "$tmp_env" <<EOF
           APP_ENV=production
-          APP_ENCRYPTION_KEY=$APP_ENCRYPTION_KEY
           IMAGE_NAME=$IMAGE_NAME
           IMAGE_TAG=$IMAGE_TAG
           SPOTIFY_CLIENT_ID=$SPOTIFY_CLIENT_ID
@@ -274,6 +309,13 @@ jobs:
           NEXTAUTH_SECRET=$NEXTAUTH_SECRET
           NEXTAUTH_URL=$NEXTAUTH_URL
           TOKEN_ENCRYPTION_KEY=$TOKEN_ENCRYPTION_KEY
+          TOKEN_ENCRYPTION_KEYS=$TOKEN_ENCRYPTION_KEYS
+          TOKEN_ENCRYPTION_KEY_VERSION=${TOKEN_ENCRYPTION_KEY_VERSION:-1}
+          ADMIN_SPOTIFY_USER_IDS=$ADMIN_SPOTIFY_USER_IDS
+          TRUST_PROXY=true
+          SPOTIFY_IMAGE_MAX_BYTES=5242880
+          APP_UID=$(id -u)
+          APP_GID=$(id -g)
           DB_PATH=$DB_PATH
           APP_RELEASE_VERSION=$APP_RELEASE_VERSION
           EOF
@@ -291,6 +333,14 @@ jobs:
               container_name: gsplayer20
               env_file:
                 - .env
+              user: "${APP_UID}:${APP_GID}"
+              init: true
+              read_only: true
+              cap_drop: ["ALL"]
+              security_opt:
+                - no-new-privileges:true
+              tmpfs:
+                - /tmp:rw,noexec,nosuid,size=64m
               ports:
                 - "127.0.0.1:3000:3000"
               volumes:
@@ -301,6 +351,12 @@ jobs:
                   max-size: "10m"
                   max-file: "3"
               restart: unless-stopped
+              healthcheck:
+                test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+                start_period: 120s
+                interval: 10s
+                timeout: 5s
+                retries: 12
               networks:
                 - web
 
@@ -310,6 +366,17 @@ jobs:
               command: ["node", "worker.js"]
               env_file:
                 - .env
+              user: "${APP_UID}:${APP_GID}"
+              init: true
+              read_only: true
+              cap_drop: ["ALL"]
+              security_opt:
+                - no-new-privileges:true
+              tmpfs:
+                - /tmp:rw,noexec,nosuid,size=64m
+              depends_on:
+                web:
+                  condition: service_healthy
               volumes:
                 - ./data:/data
               logging:
@@ -329,7 +396,7 @@ jobs:
           echo "Compose file: ${COMPOSE_FILE_PATH}"
           docker compose -f "${COMPOSE_FILE_PATH}" config | grep -E "image:" || true
           docker compose -f "${COMPOSE_FILE_PATH}" pull web worker
-          if ! docker compose -f "${COMPOSE_FILE_PATH}" up -d --remove-orphans; then
+          if ! docker compose -f "${COMPOSE_FILE_PATH}" up -d --remove-orphans --wait --wait-timeout 180; then
             docker compose -f "${COMPOSE_FILE_PATH}" ps
             docker compose -f "${COMPOSE_FILE_PATH}" logs --no-color --tail=160 web worker || true
             exit 1

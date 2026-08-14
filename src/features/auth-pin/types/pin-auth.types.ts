@@ -1,5 +1,5 @@
 export const PIN_COOKIE_NAME = "gs_pin";
-export const PIN_COOKIE_MAX_AGE_SEC = 60 * 60 * 24 * 30;
+export const PIN_COOKIE_MAX_AGE_SEC = 60 * 60 * 12;
 
 export type PinLockState = {
   locked: boolean;

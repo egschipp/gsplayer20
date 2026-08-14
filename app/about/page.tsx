@@ -19,28 +19,25 @@ export default async function AboutPage() {
   const stats = await getCodebaseStats();
 
   return (
-    <main className="page about-page">
+    <main id="main-content" tabIndex={-1} className="page about-page">
       <section className="panel about-hero">
         <div className="label">About</div>
         <h1 className="heading-1">Georgies Spotify</h1>
         <p className="text-body">
-          This app was built in Visual Studio Code, together with Codex as an
-          engineering assistant. The goal is a stable Spotify experience with
-          consistent controls for My Music, Queue and Spotify Connect across
-          desktop, tablet and mobile.
+          This app was built in Visual Studio Code, together with Codex as an engineering
+          assistant. The goal is a stable Spotify experience with consistent controls for
+          My Music, Queue and Spotify Connect across desktop, tablet and mobile.
         </p>
         <p className="text-body">
-          The architecture is built around Next.js (App Router), with a
-          component-driven frontend and server-side API routes for Spotify. The
-          player uses the Spotify Web Playback SDK for local playback and
-          combines it with Spotify Web API calls for device selection,
-          transfer, queue handling and playback state synchronization.
+          The architecture is built around Next.js (App Router), with a component-driven
+          frontend and server-side API routes for Spotify. The player uses the Spotify Web
+          Playback SDK for local playback and combines it with Spotify Web API calls for
+          device selection, transfer, queue handling and playback state synchronization.
         </p>
         <p className="text-body">
-          NextAuth is used for authentication and session management. The app
-          routes Spotify traffic through its own API endpoints so token
-          handling, error management and platform differences remain centralized
-          and robust.
+          NextAuth is used for authentication and session management. The app routes
+          Spotify traffic through its own API endpoints so token handling, error
+          management and platform differences remain centralized and robust.
         </p>
       </section>
 
@@ -64,9 +61,7 @@ export default async function AboutPage() {
           </div>
           <div className="about-metric">
             <div className="about-metric-label">Non-empty lines</div>
-            <div className="about-metric-value">
-              {formatNumber(stats.nonEmptyLines)}
-            </div>
+            <div className="about-metric-value">{formatNumber(stats.nonEmptyLines)}</div>
           </div>
           <div className="about-metric">
             <div className="about-metric-label">File types</div>
@@ -77,8 +72,7 @@ export default async function AboutPage() {
         </div>
 
         <p className="text-subtle">
-          Automatically generated from the codebase in:{" "}
-          {stats.scannedRoots.join(", ")}.
+          Automatically generated from the codebase in: {stats.scannedRoots.join(", ")}.
         </p>
 
         <AboutFileTypesPanel fileTypes={stats.fileTypes} />

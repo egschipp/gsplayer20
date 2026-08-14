@@ -7,7 +7,7 @@ import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
 import { type QueueItem } from "@/lib/queue/types";
 import { usePlayer } from "@/app/components/player/PlayerProvider";
-import type { PlaybackFocusStatus } from "@/app/components/player/playbackFocus";
+import type { PlaybackFocusStatus } from "@/lib/playback/playbackFocus";
 import { PLAYBACK_FEATURE_FLAGS } from "@/lib/playback/featureFlags";
 import { deriveQueueActivePresentation } from "@/lib/playback/queuePresentation";
 import { TRACK_ROW_HEIGHT } from "@/lib/ui/trackLayout";
@@ -161,9 +161,12 @@ async function resolveArtistSelection(item: QueueItem) {
     };
   }
   try {
-    const res = await fetch(`/api/spotify/tracks/${encodeURIComponent(item.trackId)}/artists`, {
-      cache: "no-store",
-    });
+    const res = await fetch(
+      `/api/spotify/tracks/${encodeURIComponent(item.trackId)}/artists`,
+      {
+        cache: "no-store",
+      }
+    );
     if (!res.ok) {
       return {
         artistId: null,
@@ -190,7 +193,8 @@ async function resolveArtistSelection(item: QueueItem) {
     }
     const matched =
       artists.find(
-        (artist) => normalizeTrackName(artist.name) === normalizeTrackName(primaryArtistName)
+        (artist) =>
+          normalizeTrackName(artist.name) === normalizeTrackName(primaryArtistName)
       ) ?? artists[0];
     return {
       artistId: matched?.id ?? null,
@@ -213,14 +217,21 @@ export default function QueuePageClient() {
   const [dragOverQueueId, setDragOverQueueId] = useState<string | null>(null);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const queueRowsRef = useRef<HTMLOListElement | null>(null);
-  const activeQueueId = playback.startingQueueId ?? playback.activeQueueId ?? queue.currentQueueId;
+  const activeQueueId =
+    playback.startingQueueId ?? playback.activeQueueId ?? queue.currentQueueId;
 
   const rawActiveTrackIdsOrdered = useMemo(
     () =>
       normalizeTrackIdCollection([
-        ...(Array.isArray(playbackView.activeTrackIds) ? playbackView.activeTrackIds : []),
-        ...(Array.isArray(playbackFocus.matchTrackIds) ? playbackFocus.matchTrackIds : []),
-        ...(Array.isArray(playbackState.matchTrackIds) ? playbackState.matchTrackIds : []),
+        ...(Array.isArray(playbackView.activeTrackIds)
+          ? playbackView.activeTrackIds
+          : []),
+        ...(Array.isArray(playbackFocus.matchTrackIds)
+          ? playbackFocus.matchTrackIds
+          : []),
+        ...(Array.isArray(playbackState.matchTrackIds)
+          ? playbackState.matchTrackIds
+          : []),
         playbackView.activeTrackId,
         playbackFocus.trackId,
         playbackState.currentTrackId,
@@ -277,13 +288,14 @@ export default function QueuePageClient() {
     hideLoadingForRemoteActiveTrack:
       PLAYBACK_FEATURE_FLAGS.remoteActiveTrackHideLoadingIndicator,
   });
-  const activeTrackStatus: PlaybackFocusStatus = PLAYBACK_FEATURE_FLAGS.playbackStatusMatrixV1
-    ? queuePresentation.status
-    : activeTrackStatusRaw;
+  const activeTrackStatus: PlaybackFocusStatus =
+    PLAYBACK_FEATURE_FLAGS.playbackStatusMatrixV1
+      ? queuePresentation.status
+      : activeTrackStatusRaw;
   const activeTrackIsStale = queuePresentation.stale;
   const resolvedActiveQueueId =
     activeQueueTrackIndex >= 0
-      ? queue.items[activeQueueTrackIndex]?.queueId ?? null
+      ? (queue.items[activeQueueTrackIndex]?.queueId ?? null)
       : activeQueueId;
   const activeDisplayIndex = useMemo(() => {
     if (activeQueueTrackIndex >= 0) return activeQueueTrackIndex;
@@ -423,7 +435,9 @@ export default function QueuePageClient() {
               const isStarting = playback.startingQueueId === item.queueId;
               const isCurrent =
                 item.queueId === resolvedActiveQueueId || index === activeDisplayIndex;
-              const trackStatus: PlaybackFocusStatus = isCurrent ? activeTrackStatus : "idle";
+              const trackStatus: PlaybackFocusStatus = isCurrent
+                ? activeTrackStatus
+                : "idle";
               const isPaused = trackStatus === "paused";
               const isLoading = trackStatus === "loading";
               const isEnded = trackStatus === "ended";
@@ -432,7 +446,8 @@ export default function QueuePageClient() {
               const rowStateClasses = `${isCurrent ? " playing" : ""}${isPaused ? " paused" : ""}${
                 isStale ? " stale" : ""
               }${isLoading ? " loading" : ""}${isEnded ? " ended" : ""}${isError ? " error" : ""}`;
-              const isNext = queue.mode === "queue" && !isCurrent && item.queueId === nextQueueId;
+              const isNext =
+                queue.mode === "queue" && !isCurrent && item.queueId === nextQueueId;
               const isDragged = draggingQueueId === item.queueId;
               const isDragOver = dragOverQueueId === item.queueId;
               const selectedPlaylistMembership = selectedPlaylistId
@@ -487,7 +502,9 @@ export default function QueuePageClient() {
                           unoptimized
                         />
                       ) : (
-                        <div className={`${styles.artwork} ${styles.artworkPlaceholder}`} />
+                        <div
+                          className={`${styles.artwork} ${styles.artworkPlaceholder}`}
+                        />
                       )}
                     </div>
 
@@ -528,8 +545,8 @@ export default function QueuePageClient() {
                           isCurrent
                             ? styles.statusNow
                             : isNext
-                            ? styles.statusNext
-                            : styles.statusQueued
+                              ? styles.statusNext
+                              : styles.statusQueued
                         } ${isStarting ? styles.statusStarting : ""}`}
                       >
                         {isCurrent
@@ -537,8 +554,8 @@ export default function QueuePageClient() {
                             ? "Starting..."
                             : "Now playing"
                           : isNext
-                          ? "Next"
-                          : "Queue"}
+                            ? "Next"
+                            : "Queue"}
                       </span>
                       {typeof selectedPlaylistMembership === "boolean" ? (
                         <span
@@ -548,16 +565,22 @@ export default function QueuePageClient() {
                               : styles.statusPlaylistOut
                           }`}
                         >
-                          {selectedPlaylistMembership ? "In selection" : "Not in selection"}
+                          {selectedPlaylistMembership
+                            ? "In selection"
+                            : "Not in selection"}
                         </span>
                       ) : null}
                     </div>
 
-                    <div className={`text-subtle track-col-duration ${styles.durationCell}`}>
+                    <div
+                      className={`text-subtle track-col-duration ${styles.durationCell}`}
+                    >
                       {formatDuration(item.durationMs)}
                     </div>
 
-                    <div className={`track-col-actions track-actions-group ${styles.actionsCell}`}>
+                    <div
+                      className={`track-col-actions track-actions-group ${styles.actionsCell}`}
+                    >
                       <button
                         type="button"
                         className={`detail-btn ${styles.queueActionBtn} ${styles.queueRemoveBtn}`}
@@ -637,14 +660,14 @@ function ActiveTrackIndicator({
     status === "playing"
       ? "Now playing"
       : status === "paused"
-      ? "Paused"
-      : status === "loading"
-      ? "Buffering"
-      : status === "ended"
-      ? "Track ended"
-      : status === "error"
-      ? "Playback error"
-      : "Active track";
+        ? "Paused"
+        : status === "loading"
+          ? "Buffering"
+          : status === "ended"
+            ? "Track ended"
+            : status === "error"
+              ? "Playback error"
+              : "Active track";
   return (
     <span
       className={`playing-indicator ${status}${isStale ? " stale" : ""}`}

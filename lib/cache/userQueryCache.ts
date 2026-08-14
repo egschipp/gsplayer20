@@ -16,9 +16,7 @@ function stableStringify(value: unknown): string {
     const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
       a.localeCompare(b)
     );
-    return `{${entries
-      .map(([key, val]) => `${key}:${stableStringify(val)}`)
-      .join(",")}}`;
+    return `{${entries.map(([key, val]) => `${key}:${stableStringify(val)}`).join(",")}}`;
   }
   return String(value);
 }

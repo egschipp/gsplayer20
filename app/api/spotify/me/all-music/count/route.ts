@@ -2,11 +2,7 @@ import { getDb } from "@/lib/db/client";
 import { playlistItems, playlists, userPlaylists } from "@/lib/db/schema";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { getCachedUserQuery } from "@/lib/cache/userQueryCache";
-import {
-  jsonPrivateCache,
-  rateLimitResponse,
-  requireAppUser,
-} from "@/lib/api/guards";
+import { jsonPrivateCache, rateLimitResponse, requireAppUser } from "@/lib/api/guards";
 
 export const runtime = "nodejs";
 

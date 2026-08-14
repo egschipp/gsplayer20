@@ -9,3 +9,7 @@ logs
 !.env.example
 .DS_Store
 *.tsbuildinfo
+public/codebase-stats.json
+playwright-report
+test-results
+.test-dist

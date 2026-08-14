@@ -7,9 +7,7 @@ function clamp(value: number, min: number, max: number) {
 function easeInOutCubic(t: number) {
   if (t <= 0) return 0;
   if (t >= 1) return 1;
-  return t < 0.5
-    ? 4 * t * t * t
-    : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
 function prefersReducedMotion() {

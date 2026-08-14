@@ -16,8 +16,8 @@ export function formatTrackMeta(meta: TrackMetaInput) {
     meta.explicit === true || meta.explicit === 1
       ? "yes"
       : meta.explicit === false || meta.explicit === 0
-      ? "no"
-      : "Unknown";
+        ? "no"
+        : "Unknown";
   const popularityValue =
     meta.popularity === null || meta.popularity === undefined
       ? "Unknown"

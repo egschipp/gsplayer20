@@ -1,6 +1,4 @@
 import crypto from "crypto";
-import fs from "fs";
-import path from "path";
 
 export type AuthLogLevel = "debug" | "info" | "warn" | "error";
 
@@ -37,13 +35,18 @@ const authLogState: AuthLogState = {
   entries: [],
 };
 
-const SENSITIVE_KEYS =
-  /code|token|secret|verifier|authorization|cookie|set-cookie/i;
+const SENSITIVE_KEYS = /code|token|secret|verifier|authorization|cookie|set-cookie/i;
 const MASK_KEYS = /state|code_challenge/i;
 const COOKIE_ALLOW_KEYS = new Set(["cookieKeys", "cookieFlags"]);
-const LOG_PATH =
-  process.env.AUTH_LOG_PATH || path.join(process.cwd(), ".auth-login.log");
 const AUTH_LOG_ENABLED = process.env.AUTH_LOG_ENABLED === "true";
+const MAX_AUTH_LOG_ENTRIES = 500;
+const SAFE_HEADER_NAMES = new Set([
+  "accept",
+  "content-type",
+  "host",
+  "user-agent",
+  "x-correlation-id",
+]);
 
 function sha256(value: string) {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -97,8 +100,8 @@ export function redactQuery(params: URLSearchParams) {
 export function redactHeaders(headers: Headers) {
   const out: Record<string, unknown> = {};
   headers.forEach((value, key) => {
-    if (SENSITIVE_KEYS.test(key)) out[key] = "[redacted]";
-    else out[key] = value;
+    if (!SAFE_HEADER_NAMES.has(key.toLowerCase())) return;
+    out[key] = SENSITIVE_KEYS.test(key) ? "[redacted]" : value;
   });
   return out;
 }
@@ -155,11 +158,6 @@ function flush(entry: AuthLogEntry) {
   if (!process.stdout.write(line)) {
     process.stdout.once("drain", () => void 0);
   }
-  try {
-    fs.appendFileSync(LOG_PATH, line, "utf8");
-  } catch {
-    // ignore file write issues
-  }
 }
 
 export function startAuthLog(reason: string, data?: Record<string, unknown>) {
@@ -169,12 +167,6 @@ export function startAuthLog(reason: string, data?: Record<string, unknown>) {
   authLogState.runId = crypto.randomUUID();
   authLogState.startedAt = Date.now();
   authLogState.active = true;
-  authLogState.entries = [];
-  try {
-    fs.writeFileSync(LOG_PATH, "", "utf8");
-  } catch {
-    // ignore file reset issues
-  }
   logAuthEvent({
     level: "info",
     event: "login_start",
@@ -183,9 +175,11 @@ export function startAuthLog(reason: string, data?: Record<string, unknown>) {
   return authLogState.runId;
 }
 
-export function logAuthEvent(entry: Omit<AuthLogEntry, "timestamp" | "runId"> & {
-  runId?: string;
-}) {
+export function logAuthEvent(
+  entry: Omit<AuthLogEntry, "timestamp" | "runId"> & {
+    runId?: string;
+  }
+) {
   if (!AUTH_LOG_ENABLED) {
     return;
   }
@@ -199,6 +193,9 @@ export function logAuthEvent(entry: Omit<AuthLogEntry, "timestamp" | "runId"> & 
     data: entry.data ? (sanitize(entry.data) as Record<string, unknown>) : undefined,
   };
   authLogState.entries.push(payload);
+  if (authLogState.entries.length > MAX_AUTH_LOG_ENTRIES) {
+    authLogState.entries.splice(0, authLogState.entries.length - MAX_AUTH_LOG_ENTRIES);
+  }
   flush(payload);
 }
 
@@ -213,22 +210,6 @@ export function endAuthLog(reason?: string) {
 }
 
 export function getAuthLog() {
-  try {
-    if (fs.existsSync(LOG_PATH)) {
-      const raw = fs.readFileSync(LOG_PATH, "utf8");
-      const entries = raw
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line)) as AuthLogEntry[];
-      const startedAt = entries[0]?.timestamp
-        ? new Date(entries[0].timestamp).getTime()
-        : authLogState.startedAt;
-      const runId = entries[0]?.runId ?? authLogState.runId;
-      return { runId, startedAt, entries };
-    }
-  } catch {
-    // fall back to memory
-  }
   return {
     runId: authLogState.runId,
     startedAt: authLogState.startedAt,
@@ -241,11 +222,6 @@ export function clearAuthLog() {
   authLogState.startedAt = null;
   authLogState.active = false;
   authLogState.entries = [];
-  try {
-    fs.writeFileSync(LOG_PATH, "", "utf8");
-  } catch {
-    // ignore
-  }
 }
 
 export function isAuthLogActive() {

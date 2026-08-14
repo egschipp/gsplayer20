@@ -56,6 +56,8 @@ export async function GET(req: Request) {
           public?: boolean;
           collaborative?: boolean;
           snapshot_id?: string;
+          items?: { total?: number };
+          /** @deprecated Compatibility with pre-February 2026 responses. */
           tracks?: { total?: number };
         }>;
         next?: string | null;
@@ -86,7 +88,11 @@ export async function GET(req: Request) {
                   typeof item?.collaborative === "boolean" ? item.collaborative : null,
                 snapshotId: item?.snapshot_id ?? null,
                 tracksTotal:
-                  typeof item?.tracks?.total === "number" ? item.tracks.total : null,
+                  typeof item?.items?.total === "number"
+                    ? item.items.total
+                    : typeof item?.tracks?.total === "number"
+                      ? item.tracks.total
+                      : null,
                 lastSeenAt: now,
               };
             })
@@ -200,6 +206,7 @@ export async function GET(req: Request) {
           public?: boolean;
           collaborative?: boolean;
           snapshot_id?: string;
+          items?: { total?: number };
           tracks?: { total?: number };
         }>;
       }>({
@@ -226,12 +233,14 @@ export async function GET(req: Request) {
                   null,
                 isPublic: typeof item?.public === "boolean" ? item.public : null,
                 collaborative:
-                  typeof item?.collaborative === "boolean"
-                    ? item.collaborative
-                    : null,
+                  typeof item?.collaborative === "boolean" ? item.collaborative : null,
                 snapshotId: item?.snapshot_id ?? null,
                 tracksTotal:
-                  typeof item?.tracks?.total === "number" ? item.tracks.total : null,
+                  typeof item?.items?.total === "number"
+                    ? item.items.total
+                    : typeof item?.tracks?.total === "number"
+                      ? item.tracks.total
+                      : null,
                 lastSeenAt: now,
               };
             })
@@ -289,9 +298,7 @@ export async function GET(req: Request) {
   }
 
   const last = rows[rows.length - 1];
-  const nextCursor = last
-    ? encodeCursor(last.lastSeenAt, last.playlistId)
-    : null;
+  const nextCursor = last ? encodeCursor(last.lastSeenAt, last.playlistId) : null;
 
   const sync = await db
     .select()
@@ -317,23 +324,27 @@ export async function GET(req: Request) {
     });
   }
 
-  return jsonPrivateCache({
-    items: rows,
-    nextCursor,
-    asOf: now,
-    sync: {
-      status: sync?.status ?? "idle",
-      lastSuccessfulAt,
-      lagSec,
-    },
-    meta: buildDataSourceMeta({
-      resource: "playlists",
-      source: "db",
+  return jsonPrivateCache(
+    {
+      items: rows,
+      nextCursor,
       asOf: now,
-      staleSec,
-      degraded: Boolean(live && liveFallbackReason),
-      degradeReason: liveFallbackReason,
-      liveRequested: live,
-    }),
-  }, 200, policy.privateMaxAgeSec);
+      sync: {
+        status: sync?.status ?? "idle",
+        lastSuccessfulAt,
+        lagSec,
+      },
+      meta: buildDataSourceMeta({
+        resource: "playlists",
+        source: "db",
+        asOf: now,
+        staleSec,
+        degraded: Boolean(live && liveFallbackReason),
+        degradeReason: liveFallbackReason,
+        liveRequested: live,
+      }),
+    },
+    200,
+    policy.privateMaxAgeSec
+  );
 }

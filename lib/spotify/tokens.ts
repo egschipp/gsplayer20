@@ -1,12 +1,8 @@
 import { requireEnv } from "@/lib/env";
 
 const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
-const FETCH_TIMEOUT_MS = Number(
-  process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000"
-);
-const APP_REFRESH_SKEW_MS = Number(
-  process.env.SPOTIFY_APP_REFRESH_SKEW_MS || "90000"
-);
+const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000");
+const APP_REFRESH_SKEW_MS = Number(process.env.SPOTIFY_APP_REFRESH_SKEW_MS || "90000");
 const APP_REFRESH_MIN_DELAY_MS = 15_000;
 const APP_REFRESH_RETRY_BASE_MS = 10_000;
 const APP_REFRESH_RETRY_MAX_MS = 5 * 60_000;
@@ -99,8 +95,7 @@ async function requestAppAccessToken() {
     }),
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Spotify token error: ${res.status} ${text}`);
+    throw new Error(`Spotify token error: ${res.status}`);
   }
   const json = (await res.json()) as {
     access_token: string;
@@ -222,8 +217,11 @@ export async function refreshAccessToken(token: {
     });
 
     if (!res.ok) {
-      const text = await res.text();
-      return { ...token, error: `RefreshFailed:${res.status}:${text}` } as const;
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        ...token,
+        error: `RefreshFailed:${res.status}:${payload?.error || "unknown"}`,
+      } as const;
     }
 
     const json = (await res.json()) as {

@@ -1,15 +1,14 @@
-import { jsonNoStore, requireAppUser } from "@/lib/api/guards";
+import { jsonNoStore, requireAdminUser, requireSameOrigin } from "@/lib/api/guards";
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
-import {
-  createCorrelationId,
-  readCorrelationId,
-} from "@/lib/observability/correlation";
+import { createCorrelationId, readCorrelationId } from "@/lib/observability/correlation";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
-  const { response } = await requireAppUser();
+  const originError = requireSameOrigin(req);
+  if (originError) return originError;
+  const { response } = await requireAdminUser();
   if (response) return response;
 
   const correlationId = readCorrelationId(req.headers) || createCorrelationId();
@@ -65,4 +64,3 @@ export async function POST(req: Request) {
     );
   }
 }
-

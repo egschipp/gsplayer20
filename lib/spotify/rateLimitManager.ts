@@ -51,7 +51,9 @@ const config: Config = {
   perUserBurst: Number(process.env.SPOTIFY_PER_USER_BURST || "12"),
   perUserRefillPerSec: Number(process.env.SPOTIFY_PER_USER_REFILL_PER_SEC || "4"),
   queueTimeoutMs: Number(process.env.SPOTIFY_QUEUE_TIMEOUT_MS || "12000"),
-  circuitMaxConsecutiveFailures: Number(process.env.SPOTIFY_CIRCUIT_FAILURE_THRESHOLD || "6"),
+  circuitMaxConsecutiveFailures: Number(
+    process.env.SPOTIFY_CIRCUIT_FAILURE_THRESHOLD || "6"
+  ),
   circuitOpenMs: Number(process.env.SPOTIFY_CIRCUIT_OPEN_MS || "12000"),
 };
 
@@ -99,7 +101,10 @@ async function writeSharedCircuit(userKey: string, state: CircuitState): Promise
   const client = getRedis();
   if (!client) return;
   const key = circuitKey(userKey);
-  const ttlSec = Math.max(60, Math.ceil((Math.max(0, state.openUntil - nowMs()) + 300_000) / 1000));
+  const ttlSec = Math.max(
+    60,
+    Math.ceil((Math.max(0, state.openUntil - nowMs()) + 300_000) / 1000)
+  );
   await client.hset(key, {
     consecutiveFailures: state.consecutiveFailures,
     openUntil: state.openUntil,
@@ -252,7 +257,10 @@ async function checkCircuit(userKey: string): Promise<void> {
   const merged: CircuitState | null =
     state && shared
       ? {
-          consecutiveFailures: Math.max(state.consecutiveFailures, shared.consecutiveFailures),
+          consecutiveFailures: Math.max(
+            state.consecutiveFailures,
+            shared.consecutiveFailures
+          ),
           openUntil: Math.max(state.openUntil, shared.openUntil),
         }
       : state || shared || null;
@@ -274,7 +282,10 @@ export async function scheduleSpotifyRequest<T>(args: {
   await checkCircuit(args.userKey);
 
   if (totalQueueDepth() >= config.maxQueueSize) {
-    incCounter("spotify_queue_rejected_total", { reason: "queue_full", priority: args.priority });
+    incCounter("spotify_queue_rejected_total", {
+      reason: "queue_full",
+      priority: args.priority,
+    });
     throw new SpotifyRateLimitError("QUEUE_FULL", 2_000);
   }
 
@@ -378,8 +389,9 @@ export function getSpotifyRateLimiterSnapshot() {
     queueDepth: totalQueueDepth(),
     globalInFlight,
     usersInFlight: inFlightByUser.size,
-    circuitsOpen: Array.from(circuitByUser.values()).filter((item) => item.openUntil > nowMs())
-      .length,
+    circuitsOpen: Array.from(circuitByUser.values()).filter(
+      (item) => item.openUntil > nowMs()
+    ).length,
     config,
   };
 }

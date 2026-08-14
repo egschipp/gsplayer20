@@ -25,6 +25,10 @@ FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+# The standalone Next.js server otherwise inherits Docker's container hostname
+# and may not accept requests through the loopback health check or published port.
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
 RUN rm -rf /usr/local/lib/node_modules/npm \
   && rm -f /usr/local/bin/npm /usr/local/bin/npx
 COPY --chown=node:node --from=prod-deps /app/node_modules ./node_modules

@@ -35,7 +35,7 @@ import {
   type PlaybackViewModel,
 } from "@/lib/playback/viewModel";
 
-const SpotifyPlayer = dynamic(() => import("../SpotifyPlayer"), {
+const SpotifyPlayer = dynamic(() => import("../../app/components/SpotifyPlayer"), {
   ssr: false,
   loading: () => <div className="text-subtle">Player laden...</div>,
 });

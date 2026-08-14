@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { usePlayer } from "@/app/components/player/PlayerProvider";
+import { usePlayer } from "./PlayerProvider";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { PlaybackCommandQueue } from "./commandQueue";
 import {
@@ -17,6 +17,7 @@ import {
   fetchPlaybackStateSnapshot,
 } from "@/lib/spotify/webPlaybackApi";
 import { getPlayerErrorMessage, normalizePlayerError } from "./playerErrors";
+import { normalizeSpotifyTrackId as normalizeTrackId } from "@/lib/spotify/trackIdentity";
 
 type QueuePlaybackContextValue = {
   playFromQueue: (queueId: string) => Promise<void>;
@@ -31,21 +32,7 @@ type QueuePlaybackContextValue = {
 };
 
 const QueuePlaybackContext = createContext<QueuePlaybackContextValue | null>(null);
-const SPOTIFY_TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
 const QUEUE_PENDING_STALE_MS = 8_000;
-
-function normalizeTrackId(value: string | null | undefined) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
-  if (SPOTIFY_TRACK_ID_REGEX.test(raw)) return raw;
-  if (raw.startsWith("spotify:track:")) {
-    const segment = raw.split(":").pop() ?? "";
-    const id = segment.split("?")[0]?.trim() ?? "";
-    return SPOTIFY_TRACK_ID_REGEX.test(id) ? id : null;
-  }
-  const embedded = raw.match(/[A-Za-z0-9]{22}/);
-  return embedded?.[0] ?? null;
-}
 
 function collectQueueItemTrackIds(item: {
   trackId?: string | null;

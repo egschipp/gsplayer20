@@ -11,7 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { FixedSizeList as List, type ListChildComponentProps } from "react-window";
-import { usePlayer } from "./player/PlayerProvider";
+import { usePlayer } from "@/lib/playback/PlayerProvider";
 import type { PlaybackFocusStatus } from "./player/playbackFocus";
 import PlaylistChips from "./playlist/PlaylistChips";
 import {
@@ -36,6 +36,13 @@ import {
   formatTimestamp,
 } from "./playlist/utils";
 import { mapSpotifyApiError } from "./playlist/errors";
+import {
+  findBestTrackMatchIndex,
+  isCurrentTrackMatch,
+  normalizeSpotifyTrackId,
+  normalizeTrackIdCollection,
+  resolveTrackId,
+} from "./playlist/trackMatching";
 import { useStableMenu } from "@/lib/hooks/useStableMenu";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import {
@@ -61,143 +68,6 @@ const ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_LOCAL_MS = 3_000;
 const ACTIVE_TRACK_ERROR_VISIBILITY_DELAY_REMOTE_MS = 8_000;
 const REMOTE_ACTIVE_TRACK_HIDE_LOADING_INDICATOR =
   PLAYBACK_FEATURE_FLAGS.remoteActiveTrackHideLoadingIndicator;
-
-function resolveTrackId(track: TrackRow | TrackItem | null | undefined) {
-  if (!track) return null;
-  if ("trackId" in track && typeof track.trackId === "string" && track.trackId) {
-    return track.trackId;
-  }
-  if ("id" in track && typeof track.id === "string" && track.id) {
-    return track.id;
-  }
-  return null;
-}
-
-function normalizeSpotifyTrackId(value: string | null | undefined) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
-  if (/^[0-9A-Za-z]{22}$/.test(raw)) return raw;
-  if (raw.startsWith("spotify:track:")) {
-    const segment = raw.split(":").pop() ?? "";
-    const id = segment.split("?")[0]?.trim() ?? "";
-    return /^[0-9A-Za-z]{22}$/.test(id) ? id : null;
-  }
-  if (
-    raw.includes("open.spotify.com/track/") ||
-    raw.includes("api.spotify.com/v1/tracks/")
-  ) {
-    try {
-      const url = new URL(raw);
-      const segment = (url.pathname.split("/").filter(Boolean).pop() ?? "")
-        .split("?")[0]
-        .trim();
-      return /^[0-9A-Za-z]{22}$/.test(segment) ? segment : null;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-function collectTrackMatchCandidates(
-  track: TrackRow | TrackItem | null | undefined,
-  options?: { includeLinkedFrom?: boolean }
-) {
-  if (!track) return [] as string[];
-  const includeLinkedFrom = options?.includeLinkedFrom === true;
-  const candidates = new Set<string>();
-  const candidateValues: Array<string | null | undefined> = [];
-  if ("artists" in track) {
-    // Strict matching first: track ID from row, then fallback row id.
-    candidateValues.push(track.trackId, track.id);
-    if (includeLinkedFrom) {
-      candidateValues.push(track.linkedFromTrackId);
-    }
-  } else {
-    // Strict matching first: TrackItem.id is usually canonical Spotify track id.
-    candidateValues.push(track.id, track.trackId);
-    if (includeLinkedFrom) {
-      candidateValues.push(track.linkedFromTrackId);
-    }
-  }
-  for (const value of candidateValues) {
-    const normalized = normalizeSpotifyTrackId(value);
-    if (normalized) candidates.add(normalized);
-  }
-  return Array.from(candidates);
-}
-
-function isCurrentTrackMatch(
-  track: TrackRow | TrackItem | null | undefined,
-  currentTrackId: string | Set<string> | null
-) {
-  if (!track || !currentTrackId) return false;
-  const activeIds = new Set<string>();
-  if (typeof currentTrackId === "string") {
-    const normalized = normalizeSpotifyTrackId(currentTrackId);
-    if (normalized) activeIds.add(normalized);
-  } else {
-    for (const value of currentTrackId.values()) {
-      const normalized = normalizeSpotifyTrackId(value);
-      if (normalized) activeIds.add(normalized);
-    }
-  }
-  if (!activeIds.size) return false;
-
-  const directMatches = collectTrackMatchCandidates(track, {
-    includeLinkedFrom: false,
-  });
-  return directMatches.some((candidate) => activeIds.has(candidate));
-}
-
-function normalizeTrackIdCollection(values: Array<string | null | undefined>) {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const normalized = normalizeSpotifyTrackId(value);
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    out.push(normalized);
-  }
-  return out;
-}
-
-function findBestTrackMatchIndex<T extends TrackRow | TrackItem>(
-  items: T[],
-  activeTrackIds: Set<string>
-) {
-  if (!items.length || !activeTrackIds.size) return -1;
-  let fallbackIndex = -1;
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
-    const directMatches = collectTrackMatchCandidates(item, {
-      includeLinkedFrom: false,
-    });
-    if (directMatches.some((candidate) => activeTrackIds.has(candidate))) {
-      return index;
-    }
-    if (fallbackIndex < 0) {
-      const linkedMatches = collectTrackMatchCandidates(item, {
-        includeLinkedFrom: true,
-      });
-      if (linkedMatches.some((candidate) => activeTrackIds.has(candidate))) {
-        fallbackIndex = index;
-      }
-    }
-  }
-  if (fallbackIndex >= 0 && typeof window !== "undefined") {
-    window.dispatchEvent(
-      new CustomEvent("gs-playback-metric", {
-        detail: {
-          name: "match_fallback_used",
-          value: 1,
-          at: Date.now(),
-        },
-      })
-    );
-  }
-  return fallbackIndex;
-}
 
 function buildQueueTrackInput(track: TrackRow | TrackItem) {
   const trackId = resolveTrackId(track);

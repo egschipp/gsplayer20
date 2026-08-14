@@ -6,12 +6,16 @@ import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import { useQueuePlayback } from "@/lib/playback/QueuePlaybackProvider";
 import { type QueueItem } from "@/lib/queue/types";
-import { usePlayer } from "@/app/components/player/PlayerProvider";
+import { usePlayer } from "@/lib/playback/PlayerProvider";
 import type { PlaybackFocusStatus } from "@/lib/playback/playbackFocus";
 import { PLAYBACK_FEATURE_FLAGS } from "@/lib/playback/featureFlags";
 import { deriveQueueActivePresentation } from "@/lib/playback/queuePresentation";
 import { TRACK_ROW_HEIGHT } from "@/lib/ui/trackLayout";
 import { animateScrollTop } from "@/lib/ui/smoothScroll";
+import {
+  normalizeSpotifyTrackId,
+  normalizeTrackIdCollection,
+} from "@/lib/spotify/trackIdentity";
 import styles from "./QueuePageClient.module.css";
 
 function formatDuration(ms: number | null) {
@@ -20,44 +24,6 @@ function formatDuration(ms: number | null) {
   const minutes = Math.floor(totalSec / 60);
   const seconds = totalSec % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-function normalizeSpotifyTrackId(value: string | null | undefined) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
-  if (/^[0-9A-Za-z]{22}$/.test(raw)) return raw;
-  if (raw.startsWith("spotify:track:")) {
-    const segment = raw.split(":").pop() ?? "";
-    const id = segment.split("?")[0]?.trim() ?? "";
-    return /^[0-9A-Za-z]{22}$/.test(id) ? id : null;
-  }
-  if (
-    raw.includes("open.spotify.com/track/") ||
-    raw.includes("api.spotify.com/v1/tracks/")
-  ) {
-    try {
-      const url = new URL(raw);
-      const segment = (url.pathname.split("/").filter(Boolean).pop() ?? "")
-        .split("?")[0]
-        .trim();
-      return /^[0-9A-Za-z]{22}$/.test(segment) ? segment : null;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-function normalizeTrackIdCollection(values: Array<string | null | undefined>) {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const normalized = normalizeSpotifyTrackId(value);
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    out.push(normalized);
-  }
-  return out;
 }
 
 function collectQueueTrackMatchCandidates(item: QueueItem | null | undefined) {

@@ -20,6 +20,11 @@
     "lib/crypto.ts",
     "lib/playback/deviceControlPolicy.ts",
     "lib/spotify/scopes.ts",
+    "app/components/player/spotifyPlayerTransport.ts",
+    "app/components/player/spotifyPlayerTransport.test.ts",
+    "app/components/playlist/types.ts",
+    "app/components/playlist/trackMatching.ts",
+    "app/components/playlist/trackMatching.test.ts",
     "types/**/*.d.ts"
   ],
   "exclude": ["node_modules", ".next", "src/features/**/routes/**/*.ts"]

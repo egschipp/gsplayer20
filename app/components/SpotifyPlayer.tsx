@@ -75,6 +75,23 @@ import {
   shouldBlockPlayPause,
 } from "@/lib/playback/deviceControlPolicy";
 import { usePlaybackLeader } from "@/lib/playback/usePlaybackLeader";
+import {
+  createCommandId,
+  emitPlaybackDebugEvent,
+  extractProxyPayload,
+  findBestQueueMatchIndex,
+  mapQueueTrackItem,
+  normalizePlaybackTrackId,
+  normalizeTrackIdCollection,
+  parseSpotifyPlayerApiUrl,
+  readJsonSafely,
+  readSyncServerSeq,
+  readSyncServerTime,
+  resolvePlaybackTrackId,
+  resolvePlaybackTrackIds,
+  startsWithEmoji,
+  type QueueTrackItem,
+} from "./player/spotifyPlayerTransport";
 
 declare global {
   interface Window {
@@ -97,9 +114,6 @@ const PROGRESS_MAX_STEP_MS = 250;
 const REMOTE_TAKEOVER_CONFIRM_MS = 1200;
 const REMOTE_TAKEOVER_MIN_SAMPLES = 2;
 const PLAYBACK_RESTRICTION_COOLDOWN_MS = 4_000;
-const PLAYER_TRACK_ID_REGEX = /^[A-Za-z0-9]{22}$/;
-const LEADING_EMOJI_PATTERN =
-  /^[\s\u200B-\u200D\u200E\u200F\u2060\uFEFF]*(?:\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)/u;
 const PLAYER_LIKED_PLAYLIST_ID = "liked";
 const CONNECT_DOCK_PIN_KEY = "gs_connect_dock_pinned_v1";
 const PLAYBACK_READY_TIMEOUT_MS = 9_000;
@@ -170,18 +184,6 @@ type NoTrackCounterState = {
   lastDeviceId: string | null;
 };
 
-type QueueTrackItem = {
-  id: string;
-  uri: string | null;
-  matchTrackIds: string[];
-  name: string;
-  artists: string;
-  coverUrl: string | null;
-  durationMs: number | null;
-  explicit: boolean;
-  isCurrent: boolean;
-};
-
 type DeferredPlayIntent = PlayerDeferredPlayIntent;
 
 const INITIAL_HANDOFF_STATE: HandoffState = {
@@ -247,205 +249,6 @@ function getWebPlaybackSdkSupport() {
     };
   }
   return { supported: true, reason: null as string | null };
-}
-
-async function readJsonSafely<T = any>(
-  res: Response | null | undefined
-): Promise<T | null> {
-  if (!res) return null;
-  if (res.status === 204 || res.status === 205 || res.status === 304) return null;
-  if (res.headers.get("content-length") === "0") return null;
-  try {
-    return (await res.json()) as T;
-  } catch {
-    return null;
-  }
-}
-
-function parseSpotifyPlayerApiUrl(input: string) {
-  try {
-    const parsed = new URL(input);
-    if (parsed.origin !== "https://api.spotify.com") return null;
-    if (!parsed.pathname.startsWith("/v1/me/player")) return null;
-    return {
-      endpoint: parsed.pathname.slice("/v1/me/player".length),
-      search: parsed.search || "",
-    };
-  } catch {
-    return null;
-  }
-}
-
-function normalizePlaybackTrackId(value: unknown) {
-  if (typeof value !== "string") return null;
-  const raw = value.trim();
-  if (!raw) return null;
-  if (/^[0-9A-Za-z]{22}$/.test(raw)) return raw;
-  if (raw.startsWith("spotify:track:")) {
-    const segment = raw.split(":").pop() ?? "";
-    const id = segment.split("?")[0]?.trim() ?? "";
-    return /^[0-9A-Za-z]{22}$/.test(id) ? id : null;
-  }
-  if (
-    raw.includes("open.spotify.com/track/") ||
-    raw.includes("api.spotify.com/v1/tracks/")
-  ) {
-    try {
-      const url = new URL(raw);
-      const segment = (url.pathname.split("/").filter(Boolean).pop() ?? "")
-        .split("?")[0]
-        .trim();
-      return /^[0-9A-Za-z]{22}$/.test(segment) ? segment : null;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-function resolvePlaybackTrackId(item: any) {
-  return (
-    normalizePlaybackTrackId(item?.id) ??
-    normalizePlaybackTrackId(item?.uri) ??
-    normalizePlaybackTrackId(item?.href) ??
-    normalizePlaybackTrackId(item?.linked_from?.id) ??
-    normalizePlaybackTrackId(item?.linked_from?.uri) ??
-    normalizePlaybackTrackId(item?.linked_from?.href) ??
-    normalizePlaybackTrackId(item?.external_urls?.spotify)
-  );
-}
-
-function resolvePlaybackTrackIds(item: any) {
-  const values = [
-    item?.id,
-    item?.uri,
-    item?.href,
-    item?.linked_from?.id,
-    item?.linked_from?.uri,
-    item?.linked_from?.href,
-    item?.external_urls?.spotify,
-  ];
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const normalized = normalizePlaybackTrackId(value);
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    out.push(normalized);
-  }
-  return out;
-}
-
-function mapQueueTrackItem(track: any, fallbackIndex = 0): QueueTrackItem {
-  const normalizedId = resolvePlaybackTrackId(track);
-  const matchTrackIds = resolvePlaybackTrackIds(track);
-  const uri = typeof track?.uri === "string" ? track.uri : null;
-  return {
-    id: normalizedId ?? `${uri ?? "queue-track"}:${fallbackIndex}`,
-    uri,
-    matchTrackIds,
-    name: track?.name ?? "Unknown track",
-    artists: Array.isArray(track?.artists)
-      ? track.artists
-          .map((a: any) => a?.name)
-          .filter(Boolean)
-          .join(", ")
-      : "",
-    coverUrl: track?.album?.images?.[0]?.url ?? null,
-    durationMs:
-      typeof track?.duration_ms === "number"
-        ? Math.max(0, Math.floor(track.duration_ms))
-        : null,
-    explicit: Boolean(track?.explicit),
-    isCurrent: false,
-  };
-}
-
-function extractProxyPayload(body: RequestInit["body"]) {
-  if (!body) return undefined;
-  if (typeof body === "string") {
-    try {
-      return JSON.parse(body);
-    } catch {
-      return body;
-    }
-  }
-  if (body instanceof URLSearchParams) {
-    return Object.fromEntries(body.entries());
-  }
-  return body;
-}
-
-function createCommandId() {
-  try {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return crypto.randomUUID();
-    }
-  } catch {
-    // fallback below
-  }
-  return `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function startsWithEmoji(value: string | null | undefined) {
-  return LEADING_EMOJI_PATTERN.test(String(value ?? ""));
-}
-
-function normalizeTrackIdCollection(values: Array<string | null | undefined>) {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const normalized = normalizePlaybackTrackId(value);
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    out.push(normalized);
-  }
-  return out;
-}
-
-function findBestQueueMatchIndex(items: QueueTrackItem[], activeTrackIds: Set<string>) {
-  if (!items.length || !activeTrackIds.size) return -1;
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
-    const candidates = normalizeTrackIdCollection([
-      item.id,
-      item.uri,
-      ...item.matchTrackIds,
-    ]);
-    if (candidates.some((candidate) => activeTrackIds.has(candidate))) {
-      return index;
-    }
-  }
-  return -1;
-}
-
-function emitPlaybackDebugEvent(event: string, payload: Record<string, unknown>) {
-  if (process.env.NODE_ENV === "production") return;
-  try {
-    console.debug(`[player:${event}]`, payload);
-  } catch {
-    // ignore logger issues
-  }
-}
-
-function readSyncServerSeq(payload: any): number {
-  const candidate =
-    payload?.sync?.serverSeq ?? payload?.serverSeq ?? payload?.meta?.serverSeq ?? 0;
-  return typeof candidate === "number" && Number.isFinite(candidate)
-    ? Math.max(0, Math.floor(candidate))
-    : 0;
-}
-
-function readSyncServerTime(payload: any): number {
-  const candidate =
-    payload?.sync?.serverTime ??
-    payload?.serverTime ??
-    payload?.meta?.serverTime ??
-    payload?.timestamp ??
-    Date.now();
-  return typeof candidate === "number" && Number.isFinite(candidate)
-    ? Math.max(0, Math.floor(candidate))
-    : Date.now();
 }
 
 function ActiveTrackIndicator({

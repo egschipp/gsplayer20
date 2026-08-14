@@ -49,6 +49,7 @@ function buildSection() {
 
   return [
     START_MARKER,
+    "",
     "## Repository Snapshot",
     "",
     "This section is generated automatically on every commit.",

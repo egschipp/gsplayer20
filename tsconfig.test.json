@@ -18,6 +18,7 @@
     "src/shared/**/*.ts",
     "lib/**/*.test.ts",
     "lib/crypto.ts",
+    "lib/playback/deviceControlPolicy.ts",
     "lib/spotify/scopes.ts",
     "types/**/*.d.ts"
   ],

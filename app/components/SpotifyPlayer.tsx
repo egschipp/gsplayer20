@@ -70,6 +70,10 @@ import {
   createPlayerApiHandlers,
   type PlayerDeferredPlayIntent,
 } from "@/lib/playback/playerApiFactory";
+import {
+  isLocalSdkPlaybackTarget,
+  shouldBlockPlayPause,
+} from "@/lib/playback/deviceControlPolicy";
 import { usePlaybackLeader } from "@/lib/playback/usePlaybackLeader";
 
 declare global {
@@ -6132,7 +6136,14 @@ export default function SpotifyPlayer({
     allowQueueActivation: boolean
   ) {
     setPlaybackTouched(true);
-    if (activeDeviceRestrictedRef.current) {
+    let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
+    const playPauseBlocked = shouldBlockPlayPause({
+      activeDeviceId: activeDeviceIdRef.current,
+      selectedDeviceId: deviceIdRef.current,
+      sdkDeviceId: sdkDeviceIdRef.current,
+      restricted: activeDeviceRestrictedRef.current,
+    });
+    if (playPauseBlocked) {
       setError(
         "Spotify is currently blocking playback controls on this device. Switch device or wait a moment."
       );
@@ -6169,7 +6180,6 @@ export default function SpotifyPlayer({
 
     const endpoint = targetPaused ? "pause" : "play";
     const token = accessTokenRef.current;
-    let currentDevice = activeDeviceIdRef.current || deviceIdRef.current;
     if (token && currentDevice && Date.now() < rateLimitRef.current.until) return;
     setPlayPauseOptimisticState(targetPaused);
     if (!token || !currentDevice) {
@@ -6723,10 +6733,13 @@ export default function SpotifyPlayer({
   const disallowPrevious = Boolean(playbackDisallows.skipping_prev);
   const disallowNext = Boolean(playbackDisallows.skipping_next);
   const disallowShuffle = Boolean(playbackDisallows.toggling_shuffle);
-  const localSdkControlsPlayback =
-    Boolean(deviceId) && (!activeDeviceId || activeDeviceId === deviceId);
+  const localSdkControlsPlayback = isLocalSdkPlaybackTarget({
+    activeDeviceId,
+    selectedDeviceId: deviceId,
+    sdkDeviceId: sdkDeviceIdRef.current,
+  });
   const disallowPlayPause =
-    activeDeviceRestricted ||
+    (activeDeviceRestricted && !localSdkControlsPlayback) ||
     (!localSdkControlsPlayback &&
       (playbackPausedUi
         ? Boolean(playbackDisallows.resuming)
@@ -7001,7 +7014,9 @@ export default function SpotifyPlayer({
           ) : null}
           {activeDeviceRestricted ? (
             <div className="text-subtle">
-              This device does not support remote control.
+              {localSdkControlsPlayback
+                ? "Spotify blocks Web API control for this web player. Check that Web Playback SDK is enabled for this Client ID, then reconnect. Local play/pause remains available."
+                : "Spotify reports that this device does not support remote Web API control."}
             </div>
           ) : null}
           {activeDevicePrivateSession ? (

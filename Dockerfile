@@ -37,6 +37,7 @@ COPY --chown=node:node --from=builder /app/.next/standalone ./
 COPY --chown=node:node --from=builder /app/.next/static ./.next/static
 COPY --chown=node:node --from=builder /app/package.json ./package.json
 COPY --chown=node:node --from=builder /app/worker.js ./worker.js
+COPY --chown=node:node --from=builder /app/worker-healthcheck.js ./worker-healthcheck.js
 COPY --chown=node:node --from=builder /app/db ./db
 RUN rm -f ./package-lock.json ./.next/package.json ./node_modules/.package-lock.json
 USER node

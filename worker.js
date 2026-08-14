@@ -1705,13 +1705,8 @@ async function withJobLease(jobId, run) {
 }
 
 async function runLoop() {
-  let lastHeartbeatAt = 0;
   while (true) {
     const now = Date.now();
-    if (now - lastHeartbeatAt > 10000) {
-      statements.upsertHeartbeat.run(now);
-      lastHeartbeatAt = now;
-    }
     schedulePeriodicSync();
     runMaintenance(now);
     const leaseExpiresAt = now + JOB_LEASE_MS;
@@ -1844,6 +1839,15 @@ async function runLoop() {
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+function recordWorkerHeartbeat() {
+  statements.upsertHeartbeat.run(Date.now());
+}
+
+// Keep liveness independent from job duration. A large sync job may hold the main
+// loop for longer than the health threshold, while the worker itself is healthy.
+recordWorkerHeartbeat();
+setInterval(recordWorkerHeartbeat, 10_000);
 
 runLoop().catch((err) => {
   console.error(err);

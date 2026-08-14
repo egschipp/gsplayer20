@@ -33,27 +33,27 @@
   },
   "dependencies": {
     "@upstash/redis": "^1.38.2",
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^13.0.3",
     "drizzle-orm": "0.45.2",
     "next": "^16.3.1",
     "next-auth": "4.24.15",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-window": "^1.8.10",
-    "zod": "^4.3.6"
+    "react-window": "^2.3.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.62.1",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^22.20.1",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "@types/react-window": "^1.8.8",
-    "eslint": "^9.39.5",
+    "@types/react-window": "^2.0.0",
+    "eslint": "^10.8.1",
     "eslint-config-next": "^16.3.1",
     "prettier": "^3.9.6",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "overrides": {
     "postcss": "8.5.26",

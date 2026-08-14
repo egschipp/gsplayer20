@@ -2,13 +2,6 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  CHATGPT_PROMPT_TEMPLATE,
-  CHATGPT_PROMPT_TOKEN_LABELS,
-  finalizePromptTemplate,
-  normalizePromptTemplate,
-  sanitizePromptTemplateInput,
-} from "@/lib/chatgpt/prompt";
 
 type AppStatus = { status: string } | null;
 type UserStatus = {
@@ -145,9 +138,6 @@ export default function StatusBox({
     Record<string, { status: "idle" | "running" | "success" | "error"; at: number }>
   >({});
   const [selectedSyncResource, setSelectedSyncResource] = useState<string>("");
-  const [promptTemplate, setPromptTemplate] = useState("");
-  const [promptWarning, setPromptWarning] = useState<string | null>(null);
-  const [promptSaved, setPromptSaved] = useState<null | "saved" | "error">(null);
   const authRateLimitedUntilRef = useRef(0);
   const showStatusPanel = mode === "full" || showOverviewCounts;
   const shouldLoadDbStatus = showStatusPanel;
@@ -347,54 +337,6 @@ export default function StatusBox({
   }, [refreshAuthStatus]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = window.localStorage.getItem("gs_chatgpt_prompt");
-    const base = stored ? normalizePromptTemplate(stored) : CHATGPT_PROMPT_TEMPLATE;
-    setPromptTemplate(base);
-  }, []);
-
-  function enforceTokens(value: string) {
-    const { template, unknownTokens: unknown } = sanitizePromptTemplateInput(value);
-    if (unknown?.length) {
-      setPromptWarning(`Onbekende variabelen verwijderd: ${unknown.join(", ")}`);
-    } else {
-      setPromptWarning(null);
-    }
-    return template;
-  }
-
-  function handlePromptChange(value: string) {
-    setPromptSaved(null);
-    setPromptTemplate(enforceTokens(value));
-  }
-
-  function savePrompt() {
-    try {
-      const next = finalizePromptTemplate(promptTemplate);
-      setPromptTemplate(next);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem("gs_chatgpt_prompt", next);
-      }
-      setPromptSaved("saved");
-    } catch {
-      setPromptSaved("error");
-    }
-  }
-
-  function resetPrompt() {
-    const base = CHATGPT_PROMPT_TEMPLATE;
-    setPromptTemplate(base);
-    try {
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem("gs_chatgpt_prompt", base);
-      }
-      setPromptSaved("saved");
-    } catch {
-      setPromptSaved("error");
-    }
-  }
-
-  useEffect(() => {
     if (!Object.keys(playlistMap).length) return;
     setResourceNameMap((prev) => {
       const next: ResourceNameMap = { ...prev };
@@ -498,7 +440,6 @@ export default function StatusBox({
   const showHeader = mode !== "basic-core";
   const showStatusMeta = mode !== "basic-core";
   const statusPanelSpan = showConnectionPanel || showActionPanel ? "span-3" : "span-12";
-  const promptPanelSpan = showConnectionPanel || showActionPanel ? "span-6" : "span-12";
   const embeddedTitle = "Instellingen";
 
   const playlistSyncRows = useMemo(() => {
@@ -725,9 +666,8 @@ export default function StatusBox({
                 <button
                   type="button"
                   className="btn btn-ghost"
-                  onClick={() => {
-                    window.open("/api/auth/logout", "_self");
-                  }}
+                  onClick={deleteAccountData}
+                  disabled={deletingAccount}
                 >
                   Spotify ontkoppelen
                 </button>
@@ -735,12 +675,7 @@ export default function StatusBox({
                   type="button"
                   className="btn btn-ghost"
                   onClick={deleteAccountData}
-                  disabled={
-                    deletingAccount ||
-                    (userStatus?.status !== "OK" &&
-                      userStatus?.status !== "OK_LIMITED" &&
-                      userStatus?.status !== "OK_REAUTH_SOON")
-                  }
+                  disabled={deletingAccount}
                 >
                   {deletingAccount ? "Verwijderen…" : "Accountdata verwijderen"}
                 </button>
@@ -834,51 +769,6 @@ export default function StatusBox({
             </div>
           </div>
         ) : null}
-
-        <details className={`panel account-panel ${promptPanelSpan}`}>
-          <summary className="details-summary">
-            ChatGPT prompt
-            <span aria-hidden="true">▾</span>
-          </summary>
-          <div className="text-body" style={{ marginTop: 12 }}>
-            Pas de prompt aan die naar het klembord wordt gekopieerd.
-          </div>
-          <div className="text-subtle" style={{ marginTop: 8 }}>
-            Variabelen (niet te bewerken):{" "}
-            {CHATGPT_PROMPT_TOKEN_LABELS.map((entry) => (
-              <div key={entry.token} style={{ marginTop: 4 }}>
-                <code>{entry.token}</code>
-                <span className="text-subtle" style={{ marginLeft: 8 }}>
-                  {entry.label}
-                </span>
-              </div>
-            ))}
-          </div>
-          {promptWarning ? (
-            <div className="text-subtle" style={{ marginTop: 6, color: "#facc15" }}>
-              {promptWarning}
-            </div>
-          ) : null}
-          <textarea
-            className="input"
-            style={{ marginTop: 12, minHeight: 220, width: "100%" }}
-            value={promptTemplate}
-            onChange={(event) => handlePromptChange(event.target.value)}
-          />
-          <div className="account-actions" style={{ marginTop: 12 }}>
-            <button type="button" className="btn btn-outline-green" onClick={savePrompt}>
-              Opslaan
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={resetPrompt}>
-              Herstellen
-            </button>
-            {promptSaved === "saved" ? (
-              <span className="text-subtle">Opgeslagen</span>
-            ) : promptSaved === "error" ? (
-              <span className="text-subtle">Opslaan mislukt</span>
-            ) : null}
-          </div>
-        </details>
       </div>
 
       {showResourcePanel ? <div className="account-divider span-12" /> : null}

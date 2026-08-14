@@ -7,6 +7,7 @@ declare module "next-auth" {
     scope?: string;
     error?: string;
     spotifyUserId?: string;
+    spotifyAccountId?: string;
     appUserId?: string;
   }
 }
@@ -18,6 +19,7 @@ declare module "next-auth/jwt" {
     scope?: string;
     error?: string;
     spotifyUserId?: string;
+    spotifyAccountId?: string;
     appUserId?: string;
   }
 }

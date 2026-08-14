@@ -11,6 +11,7 @@ import {
   requireSameOrigin,
 } from "@/lib/api/guards";
 import { ephemeralGetJson, ephemeralSetJson } from "@/lib/server/ephemeralStore";
+import { validatePlayerCommand } from "@/lib/spotify/playerCommandSchema";
 
 export const runtime = "nodejs";
 
@@ -87,12 +88,22 @@ function mapSpotifyError(error: unknown) {
     }
     if (error.status === 404) return jsonNoStore({ error: "NOT_FOUND" }, 404);
     if (error.status === 429) {
+      if (error.code === "QUOTA_EXCEEDED") {
+        return jsonNoStore(
+          {
+            error: "QUOTA_EXCEEDED",
+            message: "Spotify Development Mode quota is exhausted.",
+          },
+          429,
+          { "X-Spotify-Error": "QUOTA_EXCEEDED" }
+        );
+      }
       const retryAfter =
         error.retryAfterMs && error.retryAfterMs > 0
           ? Math.max(1, Math.ceil(error.retryAfterMs / 1000))
           : null;
       return jsonNoStore(
-        { error: "RATE_LIMIT", ...(retryAfter ? { retryAfter } : {}) },
+        { error: error.code || "RATE_LIMIT", ...(retryAfter ? { retryAfter } : {}) },
         429,
         retryAfter ? { "Retry-After": String(retryAfter) } : undefined
       );
@@ -183,6 +194,15 @@ export async function POST(req: NextRequest) {
   }
   if (!ALLOWED_ENDPOINTS.has(endpoint)) {
     return jsonError("INVALID_ENDPOINT", 400);
+  }
+  const commandValidation = validatePlayerCommand({
+    method,
+    endpoint,
+    search,
+    payload: body?.payload,
+  });
+  if (!commandValidation.ok) {
+    return jsonError(commandValidation.error, 400);
   }
 
   const url = `https://api.spotify.com/v1/me/player${endpoint}${search}`;

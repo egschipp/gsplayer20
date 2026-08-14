@@ -1,4 +1,5 @@
 import { requireEnv } from "@/lib/env";
+import { SpotifyTokenResponseSchema } from "@/lib/spotify/schemas";
 
 const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
 const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000");
@@ -97,10 +98,7 @@ async function requestAppAccessToken() {
   if (!res.ok) {
     throw new Error(`Spotify token error: ${res.status}`);
   }
-  const json = (await res.json()) as {
-    access_token: string;
-    expires_in: number;
-  };
+  const json = SpotifyTokenResponseSchema.parse(await res.json());
   return {
     accessToken: String(json.access_token || ""),
     expiresAt: Date.now() + Number(json.expires_in || 3600) * 1000,
@@ -224,12 +222,7 @@ export async function refreshAccessToken(token: {
       } as const;
     }
 
-    const json = (await res.json()) as {
-      access_token: string;
-      expires_in: number;
-      refresh_token?: string;
-      scope?: string;
-    };
+    const json = SpotifyTokenResponseSchema.parse(await res.json());
 
     return {
       ...token,

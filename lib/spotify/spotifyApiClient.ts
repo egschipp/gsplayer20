@@ -22,6 +22,14 @@ import {
   inferSpotifyRequestPriority,
   type SpotifyRequestPriority,
 } from "@/lib/spotify/requestPriority";
+import {
+  blockSharedSpotifyRequests,
+  reserveSharedSpotifyRequest,
+} from "@/lib/spotify/sharedRequestBudget";
+import {
+  classifySpotifyErrorCode,
+  shouldRetrySpotifyRequest,
+} from "@/lib/spotify/errorPolicy";
 
 const RETRY_AFTER_MIN_MS = 1_000;
 const RETRY_AFTER_MAX_MS = Number(process.env.SPOTIFY_RETRY_AFTER_MAX_MS || "120000");
@@ -117,37 +125,6 @@ function parseRetryAfterMs(res: Response): number | null {
   return null;
 }
 
-function classifyCode(
-  status: number,
-  body: string,
-  endpointGroup: string,
-  method: string
-): string {
-  const lower = body.toLowerCase();
-  const isPlayerEndpoint =
-    endpointGroup === "me_player" || endpointGroup.startsWith("me_player_");
-  if (status === 401) {
-    if (lower.includes("invalid_grant")) return "INVALID_GRANT";
-    return "UNAUTHENTICATED";
-  }
-  if (status === 403) {
-    if (isPlayerEndpoint && /restriction\s+violated/i.test(body)) {
-      return "RESTRICTION_VIOLATED";
-    }
-    return "FORBIDDEN";
-  }
-  if (status === 404) {
-    if (isPlayerEndpoint) {
-      return method === "GET" ? "NO_ACTIVE_DEVICE" : "PLAYER_NOT_FOUND";
-    }
-    if (endpointGroup === "me_player_devices") return "NO_CONNECT_DEVICE";
-    return "NOT_FOUND";
-  }
-  if (status === 429) return "RATE_LIMIT";
-  if (status >= 500) return "SPOTIFY_UPSTREAM";
-  return "SPOTIFY_REQUEST_FAILED";
-}
-
 function isExpectedHttpCondition(args: {
   status: number;
   endpointGroup: string;
@@ -184,12 +161,6 @@ function isExpectedHttpCondition(args: {
     return true;
   }
   return false;
-}
-
-function shouldRetryStatus(status: number): boolean {
-  return (
-    status === 429 || status === 500 || status === 502 || status === 503 || status === 504
-  );
 }
 
 function jitterMs(baseMs: number): number {
@@ -591,6 +562,16 @@ export async function spotifyApiRequest<T>(params: {
           }
 
           try {
+            const sharedBudget = reserveSharedSpotifyRequest({ source: priority });
+            if (!sharedBudget.allowed) {
+              throw new SpotifyApiError({
+                status: 429,
+                code: sharedBudget.reason,
+                retryAfterMs: sharedBudget.retryAfterMs,
+                retryable: true,
+                correlationId,
+              });
+            }
             const minIntervalMs = getReadMinIntervalMs({ group, method });
             if (minIntervalMs > 0) {
               const pacingKey = `${userKey}:${group}:${method}`;
@@ -680,8 +661,8 @@ export async function spotifyApiRequest<T>(params: {
 
             const text = await result.text();
             const retryAfterMs = parseRetryAfterMs(result);
-            const code = classifyCode(result.status, text, group, method);
-            const retryable = shouldRetryStatus(result.status);
+            const code = classifySpotifyErrorCode(result.status, text, group, method);
+            const retryable = shouldRetrySpotifyRequest(result.status, method, code);
             const retryWaitMs =
               normalizeRetryAfterMs(retryAfterMs) ??
               Math.min(500 * attempt * attempt, 5_000);
@@ -731,6 +712,11 @@ export async function spotifyApiRequest<T>(params: {
 
             if (result.status === 429) {
               const waitMs = retryAfterMs ?? retryWaitMs;
+              blockSharedSpotifyRequests({
+                retryAfterMs:
+                  code === "QUOTA_EXCEEDED" ? Math.max(waitMs, 15 * 60_000) : waitMs,
+                reason: code,
+              });
               recordRateLimitActivity({
                 activity,
                 source: "spotify_http_429",

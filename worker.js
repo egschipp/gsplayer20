@@ -11,7 +11,12 @@ const TOKEN_ENCRYPTION_KEY_VERSION = Number(
 );
 const FETCH_TIMEOUT_MS = Number(process.env.SPOTIFY_FETCH_TIMEOUT_MS || "15000");
 const MAX_CONCURRENCY = Number(process.env.SPOTIFY_MAX_CONCURRENCY || "3");
+const SPOTIFY_APP_REQUESTS_PER_30S = Number(
+  process.env.SPOTIFY_APP_REQUESTS_PER_30S || "90"
+);
 const MAX_RETRY_DELAY_MS = 60_000;
+const TOKEN_REFRESH_LOCK_TTL_MS = 30_000;
+const TOKEN_REFRESH_LOCK_WAIT_MS = 5_000;
 const MAX_IMAGE_BYTES = Number(process.env.SPOTIFY_IMAGE_MAX_BYTES || "5242880");
 const JOB_LEASE_MS = Number(process.env.WORKER_JOB_LEASE_MS || "90000");
 const JOB_LEASE_HEARTBEAT_MS = Number(
@@ -23,6 +28,8 @@ const RECENTLY_PLAYED_RETENTION_DAYS = Number(
   process.env.RECENTLY_PLAYED_RETENTION_DAYS || "90"
 );
 const JOB_RETENTION_DAYS = Number(process.env.JOB_RETENTION_DAYS || "30");
+const SPOTIFY_METADATA_TTL_DAYS = Number(process.env.SPOTIFY_METADATA_TTL_DAYS || "1");
+const SPOTIFY_CACHE_COVER_BLOBS = process.env.SPOTIFY_CACHE_COVER_BLOBS === "true";
 const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
 
 if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
@@ -62,7 +69,7 @@ const hasMigrationTable = db
 const migration = hasMigrationTable
   ? db
       .prepare("SELECT id FROM schema_migrations WHERE id = ?")
-      .get("0003_refresh_token_expiry")
+      .get("0004_spotify_2026_identity_and_metadata")
   : null;
 if (!migration) {
   throw new Error("Database migrations are missing; run npm run db:migrate first");
@@ -165,6 +172,58 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS)
   }
 }
 
+function reserveSharedSpotifyRequest(source = "background") {
+  const now = Date.now();
+  const limit = Math.max(10, Math.floor(SPOTIFY_APP_REQUESTS_PER_30S || 90));
+  const sourceLimit =
+    source === "background" ? Math.max(1, Math.floor(limit * 0.65)) : limit;
+  return db.transaction(() => {
+    const state = db
+      .prepare("SELECT blocked_until, reason FROM spotify_rate_state WHERE id=1")
+      .get();
+    const blockedUntil = Number(state?.blocked_until || 0);
+    if (blockedUntil > now) {
+      return {
+        allowed: false,
+        retryAfterMs: blockedUntil - now,
+        reason: state?.reason || "SPOTIFY_SHARED_BACKOFF",
+      };
+    }
+    db.prepare("DELETE FROM spotify_request_events WHERE requested_at <= ?").run(
+      now - 30_000
+    );
+    const row = db
+      .prepare(
+        "SELECT count(*) AS count, min(requested_at) AS oldest FROM spotify_request_events"
+      )
+      .get();
+    if (Number(row?.count || 0) >= sourceLimit) {
+      return {
+        allowed: false,
+        retryAfterMs: Math.max(1_000, Number(row?.oldest || now) + 30_000 - now),
+        reason: "SPOTIFY_SHARED_BUDGET",
+      };
+    }
+    db.prepare(
+      "INSERT INTO spotify_request_events (requested_at, source) VALUES (?, ?)"
+    ).run(now, source);
+    return { allowed: true };
+  })();
+}
+
+function blockSharedSpotifyRequests(retryAfterMs, reason) {
+  const now = Date.now();
+  const blockedUntil = now + Math.max(1_000, Math.floor(retryAfterMs));
+  db.prepare(
+    `INSERT INTO spotify_rate_state (id, blocked_until, reason, updated_at)
+     VALUES (1, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       blocked_until=max(spotify_rate_state.blocked_until, excluded.blocked_until),
+       reason=excluded.reason,
+       updated_at=excluded.updated_at`
+  ).run(blockedUntil, String(reason || "RATE_LIMIT").slice(0, 64), now);
+}
+
 function tokenKeyRing() {
   const ring = new Map();
   for (const entry of TOKEN_ENCRYPTION_KEYS.split(",").map((value) => value.trim())) {
@@ -264,6 +323,12 @@ async function refreshAccessToken(refreshToken) {
 }
 
 async function spotifyGet(accessToken, url) {
+  const budget = reserveSharedSpotifyRequest("background");
+  if (!budget.allowed) {
+    const error = new Error(budget.reason);
+    error.retryAfterMs = budget.retryAfterMs;
+    throw error;
+  }
   const res = await withLimiter(() =>
     fetchWithTimeout(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -272,8 +337,22 @@ async function spotifyGet(accessToken, url) {
 
   if (res.status === 429) {
     const retryAfter = Number(res.headers.get("retry-after") || "5");
-    const error = new Error("RATE_LIMIT");
-    error.retryAfterMs = retryAfter * 1000;
+    const payload = await res
+      .clone()
+      .json()
+      .catch(() => null);
+    const reason =
+      String(payload?.reason || payload?.error?.reason || "").toUpperCase() ===
+      "QUOTA_EXCEEDED"
+        ? "QUOTA_EXCEEDED"
+        : "RATE_LIMIT";
+    const retryAfterMs =
+      reason === "QUOTA_EXCEEDED"
+        ? Math.max(retryAfter * 1000, 15 * 60_000)
+        : retryAfter * 1000;
+    blockSharedSpotifyRequests(retryAfterMs, reason);
+    const error = new Error(reason);
+    error.retryAfterMs = retryAfterMs;
     throw error;
   }
 
@@ -431,8 +510,8 @@ const statements = {
   ),
   clearOAuthTokens: db.prepare(`DELETE FROM oauth_tokens WHERE user_id=?`),
   upsertTrack: db.prepare(
-    `INSERT INTO tracks (track_id, name, duration_ms, explicit, is_local, restrictions_reason, linked_from_track_id, album_id, album_name, album_release_date, album_release_year, album_image_url, popularity, updated_at)
-     VALUES (@track_id, @name, @duration_ms, @explicit, @is_local, @restrictions_reason, @linked_from_track_id, @album_id, @album_name, @album_release_date, @album_release_year, @album_image_url, @popularity, @updated_at)
+    `INSERT INTO tracks (track_id, name, duration_ms, explicit, is_local, restrictions_reason, linked_from_track_id, album_id, album_name, album_release_date, album_release_year, album_image_url, popularity, metadata_checked_at, updated_at)
+     VALUES (@track_id, @name, @duration_ms, @explicit, @is_local, @restrictions_reason, @linked_from_track_id, @album_id, @album_name, @album_release_date, @album_release_year, @album_image_url, @popularity, @metadata_checked_at, @updated_at)
      ON CONFLICT(track_id) DO UPDATE SET
        name=excluded.name,
        duration_ms=excluded.duration_ms,
@@ -446,6 +525,7 @@ const statements = {
        album_release_year=excluded.album_release_year,
        album_image_url=excluded.album_image_url,
        popularity=excluded.popularity,
+       metadata_checked_at=excluded.metadata_checked_at,
        updated_at=excluded.updated_at`
   ),
   getTrackImage: db.prepare(`SELECT album_image_blob FROM tracks WHERE track_id=?`),
@@ -464,7 +544,7 @@ const statements = {
   getTracksMissingMeta: db.prepare(
     `SELECT track_id
      FROM tracks
-     WHERE (album_name IS NULL OR album_image_url IS NULL OR album_release_date IS NULL OR album_release_year IS NULL)
+     WHERE (metadata_checked_at IS NULL OR metadata_checked_at <= ?)
        AND track_id > ?
      ORDER BY track_id ASC
      LIMIT ?`
@@ -472,14 +552,14 @@ const statements = {
   getArtistsMissingMeta: db.prepare(
     `SELECT artist_id
      FROM artists
-     WHERE (genres IS NULL OR popularity IS NULL OR followers_total IS NULL)
+     WHERE (metadata_checked_at IS NULL OR metadata_checked_at <= ?)
      AND artist_id > ?
      ORDER BY artist_id ASC
      LIMIT ?`
   ),
   updateTrackMeta: db.prepare(
     `UPDATE tracks
-     SET album_id=?, album_name=?, album_release_date=?, album_release_year=?, album_image_url=?, updated_at=?
+     SET album_id=?, album_name=?, album_release_date=?, album_release_year=?, album_image_url=?, metadata_checked_at=?, updated_at=?
      WHERE track_id=?`
   ),
   getUsers: db.prepare(`SELECT id FROM users`),
@@ -488,25 +568,21 @@ const statements = {
      FROM jobs
      WHERE user_id=? AND type=? AND status IN ('queued','running')`
   ),
-  countCoverJobs: db.prepare(
-    `SELECT count(*) as c
-     FROM jobs
-     WHERE user_id=? AND type='SYNC_COVERS' AND status IN ('queued','running')`
-  ),
   getSyncState: db.prepare(
     `SELECT status, last_successful_at as lastSuccessfulAt
      FROM sync_state
      WHERE user_id=? AND resource=?`
   ),
   upsertArtist: db.prepare(
-    `INSERT INTO artists (artist_id, name, genres, popularity, followers_total, image_url, updated_at)
-     VALUES (@artist_id, @name, @genres, @popularity, @followers_total, @image_url, @updated_at)
+    `INSERT INTO artists (artist_id, name, genres, popularity, followers_total, image_url, metadata_checked_at, updated_at)
+     VALUES (@artist_id, @name, @genres, @popularity, @followers_total, @image_url, @metadata_checked_at, @updated_at)
      ON CONFLICT(artist_id) DO UPDATE SET
        name=excluded.name,
-       genres=excluded.genres,
-       popularity=excluded.popularity,
-       followers_total=excluded.followers_total,
-       image_url=excluded.image_url,
+       genres=COALESCE(excluded.genres, artists.genres),
+       popularity=COALESCE(excluded.popularity, artists.popularity),
+       followers_total=COALESCE(excluded.followers_total, artists.followers_total),
+       image_url=COALESCE(excluded.image_url, artists.image_url),
+       metadata_checked_at=COALESCE(excluded.metadata_checked_at, artists.metadata_checked_at),
        updated_at=excluded.updated_at`
   ),
   upsertTrackArtist: db.prepare(
@@ -597,6 +673,9 @@ const statements = {
   purgeFinishedJobs: db.prepare(
     "DELETE FROM jobs WHERE status IN ('done', 'error') AND updated_at < ?"
   ),
+  clearTrackImageBlobs: db.prepare(
+    "UPDATE tracks SET album_image_blob=NULL, album_image_mime=NULL WHERE album_image_blob IS NOT NULL"
+  ),
 };
 
 const writeTracksPage = db.transaction((items, userId, now) => {
@@ -621,6 +700,7 @@ const writeTracksPage = db.transaction((items, userId, now) => {
       album_image_url:
         track.album?.images?.[track.album?.images?.length - 1]?.url || null,
       popularity: track.popularity ?? null,
+      metadata_checked_at: now,
       updated_at: now,
     });
 
@@ -634,6 +714,7 @@ const writeTracksPage = db.transaction((items, userId, now) => {
         popularity: null,
         followers_total: null,
         image_url: null,
+        metadata_checked_at: null,
         updated_at: now,
       });
       statements.upsertTrackArtist.run(track.id, artist.id);
@@ -650,6 +731,7 @@ const writeTracksPage = db.transaction((items, userId, now) => {
 });
 
 async function backfillTrackImages(items) {
+  if (!SPOTIFY_CACHE_COVER_BLOBS) return;
   for (const item of items) {
     if (!item.track) continue;
     const track = item.track;
@@ -691,6 +773,7 @@ const writePlaylistItemsPage = db.transaction(
           album_image_url:
             track.album?.images?.[track.album?.images?.length - 1]?.url || null,
           popularity: track.popularity ?? null,
+          metadata_checked_at: now,
           updated_at: now,
         });
 
@@ -704,6 +787,7 @@ const writePlaylistItemsPage = db.transaction(
             popularity: null,
             followers_total: null,
             image_url: null,
+            metadata_checked_at: null,
             updated_at: now,
           });
           statements.upsertTrackArtist.run(track.id, artist.id);
@@ -776,8 +860,33 @@ const writePlaylistsPage = db.transaction((items, userId, now) => {
   }
 });
 
+function acquireTokenRefreshLock(userId, ownerId) {
+  const now = Date.now();
+  const expiresAt = now + TOKEN_REFRESH_LOCK_TTL_MS;
+  db.prepare(
+    `INSERT INTO token_refresh_locks (user_id, owner_id, expires_at, created_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET
+       owner_id=excluded.owner_id,
+       expires_at=excluded.expires_at,
+       created_at=excluded.created_at
+     WHERE token_refresh_locks.expires_at <= ? OR token_refresh_locks.owner_id = ?`
+  ).run(userId, ownerId, expiresAt, now, now, ownerId);
+  const row = db
+    .prepare("SELECT owner_id, expires_at FROM token_refresh_locks WHERE user_id=?")
+    .get(userId);
+  return row?.owner_id === ownerId && Number(row?.expires_at || 0) > now;
+}
+
+function releaseTokenRefreshLock(userId, ownerId) {
+  db.prepare("DELETE FROM token_refresh_locks WHERE user_id=? AND owner_id=?").run(
+    userId,
+    ownerId
+  );
+}
+
 async function getAccessTokenForUser(userId) {
-  const row = statements.getOAuthTokens.get(userId);
+  let row = statements.getOAuthTokens.get(userId);
   if (!row) throw new Error("NoRefreshToken");
 
   const skewMs = 90_000;
@@ -795,32 +904,56 @@ async function getAccessTokenForUser(userId) {
     return accessToken;
   }
 
-  if (row.refresh_expires_at && Number(row.refresh_expires_at) <= Date.now()) {
-    statements.clearOAuthTokens.run(userId);
-    throw new Error("REFRESH_EXPIRED");
+  const ownerId = `${workerId}:${crypto.randomUUID()}`;
+  const waitStartedAt = Date.now();
+  while (!acquireTokenRefreshLock(userId, ownerId)) {
+    if (Date.now() - waitStartedAt >= TOKEN_REFRESH_LOCK_WAIT_MS) {
+      const error = new Error("TOKEN_REFRESH_LOCK_TIMEOUT");
+      error.retryable = true;
+      throw error;
+    }
+    await sleep(120);
   }
 
-  const refreshToken = decryptToken(row.refresh_token_enc, row.enc_key_version || 1);
-  const tokens = await refreshAccessToken(refreshToken);
-  if (!tokens || !tokens.access_token) {
-    throw new Error("RefreshFailed:missing_access_token");
+  try {
+    row = statements.getOAuthTokens.get(userId);
+    if (!row) throw new Error("NoRefreshToken");
+    if (
+      row.access_token &&
+      row.access_expires_at &&
+      Number(row.access_expires_at) - skewMs > Date.now()
+    ) {
+      return decryptStoredToken(row.access_token);
+    }
+    if (row.refresh_expires_at && Number(row.refresh_expires_at) <= Date.now()) {
+      statements.clearOAuthTokens.run(userId);
+      throw new Error("REFRESH_EXPIRED");
+    }
+
+    const refreshToken = decryptToken(row.refresh_token_enc, row.enc_key_version || 1);
+    const tokens = await refreshAccessToken(refreshToken);
+    if (!tokens || !tokens.access_token) {
+      throw new Error("RefreshFailed:missing_access_token");
+    }
+
+    const expiresAt = Date.now() + Number(tokens.expires_in || 3600) * 1000;
+    const encrypted = tokens.refresh_token
+      ? encryptToken(tokens.refresh_token)
+      : { payload: row.refresh_token_enc, version: row.enc_key_version || 1 };
+
+    statements.updateOAuthTokens.run(
+      encrypted.payload,
+      encryptStoredToken(tokens.access_token),
+      expiresAt,
+      encrypted.version,
+      Date.now(),
+      userId
+    );
+
+    return tokens.access_token;
+  } finally {
+    releaseTokenRefreshLock(userId, ownerId);
   }
-
-  const expiresAt = Date.now() + Number(tokens.expires_in || 3600) * 1000;
-  const encrypted = tokens.refresh_token
-    ? encryptToken(tokens.refresh_token)
-    : { payload: row.refresh_token_enc, version: row.enc_key_version || 1 };
-
-  statements.updateOAuthTokens.run(
-    encrypted.payload,
-    encryptStoredToken(tokens.access_token),
-    expiresAt,
-    encrypted.version,
-    Date.now(),
-    userId
-  );
-
-  return tokens.access_token;
 }
 
 async function syncTracksInitial(job) {
@@ -1126,9 +1259,11 @@ async function syncTrackMetadata(job) {
   let batches = 0;
   let lastId = cursor;
   const accessToken = await getAppAccessToken();
+  const metadataCutoff =
+    Date.now() - Math.max(1, SPOTIFY_METADATA_TTL_DAYS) * 24 * 60 * 60 * 1000;
 
   while (batches < maxBatches) {
-    const rows = statements.getTracksMissingMeta.all(lastId, limit);
+    const rows = statements.getTracksMissingMeta.all(metadataCutoff, lastId, limit);
     if (!rows.length) {
       statements.upsertSyncState.run({
         user_id: job.user_id,
@@ -1172,6 +1307,7 @@ async function syncTrackMetadata(job) {
         releaseYear,
         imageUrl,
         now,
+        now,
         track.id
       );
       lastId = track.id;
@@ -1210,9 +1346,11 @@ async function syncArtistMetadata(job) {
   let batches = 0;
   let lastId = cursor;
   const accessToken = await getAppAccessToken();
+  const metadataCutoff =
+    Date.now() - Math.max(1, SPOTIFY_METADATA_TTL_DAYS) * 24 * 60 * 60 * 1000;
 
   while (batches < maxBatches) {
-    const rows = statements.getArtistsMissingMeta.all(lastId, limit);
+    const rows = statements.getArtistsMissingMeta.all(metadataCutoff, lastId, limit);
     if (!rows.length) {
       statements.upsertSyncState.run({
         user_id: job.user_id,
@@ -1249,6 +1387,7 @@ async function syncArtistMetadata(job) {
         popularity: artist.popularity ?? null,
         followers_total: artist.followers?.total ?? null,
         image_url: artist.images?.[0]?.url ?? null,
+        metadata_checked_at: now,
         updated_at: now,
       });
       lastId = artist.id;
@@ -1274,6 +1413,7 @@ async function syncArtistMetadata(job) {
 }
 
 async function syncCovers(job) {
+  if (!SPOTIFY_CACHE_COVER_BLOBS) return { done: true };
   const payload = parseJobPayload(job.payload);
   const limit = clampInt(payload.limit, 1, 50, 50);
   const cursor = normalizeCursor(payload.cursor);
@@ -1335,39 +1475,43 @@ async function syncCovers(job) {
   return { done: false, nextCursor: lastId };
 }
 
-function enqueueCoversIfMissing(userId) {
-  const existing = statements.countCoverJobs.get(userId);
-  if (existing && existing.c > 0) return;
-  statements.enqueueJob.run({
-    id: crypto.randomUUID(),
-    user_id: userId,
-    type: "SYNC_TRACK_METADATA",
-    payload: JSON.stringify({ limit: 50, maxBatches: 30, cursor: "" }),
-    run_after: Date.now() + 1000,
-    status: "queued",
-    created_at: Date.now(),
-    updated_at: Date.now(),
-  });
-  statements.enqueueJob.run({
-    id: crypto.randomUUID(),
-    user_id: userId,
-    type: "SYNC_ARTISTS",
-    payload: JSON.stringify({ limit: 50, maxBatches: 30, cursor: "" }),
-    run_after: Date.now() + 1500,
-    status: "queued",
-    created_at: Date.now(),
-    updated_at: Date.now(),
-  });
-  statements.enqueueJob.run({
-    id: crypto.randomUUID(),
-    user_id: userId,
-    type: "SYNC_COVERS",
-    payload: JSON.stringify({ limit: 50, maxBatches: 30, cursor: "" }),
-    run_after: Date.now() + 2000,
-    status: "queued",
-    created_at: Date.now(),
-    updated_at: Date.now(),
-  });
+function enqueueMaintenanceJobs(userId) {
+  const jobs = [
+    {
+      type: "SYNC_TRACK_METADATA",
+      delayMs: 1000,
+      payload: { limit: 50, maxBatches: 30, cursor: "" },
+      enabled: true,
+    },
+    {
+      type: "SYNC_ARTISTS",
+      delayMs: 1500,
+      payload: { limit: 50, maxBatches: 30, cursor: "" },
+      enabled: true,
+    },
+    {
+      type: "SYNC_COVERS",
+      delayMs: 2000,
+      payload: { limit: 50, maxBatches: 30, cursor: "" },
+      enabled: SPOTIFY_CACHE_COVER_BLOBS,
+    },
+  ];
+  for (const job of jobs) {
+    if (!job.enabled) continue;
+    const existing = statements.countJobsByType.get(userId, job.type);
+    if (existing && existing.c > 0) continue;
+    const now = Date.now();
+    statements.enqueueJob.run({
+      id: crypto.randomUUID(),
+      user_id: userId,
+      type: job.type,
+      payload: JSON.stringify(job.payload),
+      run_after: now + job.delayMs,
+      status: "queued",
+      created_at: now,
+      updated_at: now,
+    });
+  }
 }
 
 let lastScheduledAt = 0;
@@ -1381,6 +1525,9 @@ function runMaintenance(now) {
     now - Math.max(1, RECENTLY_PLAYED_RETENTION_DAYS) * dayMs
   );
   statements.purgeFinishedJobs.run(now - Math.max(1, JOB_RETENTION_DAYS) * dayMs);
+  if (!SPOTIFY_CACHE_COVER_BLOBS) {
+    statements.clearTrackImageBlobs.run();
+  }
   db.pragma("wal_checkpoint(PASSIVE)");
 }
 
@@ -1625,7 +1772,7 @@ async function runLoop() {
       } else {
         statements.markJobDone.run(Date.now(), job.id);
         if (job.type === "SYNC_PLAYLISTS" || job.type === "SYNC_PLAYLIST_ITEMS") {
-          enqueueCoversIfMissing(job.user_id);
+          enqueueMaintenanceJobs(job.user_id);
         }
       }
     } catch (error) {

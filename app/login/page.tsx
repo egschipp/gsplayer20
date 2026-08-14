@@ -54,14 +54,14 @@ export default function LoginPage() {
     <main id="main-content" tabIndex={-1} className="login-shell">
       <div className="login-card">
         <Image
-          src="/georgies-spotify.png"
-          alt="Georgies Spotify logo"
+          src="/georgies-player.svg"
+          alt="Georgies Player"
           width={160}
           height={160}
           className="login-logo"
           priority
         />
-        <h1 className="login-title">Georgies Spotify</h1>
+        <h1 className="login-title">Georgies Player</h1>
         <p className="text-subtle">Voer je pincode in om door te gaan.</p>
         <form onSubmit={handleSubmit} className="login-form">
           <label htmlFor="app-pin" className="sr-only">
@@ -88,6 +88,9 @@ export default function LoginPage() {
             {error}
           </div>
         ) : null}
+        <a className="text-subtle" href="/privacy">
+          Privacy en gegevensgebruik
+        </a>
       </div>
     </main>
   );

@@ -46,3 +46,40 @@ export function isValidTokenEncryptionKey(value: string | null | undefined) {
     return false;
   }
 }
+
+export type SpotifyRedirectConfiguration =
+  | { ok: true; redirectUri: string }
+  | {
+      ok: false;
+      code:
+        | "AUTH_URL_MISSING"
+        | "AUTH_URL_INVALID"
+        | "AUTH_URL_REQUIRES_HTTPS"
+        | "SPOTIFY_REDIRECT_URI_MISSING"
+        | "SPOTIFY_REDIRECT_URI_MISMATCH";
+    };
+
+export function checkSpotifyRedirectConfiguration(
+  env: NodeJS.ProcessEnv = process.env
+): SpotifyRedirectConfiguration {
+  const rawBaseUrl = String(env.NEXTAUTH_URL || env.AUTH_URL || "").trim();
+  if (!rawBaseUrl) return { ok: false, code: "AUTH_URL_MISSING" };
+
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(rawBaseUrl);
+  } catch {
+    return { ok: false, code: "AUTH_URL_INVALID" };
+  }
+  if (env.NODE_ENV === "production" && baseUrl.protocol !== "https:") {
+    return { ok: false, code: "AUTH_URL_REQUIRES_HTTPS" };
+  }
+
+  const configured = String(env.SPOTIFY_REDIRECT_URI || "").trim();
+  if (!configured) return { ok: false, code: "SPOTIFY_REDIRECT_URI_MISSING" };
+  const expected = new URL("/api/auth/callback/spotify", baseUrl).toString();
+  if (configured !== expected) {
+    return { ok: false, code: "SPOTIFY_REDIRECT_URI_MISMATCH" };
+  }
+  return { ok: true, redirectUri: configured };
+}

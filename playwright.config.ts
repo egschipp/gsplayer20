@@ -35,6 +35,7 @@ export default defineConfig({
       NEXTAUTH_URL: "http://127.0.0.1:3100",
       SPOTIFY_CLIENT_ID: "test-client",
       SPOTIFY_CLIENT_SECRET: "test-secret",
+      SPOTIFY_REDIRECT_URI: "http://127.0.0.1:3100/api/auth/callback/spotify",
       TOKEN_ENCRYPTION_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
       DB_PATH: e2eDatabasePath,
     },

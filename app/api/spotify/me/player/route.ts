@@ -9,6 +9,7 @@ import {
   requireSameOrigin,
 } from "@/lib/api/guards";
 import { NextRequest, NextResponse } from "next/server";
+import { SpotifyPlaybackStateSchema } from "@/lib/spotify/schemas";
 
 export const runtime = "nodejs";
 
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
   const userKey = String(session.appUserId || "");
 
   try {
-    const data = await spotifyFetch<SpotifyPlayerResponse | undefined>({
+    const rawData = await spotifyFetch<SpotifyPlayerResponse | undefined>({
       url: "https://api.spotify.com/v1/me/player",
       userLevel: true,
       activity: raw ? "me_player_get_raw_state" : "me_player_get_state",
@@ -66,6 +67,7 @@ export async function GET(req: NextRequest) {
       cacheTtlMs: 0,
       dedupeWindowMs: 1_000,
     });
+    const data = rawData ? SpotifyPlaybackStateSchema.parse(rawData) : undefined;
 
     if (!data) {
       const serverSeq = nextPlayerSyncSeq(userKey);
@@ -196,12 +198,22 @@ export async function GET(req: NextRequest) {
         });
       }
       if (error.status === 429) {
+        if (error.code === "QUOTA_EXCEEDED") {
+          return jsonNoStore(
+            {
+              error: "QUOTA_EXCEEDED",
+              message: "Spotify Development Mode quota is exhausted.",
+            },
+            429,
+            { "X-Spotify-Error": "QUOTA_EXCEEDED" }
+          );
+        }
         const retryAfter =
           error.retryAfterMs && error.retryAfterMs > 0
             ? Math.max(1, Math.ceil(error.retryAfterMs / 1000))
             : null;
         return jsonNoStore(
-          { error: "RATE_LIMIT", ...(retryAfter ? { retryAfter } : {}) },
+          { error: error.code || "RATE_LIMIT", ...(retryAfter ? { retryAfter } : {}) },
           429,
           retryAfter ? { "Retry-After": String(retryAfter) } : undefined
         );

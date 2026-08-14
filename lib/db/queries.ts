@@ -13,14 +13,54 @@ import {
 } from "@/lib/db/schema";
 import { decryptToken, encryptStoredToken, encryptToken } from "@/lib/crypto";
 
-export async function getOrCreateUser(spotifyUserId: string) {
+export async function getOrCreateUser(params: {
+  spotifyUserId: string;
+  spotifyAccountId?: string | null;
+}) {
   const db = getDb();
-  const id = cryptoRandomId();
-  await db.insert(users).values({ id, spotifyUserId }).onConflictDoNothing().run();
-  const row = await db
+  const spotifyUserId = params.spotifyUserId.trim();
+  const spotifyAccountId = params.spotifyAccountId?.trim() || null;
+
+  if (spotifyAccountId) {
+    const byAccount = await db
+      .select()
+      .from(users)
+      .where(eq(users.spotifyAccountId, spotifyAccountId))
+      .get();
+    if (byAccount) return byAccount;
+  }
+
+  const legacy = await db
     .select()
     .from(users)
     .where(eq(users.spotifyUserId, spotifyUserId))
+    .get();
+  if (legacy) {
+    if (spotifyAccountId && legacy.spotifyAccountId !== spotifyAccountId) {
+      await db
+        .update(users)
+        .set({ spotifyAccountId })
+        .where(eq(users.id, legacy.id))
+        .run();
+      return { ...legacy, spotifyAccountId };
+    }
+    return legacy;
+  }
+
+  const id = cryptoRandomId();
+  await db
+    .insert(users)
+    .values({ id, spotifyUserId, spotifyAccountId })
+    .onConflictDoNothing()
+    .run();
+  const row = await db
+    .select()
+    .from(users)
+    .where(
+      spotifyAccountId
+        ? eq(users.spotifyAccountId, spotifyAccountId)
+        : eq(users.spotifyUserId, spotifyUserId)
+    )
     .get();
   if (!row) {
     throw new Error("UserCreateFailed");

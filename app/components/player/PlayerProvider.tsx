@@ -167,7 +167,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const viewport = useViewport();
   const pathname = usePathname();
   const path = pathname ?? "/";
-  const showPlayer = path !== "/login";
+  const showPlayer = path !== "/login" && path !== "/privacy";
   const hidePlayerControls = path.startsWith("/status") || path.startsWith("/about");
   const showBrandShell = showPlayer;
   const showPlayerShell = showPlayer && !hidePlayerControls;
@@ -541,8 +541,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 className={`library-sticky player-shell${showPlayerShell ? "" : " is-logo-only"}`}
               >
                 <Image
-                  src="/georgies-spotify.png"
-                  alt="Georgies Spotify logo"
+                  src="/georgies-player.svg"
+                  alt="Georgies Player"
                   width={240}
                   height={80}
                   className="library-logo"

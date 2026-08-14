@@ -6,16 +6,11 @@ import MainNav from "./components/MainNav";
 import { PlayerProvider } from "./components/player/PlayerProvider";
 
 export const metadata: Metadata = {
-  title: "Georgies Spotify",
-  description: "Georgies Spotify player",
-  manifest: "/site.webmanifest?v=3",
+  title: "Georgies Player",
+  description: "Persoonlijke muziekspeler met Spotify-integratie",
+  manifest: "/site.webmanifest?v=4",
   icons: {
-    icon: [
-      { url: "/favicon.ico?v=3" },
-      { url: "/favicon-32x32.png?v=3", sizes: "32x32", type: "image/png" },
-      { url: "/favicon-16x16.png?v=3", sizes: "16x16", type: "image/png" },
-    ],
-    apple: [{ url: "/apple-touch-icon.png?v=3", sizes: "180x180", type: "image/png" }],
+    icon: [{ url: "/georgies-player.svg?v=4", type: "image/svg+xml" }],
   },
 };
 

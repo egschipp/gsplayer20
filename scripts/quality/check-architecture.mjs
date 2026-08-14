@@ -10,7 +10,7 @@ const sourceExtensions = new Set([".ts", ".tsx", ".js", ".mjs"]);
 const legacyLineBudgets = new Map([
   ["app/components/SpotifyPlayer.tsx", 7_400],
   ["app/components/PlaylistBrowser.tsx", 6_120],
-  ["app/components/MonitoringDashboard.tsx", 2_410],
+  ["app/components/MonitoringDashboard.tsx", 1_960],
 ]);
 
 const defaultComponentBudget = 1_000;
@@ -52,7 +52,8 @@ for (const file of files) {
 
   if (
     (file.startsWith("app/components/player/") ||
-      file.startsWith("app/components/playlist/")) &&
+      file.startsWith("app/components/playlist/") ||
+      file.startsWith("app/components/monitoring/")) &&
     file.endsWith(".ts") &&
     !file.endsWith(".test.ts") &&
     lineCount > extractedDomainModuleBudget

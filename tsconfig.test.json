@@ -25,6 +25,12 @@
     "app/components/playlist/types.ts",
     "app/components/playlist/trackMatching.ts",
     "app/components/playlist/trackMatching.test.ts",
+    "app/components/monitoring/errorPresentation.ts",
+    "app/components/monitoring/errorPresentation.test.ts",
+    "app/components/monitoring/presentation.ts",
+    "app/components/monitoring/presentation.test.ts",
+    "app/components/monitoring/statusPresentation.ts",
+    "app/components/monitoring/statusPresentation.test.ts",
     "types/**/*.d.ts"
   ],
   "exclude": ["node_modules", ".next", "src/features/**/routes/**/*.ts"]

@@ -9,7 +9,7 @@ const sourceExtensions = new Set([".ts", ".tsx", ".js", ".mjs"]);
 // ceilings prevent regression and must only move downward during extraction.
 const legacyLineBudgets = new Map([
   ["app/components/SpotifyPlayer.tsx", 7_400],
-  ["app/components/PlaylistBrowser.tsx", 5_550],
+  ["app/components/PlaylistBrowser.tsx", 5_430],
   ["app/components/MonitoringDashboard.tsx", 1_960],
 ]);
 

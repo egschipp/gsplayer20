@@ -68,6 +68,23 @@ import {
   resolveTrackRowCanonicalId,
   resolveTrackSelectionKey,
 } from "./playlist/trackDeduplication";
+import {
+  mapTrackApiItems,
+  mapTrackItemToRow,
+  type TrackApiItem,
+} from "./playlist/trackApiMapping";
+import {
+  TRACK_LIST_PREFETCH_DELAY_MS,
+  buildApiUrl,
+  getFocusableElements,
+  getTrackPageSize,
+  getTrackPrefetchMaxPages,
+  parseRetryAfterMs,
+  safeReadStorage,
+  safeRemoveStorageKey,
+  safeWriteStorage,
+  trapTabWithin,
+} from "./playlist/browserUtils";
 import { useStableMenu } from "@/lib/hooks/useStableMenu";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import {
@@ -178,53 +195,6 @@ function buildQueueTrackInput(track: TrackRow | TrackItem) {
   };
 }
 
-function safeReadStorage(storage: Storage, key: string) {
-  try {
-    return storage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function safeWriteStorage(storage: Storage, key: string, value: string) {
-  try {
-    storage.setItem(key, value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function safeRemoveStorageKey(storage: Storage, key: string) {
-  try {
-    storage.removeItem(key);
-  } catch {
-    // ignore storage issues
-  }
-}
-
-function buildApiUrl(path: string, params?: Record<string, string | null | undefined>) {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params ?? {})) {
-    if (value == null || value === "") continue;
-    query.set(key, value);
-  }
-  const qs = query.toString();
-  return qs ? `${path}?${qs}` : path;
-}
-
-function parseRetryAfterMs(headers: Headers) {
-  const raw = headers.get("retry-after");
-  if (!raw) return null;
-  const seconds = Number(raw);
-  if (Number.isFinite(seconds) && seconds >= 0) {
-    return Math.max(0, Math.floor(seconds * 1000));
-  }
-  const dateMs = Date.parse(raw);
-  if (!Number.isFinite(dateMs)) return null;
-  return Math.max(0, dateMs - Date.now());
-}
-
 type TrackPageLoadReason =
   "scroll" | "auto_prefetch" | "active_track_hydration" | "active_track_retry";
 
@@ -239,161 +209,6 @@ type TrackPageLoadResult = {
   cursorUsed: string | null;
   sourceLabel: "playlist" | "liked" | "artist" | "unknown";
 };
-
-const FOCUSABLE_SELECTOR =
-  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-const TRACK_PAGE_SIZE = 100;
-const TRACK_PAGE_SIZE_LIKED = 50;
-const TRACK_LIST_WARMUP_TARGET = 500;
-const TRACK_LIST_PREFETCH_DELAY_MS = 90;
-
-function getTrackPageSize(mode: Mode, playlistType?: PlaylistOption["type"] | null) {
-  if (mode === "playlists" && playlistType === "liked") {
-    return TRACK_PAGE_SIZE_LIKED;
-  }
-  return TRACK_PAGE_SIZE;
-}
-
-function getTrackPrefetchMaxPages(pageSize: number) {
-  return Math.max(1, Math.ceil((TRACK_LIST_WARMUP_TARGET - pageSize) / pageSize));
-}
-
-function getFocusableElements(root: HTMLElement | null) {
-  if (!root) return [] as HTMLElement[];
-  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-    (element) => element.offsetParent !== null || element === document.activeElement
-  );
-}
-
-function trapTabWithin(event: KeyboardEvent, root: HTMLElement | null) {
-  if (event.key !== "Tab" || !root) return;
-  const focusable = getFocusableElements(root);
-  if (focusable.length === 0) {
-    event.preventDefault();
-    root.focus();
-    return;
-  }
-  const first = focusable[0];
-  const last = focusable[focusable.length - 1];
-  const active = document.activeElement as HTMLElement | null;
-  if (event.shiftKey) {
-    if (active === first || !active || !root.contains(active)) {
-      event.preventDefault();
-      last.focus();
-    }
-    return;
-  }
-  if (active === last) {
-    event.preventDefault();
-    first.focus();
-  }
-}
-
-function mapTrackApiItems(items: TrackApiItem[]): TrackItem[] {
-  return items.map((track): TrackItem => ({
-    id: String(track.id ?? track.trackId ?? ""),
-    trackId: track.trackId ?? null,
-    name: String(track.name ?? ""),
-    artists: Array.isArray(track.artists)
-      ? track.artists
-          .filter((artist): artist is { id: string; name: string } => {
-            return Boolean(artist?.id && artist?.name);
-          })
-          .map((artist) => ({ id: artist.id, name: artist.name }))
-      : [],
-    album: {
-      id: track.album?.id ?? null,
-      name: track.album?.name ?? null,
-      images: Array.isArray(track.album?.images) ? track.album?.images : [],
-      release_date: track.album?.release_date ?? null,
-    },
-    releaseYear: typeof track.releaseYear === "number" ? track.releaseYear : null,
-    durationMs: track.durationMs ?? null,
-    explicit:
-      typeof track.explicit === "boolean"
-        ? track.explicit
-          ? 1
-          : 0
-        : (track.explicit ?? null),
-    isLocal:
-      typeof track.isLocal === "number"
-        ? track.isLocal
-        : typeof track.isLocal === "boolean"
-          ? track.isLocal
-            ? 1
-            : 0
-          : null,
-    restrictionsReason:
-      typeof track.restrictionsReason === "string" ? track.restrictionsReason : null,
-    linkedFromTrackId:
-      typeof track.linkedFromTrackId === "string" ? track.linkedFromTrackId : null,
-    popularity: track.popularity ?? null,
-    albumImageUrl: track.albumImageUrl ?? null,
-    playlists: Array.isArray(track.playlists)
-      ? sortPlaylistLinks(
-          track.playlists
-            .filter((pl): pl is { id: string; name: string; spotifyUrl?: string } =>
-              Boolean(pl?.id && pl?.name)
-            )
-            .map((pl) => ({
-              id: pl.id,
-              name: pl.name,
-              spotifyUrl: pl.spotifyUrl ?? `https://open.spotify.com/playlist/${pl.id}`,
-            }))
-        )
-      : [],
-  }));
-}
-
-function mapTrackItemToRow(track: TrackItem): TrackRow {
-  const trackId =
-    typeof track.trackId === "string" && track.trackId ? track.trackId : track.id;
-  const artistsText =
-    dedupeArtistText(
-      (Array.isArray(track.artists) ? track.artists : [])
-        .map((artist) => artist?.name)
-        .filter(Boolean)
-        .join(", ")
-    ) || null;
-  const coverUrl = track.album?.images?.[0]?.url ?? track.albumImageUrl ?? null;
-  const albumReleaseDate = track.album?.release_date ?? null;
-  const releaseYear =
-    typeof track.releaseYear === "number"
-      ? track.releaseYear
-      : albumReleaseDate && /^\d{4}/.test(albumReleaseDate)
-        ? Number(albumReleaseDate.slice(0, 4))
-        : null;
-  return {
-    trackId: trackId || null,
-    name: track.name || null,
-    albumId: track.album?.id ?? null,
-    albumName: track.album?.name ?? null,
-    albumReleaseDate,
-    releaseYear,
-    albumImageUrl: track.albumImageUrl ?? null,
-    coverUrl,
-    artists: artistsText,
-    durationMs: track.durationMs ?? null,
-    explicit: track.explicit ?? null,
-    isLocal: track.isLocal ?? null,
-    restrictionsReason: track.restrictionsReason ?? null,
-    linkedFromTrackId: track.linkedFromTrackId ?? null,
-    popularity: track.popularity ?? null,
-    playlists: Array.isArray(track.playlists)
-      ? sortPlaylistLinks(
-          track.playlists.map((playlist) => ({
-            id: playlist.id,
-            name: playlist.name,
-            spotifyUrl:
-              playlist.spotifyUrl ??
-              (playlist.id === "liked"
-                ? "https://open.spotify.com/collection/tracks"
-                : `https://open.spotify.com/playlist/${playlist.id}`),
-          }))
-        )
-      : [],
-  };
-}
 
 export default function PlaylistBrowser() {
   const [mode, setMode] = useState<Mode>("playlists");
@@ -4746,28 +4561,6 @@ type ArtistApiItem = {
   name: string;
   followersTotal?: number | null;
   imageUrl?: string | null;
-};
-
-type TrackApiItem = {
-  id?: string;
-  trackId?: string;
-  name?: string;
-  artists?: { id?: string; name?: string }[];
-  album?: {
-    id?: string | null;
-    name?: string | null;
-    images?: { url: string }[];
-    release_date?: string | null;
-  };
-  releaseYear?: number | null;
-  durationMs?: number | null;
-  explicit?: boolean | number | null;
-  isLocal?: number | null;
-  restrictionsReason?: string | null;
-  linkedFromTrackId?: string | null;
-  popularity?: number | null;
-  albumImageUrl?: string | null;
-  playlists?: { id: string; name: string; spotifyUrl?: string }[];
 };
 
 type AddToPlaylistMenuProps = {

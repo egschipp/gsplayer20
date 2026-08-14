@@ -72,7 +72,10 @@ jobs:
     name: Validate Web App
     if: github.actor != 'release-please[bot]' || github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # Playwright's system dependency installation can exceed eight minutes when
+    # GitHub's Ubuntu package mirrors are slow. Keep a bounded timeout without
+    # turning transient infrastructure latency into a false validation failure.
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

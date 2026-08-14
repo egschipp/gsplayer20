@@ -9,7 +9,7 @@ const sourceExtensions = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs"]);
 // These legacy orchestration modules are being reduced incrementally. The fixed
 // ceilings prevent regression and must only move downward during extraction.
 const legacyLineBudgets = new Map([
-  ["app/components/SpotifyPlayer.tsx", 7_400],
+  ["app/components/SpotifyPlayer.tsx", 7_180],
   ["app/components/PlaylistBrowser.tsx", 5_430],
   ["app/components/MonitoringDashboard.tsx", 1_960],
   ["worker.js", 1_720],

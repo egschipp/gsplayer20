@@ -61,7 +61,7 @@ import {
   type PlaybackCrossTabMessage,
   type PlaybackCrossTabSnapshot,
 } from "@/lib/playback/crossTab";
-import { getPlayerErrorMessage, normalizePlayerError } from "@/lib/playback/playerErrors";
+import { getPlayerErrorMessage } from "@/lib/playback/playerErrors";
 import {
   resolvePlaybackExecutionMode,
   resolvePlaybackSyncOwnership,
@@ -92,6 +92,18 @@ import {
   startsWithEmoji,
   type QueueTrackItem,
 } from "./player/spotifyPlayerTransport";
+import ActiveTrackIndicator from "./player/ActiveTrackIndicator";
+import {
+  detectWebplayerPlatform,
+  getWebPlaybackSdkSupport,
+  resolveDeviceTypeIcon,
+} from "./player/playerEnvironment";
+import {
+  formatPlaybackBootStateLabel,
+  formatPlaybackTime,
+  formatPlayerError,
+} from "./player/playerPresentation";
+import { buildShuffleOrder, getIndexFromTrackId } from "./player/queueOrder";
 
 declare global {
   interface Window {
@@ -201,19 +213,6 @@ const INITIAL_NO_TRACK_COUNTER: NoTrackCounterState = {
   lastDeviceId: null,
 };
 
-function detectWebplayerPlatform() {
-  if (typeof navigator === "undefined") return "";
-  const ua = navigator.userAgent.toLowerCase();
-  const maxTouchPoints = Number((navigator as Navigator).maxTouchPoints ?? 0);
-  if (/ipad/.test(ua)) return "iPad";
-  if (/macintosh/.test(ua) && maxTouchPoints > 1) return "iPad";
-  if (/iphone/.test(ua)) return "iPhone";
-  if (/android/.test(ua)) return "Android";
-  if (/macintosh|mac os x/.test(ua)) return "Mac";
-  if (/windows/.test(ua)) return "Windows";
-  return "";
-}
-
 type PlayerProps = {
   onReady: (api: PlayerApi | null) => void;
   onTrackChange?: (trackId: string | null) => void;
@@ -227,150 +226,6 @@ type PlayerProps = {
   onControllerHandlersChange?: (handlers: PlayerCommandHandlers | null) => void;
   onControllerRuntimeChange?: (runtime: PlayerRuntimeState) => void;
 };
-
-function getWebPlaybackSdkSupport() {
-  if (typeof window === "undefined") {
-    return { supported: false, reason: "Web player requires a browser context." };
-  }
-  if (!window.isSecureContext) {
-    return {
-      supported: false,
-      reason: "Web player requires HTTPS (secure context).",
-    };
-  }
-  const hasAudioContext =
-    typeof window.AudioContext !== "undefined" ||
-    typeof (window as any).webkitAudioContext !== "undefined";
-  const hasMediaSource = typeof (window as any).MediaSource !== "undefined";
-  if (!hasAudioContext || !hasMediaSource) {
-    return {
-      supported: false,
-      reason: "This browser does not fully support Spotify Web Playback.",
-    };
-  }
-  return { supported: true, reason: null as string | null };
-}
-
-function ActiveTrackIndicator({
-  status,
-  isStale,
-}: {
-  status: PlaybackFocusStatus;
-  isStale: boolean;
-}) {
-  const ariaLabel =
-    status === "playing"
-      ? "Now playing"
-      : status === "paused"
-        ? "Gepauzeerd"
-        : status === "loading"
-          ? "Buffering"
-          : status === "ended"
-            ? "Track beëindigd"
-            : status === "error"
-              ? "Playback fout"
-              : "Actieve track";
-  return (
-    <span
-      className={`playing-indicator ${status}${isStale ? " stale" : ""}`}
-      aria-label={ariaLabel}
-    >
-      {status === "playing" ? (
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 16 16"
-          width="12"
-          height="12"
-          className="playing-indicator-icon equalizer"
-        >
-          <rect x="1" y="7" width="2.2" height="8" rx="1" />
-          <rect x="6.1" y="3" width="2.2" height="12" rx="1" />
-          <rect x="11.2" y="5.5" width="2.2" height="9.5" rx="1" />
-        </svg>
-      ) : status === "loading" ? (
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 16 16"
-          width="12"
-          height="12"
-          className="playing-indicator-icon spinner"
-        >
-          <circle cx="8" cy="8" r="5.5" fill="none" strokeWidth="2.2" opacity="0.35" />
-          <path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5" fill="none" strokeWidth="2.2" />
-        </svg>
-      ) : status === "paused" ? (
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 16 16"
-          width="12"
-          height="12"
-          className="playing-indicator-icon"
-        >
-          <path d="M4.2 3.2h2.6v9.6H4.2zM9.2 3.2h2.6v9.6H9.2z" />
-        </svg>
-      ) : status === "ended" ? (
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 16 16"
-          width="12"
-          height="12"
-          className="playing-indicator-icon"
-        >
-          <path d="M8 2.2a5.8 5.8 0 1 0 5.65 7.1h-1.8A4.2 4.2 0 1 1 8 3.8c1.1 0 2.08.42 2.82 1.1L8.9 6.82h4.9v-4.9l-1.74 1.74A5.73 5.73 0 0 0 8 2.2Z" />
-        </svg>
-      ) : status === "error" ? (
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 16 16"
-          width="12"
-          height="12"
-          className="playing-indicator-icon"
-        >
-          <path d="M8 1.8 1.6 13.6h12.8L8 1.8Zm-.8 4.1h1.6v4.3H7.2V5.9Zm0 5.3h1.6v1.6H7.2v-1.6Z" />
-        </svg>
-      ) : (
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 16 16"
-          width="12"
-          height="12"
-          className="playing-indicator-icon"
-        >
-          <path d="M4.4 3.2v9.6l8-4.8-8-4.8Z" />
-        </svg>
-      )}
-    </span>
-  );
-}
-
-function resolveDeviceTypeIcon(type: string | null | undefined) {
-  const raw = String(type ?? "")
-    .trim()
-    .toLowerCase();
-  if (!raw) return "🎵";
-  if (raw.includes("smartphone") || raw.includes("phone") || raw.includes("tablet")) {
-    return "📱";
-  }
-  if (raw.includes("computer") || raw.includes("webplayer") || raw.includes("desktop")) {
-    return "💻";
-  }
-  if (raw.includes("speaker") || raw.includes("castaudio")) {
-    return "🔊";
-  }
-  if (raw.includes("headphone") || raw.includes("headset")) {
-    return "🎧";
-  }
-  if (raw.includes("tv") || raw.includes("stb") || raw.includes("console")) {
-    return "📺";
-  }
-  if (raw.includes("avr") || raw.includes("receiver")) {
-    return "📻";
-  }
-  if (raw.includes("audiodongle") || raw.includes("dongle")) {
-    return "🎛️";
-  }
-  return "🎵";
-}
 
 export default function SpotifyPlayer({
   onReady,
@@ -574,44 +429,6 @@ export default function SpotifyPlayer({
       setTrackPlaylistMembershipOpen(false);
     },
   });
-
-  function formatPlayerError(message?: string | null) {
-    if (!message) return null;
-    const normalized = normalizePlayerError({ message });
-    if (normalized.code !== "UNKNOWN") {
-      return getPlayerErrorMessage(normalized.code, {
-        retryAfterSec: normalized.retryAfterSec,
-      });
-    }
-    const lower = String(message).toLowerCase();
-    if (lower.includes("invalid token scopes") || lower.includes("insufficient_scope")) {
-      return "Missing Spotify permissions. Reconnect.";
-    }
-    if (lower.includes("403")) {
-      return "Missing Spotify permissions. Reconnect.";
-    }
-    if (lower.includes("401")) {
-      return "Spotify session expired. Reconnect.";
-    }
-    if (lower.includes("authentication") || lower.includes("token")) {
-      return "Connection to Spotify expired. Reconnect.";
-    }
-    if (lower.includes("premium")) {
-      return "Spotify Premium is required for Web Playback.";
-    }
-    return message;
-  }
-
-  function formatPlaybackBootStateLabel(
-    state: "idle" | "booting" | "sdk_ready" | "device_ready" | "playable" | "playing"
-  ) {
-    if (state === "booting") return "Player is starting";
-    if (state === "sdk_ready") return "Player ready, waiting for device";
-    if (state === "device_ready") return "Device is activating";
-    if (state === "playable") return "Ready to play";
-    if (state === "playing") return "Playback active";
-    return "Waiting for session";
-  }
 
   const playerErrorMessage = formatPlayerError(error);
   const lastTrackIdRef = useRef<string | null>(null);
@@ -2508,64 +2325,41 @@ export default function SpotifyPlayer({
   const ensurePlaybackStartedRef = useRef(ensurePlaybackStarted);
   ensurePlaybackStartedRef.current = ensurePlaybackStarted;
 
-  const getIndexFromTrackId = useCallback((uris: string[], trackId?: string | null) => {
-    if (!trackId) return -1;
-    const target = String(trackId);
-    return uris.findIndex((uri) => uri.split(":").pop() === target);
+  const syncQueuePositionFromTrack = useCallback((trackId?: string | null) => {
+    if (!trackId || queueModeRef.current !== "queue" || !queueUrisRef.current?.length)
+      return;
+    const index = getIndexFromTrackId(queueUrisRef.current, trackId);
+    if (index < 0) return;
+    queueIndexRef.current = index;
+    if (!queueOrderRef.current?.length) return;
+    const pos = queueOrderRef.current.indexOf(index);
+    if (pos >= 0) queuePosRef.current = pos;
   }, []);
 
-  const buildShuffleOrder = useCallback((count: number, startIndex: number) => {
-    const indices = Array.from({ length: count }, (_, i) => i);
-    if (count <= 1) return indices;
-    const rest = indices.filter((i) => i !== startIndex);
-    for (let i = rest.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [rest[i], rest[j]] = [rest[j], rest[i]];
-    }
-    return [startIndex, ...rest];
-  }, []);
-
-  const syncQueuePositionFromTrack = useCallback(
-    (trackId?: string | null) => {
-      if (!trackId || queueModeRef.current !== "queue" || !queueUrisRef.current?.length)
-        return;
-      const index = getIndexFromTrackId(queueUrisRef.current, trackId);
-      if (index < 0) return;
-      queueIndexRef.current = index;
-      if (!queueOrderRef.current?.length) return;
-      const pos = queueOrderRef.current.indexOf(index);
-      if (pos >= 0) queuePosRef.current = pos;
-    },
-    [getIndexFromTrackId]
-  );
-
-  const rebuildQueueOrder = useCallback(
-    (nextShuffle: boolean, forceRebuild = false) => {
-      if (queueModeRef.current !== "queue" || !queueUrisRef.current?.length) return;
-      const uris = queueUrisRef.current;
-      const activeTrackId = lastTrackIdRef.current || pendingTrackIdRef.current;
-      const currentIndex = getIndexFromTrackId(uris, activeTrackId);
-      const startIndex = currentIndex >= 0 ? currentIndex : queueIndexRef.current;
-      queueIndexRef.current = Math.max(0, startIndex);
-      if (nextShuffle) {
-        if (
-          !forceRebuild &&
-          queueOrderRef.current?.length === uris.length &&
-          queueOrderRef.current.includes(queueIndexRef.current)
-        ) {
-          queuePosRef.current = queueOrderRef.current.indexOf(queueIndexRef.current);
-          return;
-        }
-        queueOrderRef.current = buildShuffleOrder(uris.length, queueIndexRef.current);
+  const rebuildQueueOrder = useCallback((nextShuffle: boolean, forceRebuild = false) => {
+    if (queueModeRef.current !== "queue" || !queueUrisRef.current?.length) return;
+    const uris = queueUrisRef.current;
+    const activeTrackId = lastTrackIdRef.current || pendingTrackIdRef.current;
+    const currentIndex = getIndexFromTrackId(uris, activeTrackId);
+    const startIndex = currentIndex >= 0 ? currentIndex : queueIndexRef.current;
+    queueIndexRef.current = Math.max(0, startIndex);
+    if (nextShuffle) {
+      if (
+        !forceRebuild &&
+        queueOrderRef.current?.length === uris.length &&
+        queueOrderRef.current.includes(queueIndexRef.current)
+      ) {
         queuePosRef.current = queueOrderRef.current.indexOf(queueIndexRef.current);
-        if (queuePosRef.current < 0) queuePosRef.current = 0;
         return;
       }
-      queueOrderRef.current = null;
-      queuePosRef.current = queueIndexRef.current;
-    },
-    [buildShuffleOrder, getIndexFromTrackId]
-  );
+      queueOrderRef.current = buildShuffleOrder(uris.length, queueIndexRef.current);
+      queuePosRef.current = queueOrderRef.current.indexOf(queueIndexRef.current);
+      if (queuePosRef.current < 0) queuePosRef.current = 0;
+      return;
+    }
+    queueOrderRef.current = null;
+    queuePosRef.current = queueIndexRef.current;
+  }, []);
 
   async function confirmShuffleState(expectedState?: boolean) {
     const delays = [0, 180, 380, 650];
@@ -6258,14 +6052,6 @@ export default function SpotifyPlayer({
     });
   }
 
-  function formatTime(ms?: number) {
-    if (!ms || ms < 0) return "0:00";
-    const totalSec = Math.floor(ms / 1000);
-    const min = Math.floor(totalSec / 60);
-    const sec = totalSec % 60;
-    return `${min}:${sec.toString().padStart(2, "0")}`;
-  }
-
   const readSliderValue = useCallback(
     (raw: string) => {
       const parsed = Number(raw);
@@ -6921,7 +6707,7 @@ export default function SpotifyPlayer({
         </div>
         <div className="player-sliders-row">
           <div className="player-progress player-progress-main">
-            <span className="text-subtle">{formatTime(sliderPositionMs)}</span>
+            <span className="text-subtle">{formatPlaybackTime(sliderPositionMs)}</span>
             <input
               type="range"
               min={0}
@@ -6990,10 +6776,10 @@ export default function SpotifyPlayer({
                 )}%)`,
               }}
               aria-label="Seek"
-              aria-valuetext={`${formatTime(sliderPositionMs)} van ${formatTime(durationMs)}`}
+              aria-valuetext={`${formatPlaybackTime(sliderPositionMs)} van ${formatPlaybackTime(durationMs)}`}
               disabled={disallowSeeking}
             />
-            <span className="text-subtle">{formatTime(durationMs)}</span>
+            <span className="text-subtle">{formatPlaybackTime(durationMs)}</span>
           </div>
           <div className="player-progress player-volume-inline">
             <button
@@ -7366,7 +7152,7 @@ export default function SpotifyPlayer({
                       <div className="text-subtle">
                         {track.explicit ? "Explicit" : "Clean"} •{" "}
                         {track.durationMs && track.durationMs > 0
-                          ? formatTime(track.durationMs)
+                          ? formatPlaybackTime(track.durationMs)
                           : "—"}
                         {track.uri ? ` • ${track.uri}` : ""}
                       </div>

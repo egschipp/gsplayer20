@@ -396,6 +396,13 @@ jobs:
           echo "Compose file: ${COMPOSE_FILE_PATH}"
           docker compose -f "${COMPOSE_FILE_PATH}" config | grep -E "image:" || true
           docker compose -f "${COMPOSE_FILE_PATH}" pull web worker
+          mkdir -p data
+          docker run --rm \
+            --user 0:0 \
+            --entrypoint chown \
+            -v "${PWD}/data:/data" \
+            "${IMAGE_NAME}:${IMAGE_TAG}" \
+            -R "${APP_UID}:${APP_GID}" /data
           if ! docker compose -f "${COMPOSE_FILE_PATH}" up -d --remove-orphans --wait --wait-timeout 180; then
             docker compose -f "${COMPOSE_FILE_PATH}" ps
             docker compose -f "${COMPOSE_FILE_PATH}" logs --no-color --tail=160 web worker || true

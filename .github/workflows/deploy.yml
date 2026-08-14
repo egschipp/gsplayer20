@@ -296,6 +296,8 @@ jobs:
           exec 9>.deploy.lock
           flock -n 9 || { echo "Deploy al bezig"; exit 1; }
           tmp_env="$(mktemp .env.tmp.XXXXXX)"
+          APP_UID="$(id -u)"
+          APP_GID="$(id -g)"
           cat > "$tmp_env" <<EOF
           APP_ENV=production
           IMAGE_NAME=$IMAGE_NAME
@@ -314,8 +316,8 @@ jobs:
           ADMIN_SPOTIFY_USER_IDS=$ADMIN_SPOTIFY_USER_IDS
           TRUST_PROXY=true
           SPOTIFY_IMAGE_MAX_BYTES=5242880
-          APP_UID=$(id -u)
-          APP_GID=$(id -g)
+          APP_UID=$APP_UID
+          APP_GID=$APP_GID
           DB_PATH=$DB_PATH
           APP_RELEASE_VERSION=$APP_RELEASE_VERSION
           EOF

@@ -16,11 +16,15 @@ export const users = sqliteTable(
   {
     id: text("id").primaryKey(),
     spotifyUserId: text("spotify_user_id").notNull(),
+    spotifyAccountId: text("spotify_account_id"),
     createdAt: integer("created_at").notNull().default(nowMs),
     deletedAt: integer("deleted_at"),
   },
   (table) => ({
     spotifyUserIdIdx: uniqueIndex("users_spotify_user_id_idx").on(table.spotifyUserId),
+    spotifyAccountIdIdx: uniqueIndex("users_spotify_account_id_idx").on(
+      table.spotifyAccountId
+    ),
   })
 );
 
@@ -54,6 +58,7 @@ export const tracks = sqliteTable("tracks", {
   albumImageBlob: blob("album_image_blob", { mode: "buffer" }),
   albumImageMime: text("album_image_mime"),
   popularity: integer("popularity"),
+  metadataCheckedAt: integer("metadata_checked_at"),
   updatedAt: integer("updated_at").notNull().default(nowMs),
 });
 
@@ -64,6 +69,7 @@ export const artists = sqliteTable("artists", {
   popularity: integer("popularity"),
   followersTotal: integer("followers_total"),
   imageUrl: text("image_url"),
+  metadataCheckedAt: integer("metadata_checked_at"),
   updatedAt: integer("updated_at").notNull().default(nowMs),
 });
 

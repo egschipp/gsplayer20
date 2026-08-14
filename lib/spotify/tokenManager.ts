@@ -11,7 +11,7 @@ import { incCounter, observeHistogram } from "@/lib/observability/metrics";
 import { logEvent } from "@/lib/observability/logger";
 
 const REFRESH_SKEW_MS = 90_000;
-const LOCK_TTL_MS = 12_000;
+const LOCK_TTL_MS = 30_000;
 const LOCK_WAIT_TIMEOUT_MS = 4_000;
 const LOCK_POLL_MS = 120;
 

@@ -22,11 +22,14 @@ export default async function AboutPage() {
     <main id="main-content" tabIndex={-1} className="page about-page">
       <section className="panel about-hero">
         <div className="label">About</div>
-        <h1 className="heading-1">Georgies Spotify</h1>
+        <h1 className="heading-1">Georgies Player</h1>
         <p className="text-body">
           This app was built in Visual Studio Code, together with Codex as an engineering
           assistant. The goal is a stable Spotify experience with consistent controls for
           My Music, Queue and Spotify Connect across desktop, tablet and mobile.
+        </p>
+        <p className="text-body">
+          <a href="/privacy">Privacy en gegevensgebruik</a>
         </p>
         <p className="text-body">
           The architecture is built around Next.js (App Router), with a component-driven

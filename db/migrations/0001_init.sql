@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   spotify_user_id TEXT NOT NULL UNIQUE,
+  spotify_account_id TEXT UNIQUE,
   created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   deleted_at INTEGER
 );
@@ -32,6 +33,7 @@ CREATE TABLE IF NOT EXISTS tracks (
   album_image_blob BLOB,
   album_image_mime TEXT,
   popularity INTEGER,
+  metadata_checked_at INTEGER,
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
 
@@ -42,6 +44,7 @@ CREATE TABLE IF NOT EXISTS artists (
   popularity INTEGER,
   followers_total INTEGER,
   image_url TEXT,
+  metadata_checked_at INTEGER,
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
 

@@ -1,4 +1,5 @@
 import {
+  checkSpotifyRedirectConfiguration,
   isValidTokenEncryptionKey,
   resolveAuthSecret,
   resolvePinCode,
@@ -36,6 +37,9 @@ export function evaluateHealth(args: {
   if (!process.env.SPOTIFY_CLIENT_SECRET) {
     missing.push("SPOTIFY_CLIENT_SECRET");
   }
+
+  const redirect = checkSpotifyRedirectConfiguration();
+  if (!redirect.ok) missing.push(redirect.code);
 
   if (
     process.env.TOKEN_ENCRYPTION_KEY &&

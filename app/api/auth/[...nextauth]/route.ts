@@ -13,6 +13,7 @@ import {
   redactQuery,
   startAuthLog,
 } from "@/lib/auth/authLog";
+import { validateSpotifyRedirectUri } from "@/lib/env";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,12 +24,14 @@ type AuthRouteContext = {
 
 async function authHandler(req: NextRequest, ctx: AuthRouteContext) {
   const params = await ctx.params;
-  if (!process.env.NEXTAUTH_URL) {
-    process.env.NEXTAUTH_URL = process.env.AUTH_URL || new URL(req.url).origin;
+  if (!process.env.NEXTAUTH_URL && process.env.AUTH_URL) {
+    process.env.NEXTAUTH_URL = process.env.AUTH_URL;
   }
   const missing: string[] = [];
   if (!process.env.SPOTIFY_CLIENT_ID) missing.push("SPOTIFY_CLIENT_ID");
   if (!process.env.SPOTIFY_CLIENT_SECRET) missing.push("SPOTIFY_CLIENT_SECRET");
+  if (!process.env.NEXTAUTH_URL && !process.env.AUTH_URL)
+    missing.push("AUTH_URL|NEXTAUTH_URL");
   if (!process.env.AUTH_SECRET && !process.env.NEXTAUTH_SECRET) {
     missing.push("AUTH_SECRET|NEXTAUTH_SECRET");
   }
@@ -45,6 +48,14 @@ async function authHandler(req: NextRequest, ctx: AuthRouteContext) {
       });
     }
     return NextResponse.json({ error: message }, { status: 503 });
+  }
+  try {
+    validateSpotifyRedirectUri();
+  } catch {
+    return NextResponse.json(
+      { error: "SPOTIFY_REDIRECT_MISCONFIGURED" },
+      { status: 503 }
+    );
   }
   const handler = NextAuth(getAuthOptions());
   if (isAuthLogEnabled()) {

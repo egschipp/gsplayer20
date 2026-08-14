@@ -185,4 +185,39 @@ if (!applied.has("0003_refresh_token_expiry")) {
   })();
 }
 
+if (!applied.has("0004_spotify_2026_identity_and_metadata")) {
+  sqlite.transaction(() => {
+    if (!hasColumn("users", "spotify_account_id")) {
+      sqlite.exec("ALTER TABLE users ADD COLUMN spotify_account_id TEXT");
+    }
+    if (!hasColumn("tracks", "metadata_checked_at")) {
+      sqlite.exec("ALTER TABLE tracks ADD COLUMN metadata_checked_at INTEGER");
+    }
+    if (!hasColumn("artists", "metadata_checked_at")) {
+      sqlite.exec("ALTER TABLE artists ADD COLUMN metadata_checked_at INTEGER");
+    }
+    sqlite.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS users_spotify_account_id_idx ON users(spotify_account_id) WHERE spotify_account_id IS NOT NULL"
+    );
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS spotify_request_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        requested_at INTEGER NOT NULL,
+        source TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS spotify_request_events_at_idx
+        ON spotify_request_events(requested_at);
+      CREATE TABLE IF NOT EXISTS spotify_rate_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        blocked_until INTEGER NOT NULL DEFAULT 0,
+        reason TEXT,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+    sqlite
+      .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+      .run("0004_spotify_2026_identity_and_metadata", Date.now());
+  })();
+}
+
 console.log("Migrations applied");

@@ -136,7 +136,7 @@ export const LIKED_OPTION: PlaylistOption = {
   type: "liked",
   spotifyUrl: "https://open.spotify.com/collection/tracks",
   tracksTotal: null,
-  imageUrl: "/georgies-spotify-logo-only.png",
+  imageUrl: "/georgies-player.svg",
 };
 
 export const ALL_MY_MUSIC_OPTION: PlaylistOption = {
@@ -145,5 +145,5 @@ export const ALL_MY_MUSIC_OPTION: PlaylistOption = {
   type: "all_music",
   spotifyUrl: "https://open.spotify.com",
   tracksTotal: null,
-  imageUrl: "/georgies-spotify-logo-only.png",
+  imageUrl: "/georgies-player.svg",
 };

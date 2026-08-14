@@ -13,7 +13,6 @@ import { createPortal } from "react-dom";
 import { FixedSizeList as List, type ListChildComponentProps } from "react-window";
 import { usePlayer } from "./player/PlayerProvider";
 import type { PlaybackFocusStatus } from "./player/playbackFocus";
-import ChatGptButton from "./playlist/ChatGptButton";
 import PlaylistChips from "./playlist/PlaylistChips";
 import {
   ALL_MY_MUSIC_OPTION,
@@ -37,7 +36,6 @@ import {
   formatTimestamp,
 } from "./playlist/utils";
 import { mapSpotifyApiError } from "./playlist/errors";
-import { formatTrackMeta } from "@/lib/chatgpt/trackMeta";
 import { useStableMenu } from "@/lib/hooks/useStableMenu";
 import { useQueueStore } from "@/lib/queue/QueueProvider";
 import {
@@ -5969,27 +5967,6 @@ function TrackRowRenderer({ index, style, data }: ListChildComponentProps<TrackR
             resolveTracksForApply={data.resolveTracksForPlaylistApply}
             onOpen={data.ensureAllPlaylistOptionsLoaded}
           />
-          <ChatGptButton
-            trackUrl={
-              track.trackId ? `https://open.spotify.com/track/${track.trackId}` : null
-            }
-            playlistNames={data.allPlaylistNames}
-            trackId={track.trackId ?? null}
-            trackMeta={formatTrackMeta({
-              id: track.trackId ?? null,
-              name: track.name ?? null,
-              artistNames: track.artists
-                ? dedupeArtistText(track.artists)
-                    ?.split(",")
-                    .map((value) => value.trim())
-                    .filter(Boolean)
-                : undefined,
-              albumId: track.albumId ?? null,
-              durationMs: track.durationMs ?? null,
-              explicit: track.explicit ?? null,
-              popularity: track.popularity ?? null,
-            })}
-          />
           {track.trackId ? (
             <a
               href={`https://open.spotify.com/track/${track.trackId}`}
@@ -6226,21 +6203,6 @@ function TrackItemRenderer({
             onApply={data.applyTrackPlaylistChanges}
             resolveTracksForApply={data.resolveTracksForPlaylistApply}
             onOpen={data.ensureAllPlaylistOptionsLoaded}
-          />
-          <ChatGptButton
-            trackUrl={track.id ? `https://open.spotify.com/track/${track.id}` : null}
-            playlistNames={data.allPlaylistNames}
-            trackId={track.id ?? track.trackId ?? null}
-            trackMeta={formatTrackMeta({
-              id: track.id ?? track.trackId ?? null,
-              name: track.name ?? null,
-              artistIds: track.artists?.map((artist) => artist.id).filter(Boolean),
-              artistNames: track.artists?.map((artist) => artist.name).filter(Boolean),
-              albumId: track.album?.id ?? null,
-              durationMs: track.durationMs ?? null,
-              explicit: track.explicit ?? null,
-              popularity: track.popularity ?? null,
-            })}
           />
           <a
             href={`https://open.spotify.com/track/${track.id}`}

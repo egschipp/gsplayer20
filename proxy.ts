@@ -116,14 +116,14 @@ function isPublicPath(pathname: string) {
   if (
     pathname === "/api/health" ||
     pathname === "/login" ||
+    pathname === "/privacy" ||
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/api/pin-login") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/icon-") ||
     pathname.startsWith("/apple-touch-icon") ||
-    pathname.startsWith("/georgies-spotify.png") ||
-    pathname.startsWith("/georgies-spotify.jpg") ||
+    pathname.startsWith("/georgies-player.svg") ||
     pathname.startsWith("/site.webmanifest")
   ) {
     return true;

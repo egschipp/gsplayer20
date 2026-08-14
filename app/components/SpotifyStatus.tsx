@@ -31,6 +31,19 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
   const { status: sessionStatus } = useSession();
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null);
   const [userStatus, setUserStatus] = useState<UserStatus | null>(null);
+
+  async function disconnectSpotify() {
+    const confirmed = window.confirm(
+      "Disconnect Spotify and delete all locally stored Spotify account data?"
+    );
+    if (!confirmed) return;
+    const response = await fetch("/api/account/data", { method: "DELETE" });
+    if (!response.ok) {
+      window.alert("Spotify could not be disconnected. Please try again.");
+      return;
+    }
+    window.open("/api/auth/logout", "_self");
+  }
   const authRateLimitedUntilRef = useRef(0);
   const effectiveUserStatus =
     sessionStatus === "unauthenticated"
@@ -184,13 +197,7 @@ export default function SpotifyStatus({ showBadges = true }: { showBadges?: bool
         >
           Connect Spotify
         </button>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => {
-            window.open("/api/auth/logout", "_self");
-          }}
-        >
+        <button type="button" className="btn btn-ghost" onClick={disconnectSpotify}>
           Disconnect Spotify
         </button>
       </div>

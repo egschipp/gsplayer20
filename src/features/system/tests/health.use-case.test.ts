@@ -36,6 +36,8 @@ test("health use-case reports healthy payload when required env and probe are va
       TOKEN_ENCRYPTION_KEY: Buffer.alloc(32).toString("base64"),
       SPOTIFY_CLIENT_ID: "spotify-client-id",
       SPOTIFY_CLIENT_SECRET: "spotify-client-secret",
+      AUTH_URL: "https://player.example.com",
+      SPOTIFY_REDIRECT_URI: "https://player.example.com/api/auth/callback/spotify",
     },
     async () => {
       const result = evaluateHealth({
@@ -67,6 +69,9 @@ test("health use-case reports missing env and db failure", async () => {
       TOKEN_ENCRYPTION_KEY: "invalid-base64",
       SPOTIFY_CLIENT_ID: undefined,
       SPOTIFY_CLIENT_SECRET: undefined,
+      AUTH_URL: undefined,
+      NEXTAUTH_URL: undefined,
+      SPOTIFY_REDIRECT_URI: undefined,
     },
     async () => {
       const result = evaluateHealth({
@@ -86,6 +91,7 @@ test("health use-case reports missing env and db failure", async () => {
         "APP_PIN/PIN_CODE",
         "SPOTIFY_CLIENT_ID",
         "SPOTIFY_CLIENT_SECRET",
+        "AUTH_URL_MISSING",
         "TOKEN_ENCRYPTION_KEY_INVALID_LENGTH",
       ]);
     }

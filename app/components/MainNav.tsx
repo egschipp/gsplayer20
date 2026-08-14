@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 export default function MainNav() {
   const pathname = usePathname();
+  const isPublicPage = pathname === "/login" || pathname === "/privacy";
   const isHome = pathname === "/";
   const isStatus = pathname === "/status";
   const isAbout = pathname === "/about";
@@ -39,6 +40,8 @@ export default function MainNav() {
       window.open("/login", "_self");
     }
   }
+
+  if (isPublicPage) return null;
 
   return (
     <nav className="nav">

@@ -10,7 +10,10 @@ import {
 } from "@/lib/auth/authLog";
 
 export function GET(req: Request) {
-  const baseUrl = getBaseUrl() || new URL(req.url).origin;
+  const baseUrl = getBaseUrl();
+  if (!baseUrl) {
+    return NextResponse.json({ error: "AUTH_URL_MISCONFIGURED" }, { status: 503 });
+  }
   const requestId = crypto.randomUUID();
   const url = new URL(req.url);
   const headers = new Headers(req.headers);

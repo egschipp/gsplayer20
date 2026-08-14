@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import PromptSettingsPanel from "./PromptSettingsPanel";
 import { clientFetch } from "@/lib/http/clientFetch";
 import { PLAYBACK_FEATURE_FLAGS } from "@/lib/playback/featureFlags";
 
@@ -221,7 +220,7 @@ type Insight = {
   text: string;
 };
 
-type StatusSectionId = "overview" | "health" | "data" | "diagnostics" | "actions" | "ai";
+type StatusSectionId = "overview" | "health" | "data" | "diagnostics" | "actions";
 
 const ENDPOINT_LABEL_MAP: Record<string, { label: string; description: string }> = {
   me_player: {
@@ -1463,7 +1462,6 @@ export default function MonitoringDashboard() {
     { id: "data", label: "Data & sync", meta: "worker, jobs, counts" },
     { id: "diagnostics", label: "Diagnostics", meta: "errors and logs" },
     { id: "actions", label: "Actions", meta: "intervention and configuration" },
-    { id: "ai", label: "AI prompt", meta: "existing ChatGPT flow" },
   ];
   const serviceCards = [
     {
@@ -1556,7 +1554,7 @@ export default function MonitoringDashboard() {
             <h1 className="ops-title">Settings & System Status</h1>
             <p className="ops-subtitle">
               A central control room for Spotify connectivity, system health, diagnostics,
-              maintenance, and the existing ChatGPT prompt workflow.
+              maintenance, and playback configuration.
             </p>
           </div>
 
@@ -2383,14 +2381,6 @@ export default function MonitoringDashboard() {
                       </div>
                     ))}
                   </div>
-                </article>
-              </section>
-            ) : null}
-
-            {activeSection === "ai" ? (
-              <section className="ops-dashboard-grid" aria-label="AI prompt">
-                <article className="panel ops-panel ops-span-12">
-                  <PromptSettingsPanel />
                 </article>
               </section>
             ) : null}

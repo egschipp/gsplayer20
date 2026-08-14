@@ -2037,6 +2037,13 @@ export default function SpotifyPlayer({
 
   const applyRateLimit = useCallback((res: Response) => {
     if (res.status !== 429) return false;
+    if (res.headers.get("X-Spotify-Error") === "QUOTA_EXCEEDED") {
+      rateLimitRef.current.until = Date.now() + PLAYER_RETRY_AFTER_MAX_MS;
+      setError(
+        "Spotify Development Mode quota is exhausted. Wait for the quota window to recover."
+      );
+      return true;
+    }
     const retry = res.headers.get("Retry-After");
     const parsedRetryMs = retry ? Number(retry) * 1000 : NaN;
     const retryMs =

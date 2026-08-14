@@ -2,62 +2,67 @@ import type { NextAuthOptions } from "next-auth";
 import SpotifyProvider from "next-auth/providers/spotify";
 import { requireEnv } from "@/lib/env";
 import { scopeString } from "@/lib/spotify/scopes";
-import { deleteTokens, getOrCreateUser, upsertTokens } from "@/lib/db/queries";
+import { getOrCreateUser, upsertTokens } from "@/lib/db/queries";
 import { endAuthLog, logAuthEvent } from "@/lib/auth/authLog";
 import { getValidAccessTokenForUser } from "@/lib/spotify/tokenManager";
 import { createCorrelationId } from "@/lib/observability/correlation";
+import { getSqlite } from "@/lib/db/client";
+import { deleteAccountData } from "@/src/features/account/data/delete-account-data";
 
 export function getAuthOptions(): NextAuthOptions {
   if (!process.env.NEXTAUTH_URL && process.env.AUTH_URL) {
     process.env.NEXTAUTH_URL = process.env.AUTH_URL;
   }
+  const authUrl = process.env.NEXTAUTH_URL || process.env.AUTH_URL || "";
+  const secureCookies = authUrl.startsWith("https://");
+  const cookiePrefix = secureCookies ? "__Secure-" : "";
   return {
     secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
     session: { strategy: "jwt" },
-    useSecureCookies: true,
+    useSecureCookies: secureCookies,
     cookies: {
       sessionToken: {
-        name: "__Secure-next-auth.session-token",
+        name: `${cookiePrefix}next-auth.session-token`,
         options: {
           httpOnly: true,
           sameSite: "lax",
           path: "/",
-          secure: true,
+          secure: secureCookies,
         },
       },
       callbackUrl: {
-        name: "__Secure-next-auth.callback-url",
+        name: `${cookiePrefix}next-auth.callback-url`,
         options: {
           sameSite: "lax",
           path: "/",
-          secure: true,
+          secure: secureCookies,
         },
       },
       csrfToken: {
-        name: "__Host-next-auth.csrf-token",
+        name: secureCookies ? "__Host-next-auth.csrf-token" : "next-auth.csrf-token",
         options: {
           httpOnly: true,
           sameSite: "lax",
           path: "/",
-          secure: true,
+          secure: secureCookies,
         },
       },
       pkceCodeVerifier: {
-        name: "__Secure-next-auth.pkce.code_verifier",
+        name: `${cookiePrefix}next-auth.pkce.code_verifier`,
         options: {
           httpOnly: true,
           sameSite: "lax",
           path: "/",
-          secure: true,
+          secure: secureCookies,
         },
       },
       state: {
-        name: "__Secure-next-auth.state",
+        name: `${cookiePrefix}next-auth.state`,
         options: {
           httpOnly: true,
           sameSite: "lax",
           path: "/",
-          secure: true,
+          secure: secureCookies,
         },
       },
     },
@@ -74,6 +79,23 @@ export function getAuthOptions(): NextAuthOptions {
           },
         },
         checks: ["pkce", "state"],
+        profile(profile: Record<string, unknown>) {
+          const images = Array.isArray(profile.images) ? profile.images : [];
+          const firstImage = images[0] as { url?: unknown } | undefined;
+          const publicId = typeof profile.id === "string" ? profile.id : "";
+          const accountId =
+            typeof profile.account_id === "string" && profile.account_id.trim()
+              ? profile.account_id.trim()
+              : publicId;
+          return {
+            id: accountId,
+            name: typeof profile.display_name === "string" ? profile.display_name : null,
+            // The Playback SDK requires user-read-email, but this app deliberately
+            // does not copy that value into its own session or database.
+            email: null,
+            image: typeof firstImage?.url === "string" ? firstImage.url : null,
+          };
+        },
       }),
     ],
     logger: {
@@ -86,14 +108,11 @@ export function getAuthOptions(): NextAuthOptions {
           errorCode: String(code),
           data: metadata
             ? {
-                metadata,
                 errorSummary: {
                   name: error?.name,
-                  message: error?.message,
+                  message: String(error?.message || "").slice(0, 300),
                   status: cause?.status ?? cause?.statusCode,
                   error: cause?.error,
-                  error_description: cause?.error_description,
-                  body: cause?.body ?? cause,
                 },
               }
             : undefined,
@@ -106,11 +125,11 @@ export function getAuthOptions(): NextAuthOptions {
           errorCode: String(code),
         });
       },
-      debug(code, metadata) {
+      debug(code) {
         logAuthEvent({
           level: "debug",
           event: "nextauth_debug",
-          data: metadata ? { code, metadata } : { code },
+          data: { code },
         });
       },
     },
@@ -134,12 +153,12 @@ export function getAuthOptions(): NextAuthOptions {
             : null;
         if (appUserId) {
           try {
-            await deleteTokens(appUserId);
+            deleteAccountData(getSqlite(), appUserId);
           } catch {
             logAuthEvent({
               level: "error",
-              event: "nextauth_signout_token_cleanup_failed",
-              errorCode: "TOKEN_DELETE_FAILED",
+              event: "nextauth_signout_account_cleanup_failed",
+              errorCode: "ACCOUNT_DELETE_FAILED",
             });
           }
         }
@@ -154,7 +173,7 @@ export function getAuthOptions(): NextAuthOptions {
       },
     },
     callbacks: {
-      async jwt({ token, account }) {
+      async jwt({ token, account, profile }) {
         if (account) {
           logAuthEvent({
             level: "info",
@@ -174,8 +193,13 @@ export function getAuthOptions(): NextAuthOptions {
               ? account.expires_at * 1000
               : Date.now() + expiresIn * 1000;
 
-          const spotifyUserId = account.providerAccountId;
-          const user = await getOrCreateUser(spotifyUserId);
+          const spotifyAccountId = account.providerAccountId;
+          const rawProfile = profile as Record<string, unknown> | undefined;
+          const spotifyUserId =
+            typeof rawProfile?.id === "string" && rawProfile.id.trim()
+              ? rawProfile.id.trim()
+              : spotifyAccountId;
+          const user = await getOrCreateUser({ spotifyUserId, spotifyAccountId });
 
           if (account.refresh_token) {
             await upsertTokens({
@@ -193,6 +217,7 @@ export function getAuthOptions(): NextAuthOptions {
             accessTokenExpires: expiresAt,
             scope: account.scope,
             spotifyUserId,
+            spotifyAccountId,
             appUserId: user.id,
           };
         }
@@ -262,6 +287,7 @@ export function getAuthOptions(): NextAuthOptions {
         session.scope = token.scope as string | undefined;
         session.error = token.error as string | undefined;
         session.spotifyUserId = token.spotifyUserId as string | undefined;
+        session.spotifyAccountId = token.spotifyAccountId as string | undefined;
         session.appUserId = token.appUserId as string | undefined;
         return session;
       },

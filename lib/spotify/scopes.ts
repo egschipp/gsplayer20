@@ -1,5 +1,6 @@
 export const SPOTIFY_SCOPES = [
   "streaming",
+  // Required by Spotify's Web Playback SDK even though the app does not use email data.
   "user-read-email",
   "user-library-read",
   "user-library-modify",

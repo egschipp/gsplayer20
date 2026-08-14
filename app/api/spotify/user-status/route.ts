@@ -10,6 +10,7 @@ import {
 import { spotifyFetch } from "@/lib/spotify/client";
 import { SpotifyFetchError } from "@/lib/spotify/errors";
 import { getSqlite } from "@/lib/db/client";
+import { SpotifyUserProfileSchema } from "@/lib/spotify/schemas";
 
 export const runtime = "nodejs";
 
@@ -52,12 +53,14 @@ export async function GET(req: Request) {
   }
 
   try {
-    const spotifyProfile = (await spotifyFetch({
-      url: "https://api.spotify.com/v1/me",
-      userLevel: true,
-      activity: "user_status_profile",
-      correlationId,
-    })) as Record<string, unknown>;
+    const spotifyProfile = SpotifyUserProfileSchema.parse(
+      await spotifyFetch({
+        url: "https://api.spotify.com/v1/me",
+        userLevel: true,
+        activity: "user_status_profile",
+        correlationId,
+      })
+    );
     const profile = {
       id: typeof spotifyProfile.id === "string" ? spotifyProfile.id : undefined,
       display_name:

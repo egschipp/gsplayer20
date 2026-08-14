@@ -13,5 +13,12 @@ export function getBaseUrl(): string {
 export function assertSpotifyEnv() {
   requireEnv("SPOTIFY_CLIENT_ID");
   requireEnv("SPOTIFY_CLIENT_SECRET");
-  requireEnv("SPOTIFY_REDIRECT_URI");
+  validateSpotifyRedirectUri();
 }
+
+export function validateSpotifyRedirectUri(): string {
+  const result = checkSpotifyRedirectConfiguration();
+  if (!result.ok) throw new Error(result.code);
+  return result.redirectUri;
+}
+import { checkSpotifyRedirectConfiguration } from "@/src/shared/config/env";

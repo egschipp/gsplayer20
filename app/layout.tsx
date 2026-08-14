@@ -3,7 +3,7 @@ import { connection } from "next/server";
 import "./globals.css";
 import AuthSessionProvider from "./components/SessionProvider";
 import MainNav from "./components/MainNav";
-import { PlayerProvider } from "./components/player/PlayerProvider";
+import { PlayerProvider } from "@/lib/playback/PlayerProvider";
 
 export const metadata: Metadata = {
   title: "Georgies Player",

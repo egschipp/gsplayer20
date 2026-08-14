@@ -95,6 +95,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Architecture quality gate
+        run: npm run quality:architecture
+
       - name: Test
         run: npm run test:coverage
 

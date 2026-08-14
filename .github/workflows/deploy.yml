@@ -266,7 +266,6 @@ jobs:
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
           SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
           SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
-          SPOTIFY_REDIRECT_URI: ${{ secrets.SPOTIFY_REDIRECT_URI }}
           AUTH_SECRET: ${{ secrets.AUTH_SECRET || secrets.NEXTAUTH_SECRET }}
           APP_PIN: ${{ secrets.APP_PIN }}
           AUTH_URL: ${{ secrets.AUTH_URL || secrets.NEXTAUTH_URL }}
@@ -298,13 +297,15 @@ jobs:
           tmp_env="$(mktemp .env.tmp.XXXXXX)"
           APP_UID="$(id -u)"
           APP_GID="$(id -g)"
+          AUTH_BASE_URL="${NEXTAUTH_URL:-$AUTH_URL}"
+          SPOTIFY_CALLBACK_URI="${AUTH_BASE_URL%/}/api/auth/callback/spotify"
           cat > "$tmp_env" <<EOF
           APP_ENV=production
           IMAGE_NAME=$IMAGE_NAME
           IMAGE_TAG=$IMAGE_TAG
           SPOTIFY_CLIENT_ID=$SPOTIFY_CLIENT_ID
           SPOTIFY_CLIENT_SECRET=$SPOTIFY_CLIENT_SECRET
-          SPOTIFY_REDIRECT_URI=$SPOTIFY_REDIRECT_URI
+          SPOTIFY_REDIRECT_URI=$SPOTIFY_CALLBACK_URI
           AUTH_SECRET=$AUTH_SECRET
           APP_PIN=$APP_PIN
           AUTH_URL=$AUTH_URL
@@ -407,6 +408,9 @@ jobs:
             -R "${APP_UID}:${APP_GID}" /data
           if ! docker compose -f "${COMPOSE_FILE_PATH}" up -d --remove-orphans --wait --wait-timeout 180; then
             docker compose -f "${COMPOSE_FILE_PATH}" ps
+            docker exec gsplayer20 node -e \
+              "fetch('http://127.0.0.1:3000/api/health').then(async r=>{console.error('Health status:',r.status,await r.text())}).catch(error=>console.error('Health request failed:',error.message))" \
+              || true
             docker compose -f "${COMPOSE_FILE_PATH}" logs --no-color --tail=160 web worker || true
             exit 1
           fi

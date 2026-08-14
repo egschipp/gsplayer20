@@ -1,5 +1,18 @@
 const Database = require("better-sqlite3");
 const crypto = require("crypto");
+const {
+  clampInt,
+  envInt,
+  normalizeCursor,
+  normalizePlaylistId,
+  parseJobPayload,
+  sanitizeRequeuePayload,
+} = require("./worker/jobPayload.cjs");
+const {
+  createFetchWithTimeout,
+  sanitizeErrorMessage,
+} = require("./worker/httpClient.cjs");
+const { createTokenCrypto } = require("./worker/tokenCrypto.cjs");
 
 const DB_PATH = process.env.DB_PATH || "/data/gsplayer.sqlite";
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
@@ -31,6 +44,7 @@ const JOB_RETENTION_DAYS = Number(process.env.JOB_RETENTION_DAYS || "30");
 const SPOTIFY_METADATA_TTL_DAYS = Number(process.env.SPOTIFY_METADATA_TTL_DAYS || "1");
 const SPOTIFY_CACHE_COVER_BLOBS = process.env.SPOTIFY_CACHE_COVER_BLOBS === "true";
 const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
+const fetchWithTimeout = createFetchWithTimeout({ defaultTimeoutMs: FETCH_TIMEOUT_MS });
 
 if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
   throw new Error("Missing SPOTIFY_CLIENT_ID/SECRET");
@@ -38,6 +52,12 @@ if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
 if (!TOKEN_ENCRYPTION_KEY && !TOKEN_ENCRYPTION_KEYS) {
   throw new Error("Missing token encryption key configuration");
 }
+const { decryptStoredToken, decryptToken, encryptStoredToken, encryptToken } =
+  createTokenCrypto({
+    legacyKey: TOKEN_ENCRYPTION_KEY,
+    keyRingValue: TOKEN_ENCRYPTION_KEYS,
+    keyVersion: TOKEN_ENCRYPTION_KEY_VERSION,
+  });
 
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
@@ -73,103 +93,6 @@ const migration = hasMigrationTable
   : null;
 if (!migration) {
   throw new Error("Database migrations are missing; run npm run db:migrate first");
-}
-
-const SPOTIFY_ID_REGEX = /^[A-Za-z0-9]{22}$/;
-
-function clampInt(value, min, max, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, Math.floor(parsed)));
-}
-
-function parseJobPayload(rawPayload) {
-  if (!rawPayload) return {};
-  try {
-    const parsed = JSON.parse(rawPayload);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed;
-    }
-  } catch {
-    // ignore malformed payload
-  }
-  return {};
-}
-
-function normalizeCursor(value) {
-  if (typeof value !== "string") return "";
-  return value.slice(0, 128);
-}
-
-function normalizePlaylistId(value) {
-  if (typeof value !== "string") return null;
-  return SPOTIFY_ID_REGEX.test(value) ? value : null;
-}
-
-function envInt(name, min, max, fallback) {
-  return clampInt(process.env[name], min, max, fallback);
-}
-
-function sanitizeRequeuePayload(type, payload, result) {
-  const next = { ...payload };
-  if (result.nextOffset !== undefined) {
-    next.offset = clampInt(result.nextOffset, 0, 100_000, 0);
-  }
-  if (result.nextCursor !== undefined) {
-    next.cursor = normalizeCursor(result.nextCursor);
-  }
-
-  if (next.limit !== undefined) {
-    next.limit = clampInt(next.limit, 1, 50, 50);
-  }
-  if (next.maxPagesPerRun !== undefined) {
-    next.maxPagesPerRun = clampInt(next.maxPagesPerRun, 1, 200, 10);
-  }
-  if (next.maxBatches !== undefined) {
-    next.maxBatches = clampInt(next.maxBatches, 1, 200, 20);
-  }
-
-  if (type === "SYNC_PLAYLIST_ITEMS") {
-    const playlistId = normalizePlaylistId(next.playlistId);
-    if (!playlistId) {
-      delete next.playlistId;
-    } else {
-      next.playlistId = playlistId;
-    }
-    next.runId =
-      typeof next.runId === "string" && next.runId.length <= 128
-        ? next.runId
-        : crypto.randomUUID();
-    next.snapshotId =
-      typeof next.snapshotId === "string" && next.snapshotId.length <= 256
-        ? next.snapshotId
-        : null;
-  }
-
-  return next;
-}
-
-function sanitizeErrorMessage(message) {
-  return String(message)
-    .replace(/Bearer\\s+[^\\s]+/g, "Bearer [redacted]")
-    .slice(0, 500);
-}
-
-async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } catch (error) {
-    if (error && error.name === "AbortError") {
-      const err = new Error("Timeout");
-      err.retryable = true;
-      throw err;
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 function reserveSharedSpotifyRequest(source = "background") {
@@ -222,68 +145,6 @@ function blockSharedSpotifyRequests(retryAfterMs, reason) {
        reason=excluded.reason,
        updated_at=excluded.updated_at`
   ).run(blockedUntil, String(reason || "RATE_LIMIT").slice(0, 64), now);
-}
-
-function tokenKeyRing() {
-  const ring = new Map();
-  for (const entry of TOKEN_ENCRYPTION_KEYS.split(",").map((value) => value.trim())) {
-    if (!entry) continue;
-    const separator = entry.indexOf(":");
-    ring.set(Number(entry.slice(0, separator)), entry.slice(separator + 1));
-  }
-  if (TOKEN_ENCRYPTION_KEY && !ring.has(1)) ring.set(1, TOKEN_ENCRYPTION_KEY);
-  if (ring.size === 0) throw new Error("Missing TOKEN_ENCRYPTION_KEY(S)");
-  return ring;
-}
-
-function tokenKey(version = 1) {
-  const encoded = tokenKeyRing().get(Number(version));
-  if (!encoded) throw new Error(`Missing token encryption key version ${version}`);
-  const key = Buffer.from(encoded, "base64");
-  if (key.length !== 32) {
-    throw new Error(`Token encryption key version ${version} must decode to 32 bytes`);
-  }
-  return key;
-}
-
-function decryptToken(payload, version = 1) {
-  const key = tokenKey(version);
-  const data = Buffer.from(payload, "base64");
-  const iv = data.subarray(0, 12);
-  const tag = data.subarray(12, 28);
-  const encrypted = data.subarray(28);
-  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
-  decipher.setAuthTag(tag);
-  const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
-  return decrypted.toString("utf8");
-}
-
-function encryptToken(value) {
-  const ring = tokenKeyRing();
-  const version = ring.has(TOKEN_ENCRYPTION_KEY_VERSION)
-    ? TOKEN_ENCRYPTION_KEY_VERSION
-    : Math.max(...ring.keys());
-  const key = tokenKey(version);
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-  const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return {
-    payload: Buffer.concat([iv, tag, encrypted]).toString("base64"),
-    version,
-  };
-}
-
-function encryptStoredToken(value) {
-  const encrypted = encryptToken(value);
-  return `enc:v${encrypted.version}:${encrypted.payload}`;
-}
-
-function decryptStoredToken(value) {
-  if (!value || !String(value).startsWith("enc:v")) return value;
-  const separator = value.indexOf(":", 5);
-  const version = Number(value.slice(5, separator));
-  return decryptToken(value.slice(separator + 1), version);
 }
 
 async function refreshAccessToken(refreshToken) {
